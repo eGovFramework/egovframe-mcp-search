@@ -1,0 +1,108 @@
+/**
+ * LanceDB Knowledge Base Types
+ * 비정형 개발자 지식 구조 정의
+ */
+
+// 개발자 지식 타입
+export type KnowledgeType = 
+  | 'solution'       // 해결책
+  | 'tip'           // 팁/힌트
+  | 'pattern'       // 디자인 패턴
+  | 'error-fix'     // 오류 수정
+  | 'best-practice' // 모범 사례
+  | 'gotcha';       // 주의사항/함정
+
+// 개발자 지식 문서
+export interface DeveloperKnowledge {
+  id: string;
+  type: KnowledgeType;
+  title: string;
+  content: string;
+  context?: string;  // 어떤 상황에서 발생했는지
+  tags: string[];
+  relatedTo?: string[];  // 관련 표준프레임워크 기능 (예: ['mybatis', 'transaction'])
+  importance: 1 | 2 | 3 | 4 | 5;  // 중요도 (5가 가장 중요)
+  verified: boolean;  // 검증된 지식인지
+  createdAt: string;  // ISO 8601 timestamp
+  updatedAt: string;  // ISO 8601 timestamp
+  metadata: {
+    author?: string;
+    version?: string;  // 표준프레임워크 버전
+    environment?: string;  // 개발 환경 (예: 'Windows 11', 'macOS', 'Ubuntu')
+    category?: string;  // 호환성 카테고리와 연결
+    [key: string]: any;
+  };
+  vector: number[];  // 384차원 임베딩 벡터
+}
+
+// 지식 검색 결과
+export interface KnowledgeSearchResult {
+  id: string;
+  type: KnowledgeType;
+  title: string;
+  content: string;
+  context?: string;
+  tags: string[];
+  importance: number;
+  score: number;  // 유사도 점수 (거리)
+  createdAt: string;
+  metadata: Record<string, any>;
+}
+
+// 지식 검색 옵션
+export interface KnowledgeSearchOptions {
+  limit?: number;
+  type?: KnowledgeType;
+  tags?: string[];
+  minImportance?: 1 | 2 | 3 | 4 | 5;
+  verifiedOnly?: boolean;
+}
+
+// 지식 통계
+export interface KnowledgeStats {
+  total: number;
+  byType: Record<KnowledgeType, number>;
+  byImportance: Record<number, number>;
+  verified: number;
+  unverified: number;
+  topTags: Array<{ tag: string; count: number }>;
+}
+
+// 지식 추가 입력
+export interface AddKnowledgeInput {
+  type: KnowledgeType;
+  title: string;
+  content: string;
+  context?: string;
+  tags?: string[];
+  relatedTo?: string[];
+  importance?: 1 | 2 | 3 | 4 | 5;
+  verified?: boolean;
+  metadata?: Record<string, any>;
+}
+
+// 지식 업데이트 입력
+export interface UpdateKnowledgeInput {
+  id: string;
+  title?: string;
+  content?: string;
+  context?: string;
+  tags?: string[];
+  relatedTo?: string[];
+  importance?: 1 | 2 | 3 | 4 | 5;
+  verified?: boolean;
+  metadata?: Record<string, any>;
+}
+
+// 최근 지식 항목 (간략 정보)
+export interface RecentKnowledge {
+  id: string;
+  type: KnowledgeType;
+  title: string;
+  tags: string[];
+  importance: number;
+  verified: boolean;
+  createdAt: string;
+}
+
+

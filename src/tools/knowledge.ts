@@ -1,0 +1,227 @@
+/**
+ * Knowledge Management Tools
+ * 개발자 지식 관리 도구
+ */
+
+import { getInitializedHybridManager } from '../database/hybridManager.js';
+import {
+  KnowledgeSearchOptions,
+  KnowledgeType,
+} from '../types/knowledge.js';
+
+/**
+ * 지식 검색 (통합)
+ * - query + scope="knowledge" → 시맨틱 검색 (기본)
+ * - query + sort="recent" → 최근 추가 순 조회
+ * - query + scope="all" → 통합 검색 (지식 + 호환성 + 표준용어)
+ * 
+ * See: docs/TODO_TOOL_OPTIMIZATION.md Phase 3-C
+ */
+export async function searchKnowledge(args: {
+  query: string;
+  scope?: 'knowledge' | 'all';
+  sort?: 'relevance' | 'recent';
+  limit?: number;
+  type?: KnowledgeType;
+  tags?: string[];
+  minImportance?: 1 | 2 | 3 | 4 | 5;
+  verifiedOnly?: boolean;
+}) {
+  const manager = await getInitializedHybridManager();
+  const knowledge = manager.getKnowledge();
+
+  // sort="recent" → 최근 지식 목록 (list_recent_knowledge 기능)
+  if (args.sort === 'recent') {
+    const results = await knowledge.listRecentKnowledge(args.limit || 10, args.type);
+    return {
+      success: true,
+      sort: 'recent',
+      count: results.length,
+      results: results.map((r: any) => ({
+        id: r.id,
+        type: r.type,
+        title: r.title,
+        content: r.content,
+        tags: r.tags,
+        importance: r.importance,
+        createdAt: r.createdAt,
+      })),
+    };
+  }
+
+  // scope="all" → 통합 검색 (smart_search 기능)
+  if (args.scope === 'all') {
+    const results = await manager.smartSearch({
+      query: args.query,
+      includeCompatibility: true,
+      includeStandardTerms: true,
+      includeKnowledge: true,
+      limit: args.limit || 5,
+    });
+
+    return {
+      success: true,
+      scope: 'all',
+      query: args.query,
+      totalResults: results.totalResults,
+      compatibility: results.compatibility.map((s: any) => ({
+        product: `${s.product_name} ${s.product_version}`,
+        framework: s.framework_version,
+        category: s.category,
+        level: s.compatibility_level,
+        vendor: s.vendor,
+        description: s.description,
+      })),
+      standardTerms: results.standardTerms.map((t: any) => ({
+        korean: t.korean_name,
+        english: t.english_name,
+        domain: t.domain_name,
+        description: t.description,
+      })),
+      knowledge: results.knowledge.map((k: any) => ({
+        title: k.title,
+        type: k.type,
+        content: k.content.substring(0, 200) + (k.content.length > 200 ? '...' : ''),
+        tags: k.tags,
+        importance: k.importance,
+      })),
+    };
+  }
+
+  // 기본: 시맨틱 검색
+  const options: KnowledgeSearchOptions = {
+    limit: args.limit,
+    type: args.type,
+    tags: args.tags,
+    minImportance: args.minImportance,
+    verifiedOnly: args.verifiedOnly,
+  };
+
+  const results = await knowledge.searchKnowledge(args.query, options);
+
+  return {
+    success: true,
+    query: args.query,
+    options,
+    resultCount: results.length,
+    results: results.map(r => ({
+      id: r.id,
+      type: r.type,
+      title: r.title,
+      content: r.content,
+      context: r.context,
+      tags: r.tags,
+      importance: r.importance,
+      similarity: (1 - r.score).toFixed(3),
+      createdAt: r.createdAt,
+    })),
+  };
+}
+
+/**
+ * 최근 지식 목록
+ */
+export async function listRecentKnowledge(args: {
+  limit?: number;
+  type?: KnowledgeType;
+}) {
+  const manager = await getInitializedHybridManager();
+  const knowledge = manager.getKnowledge();
+
+  const results = await knowledge.listRecentKnowledge(args.limit || 10, args.type);
+
+  return {
+    success: true,
+    count: results.length,
+    knowledge: results,
+  };
+}
+
+/**
+ * 지식 조회
+ */
+export async function getKnowledge(args: { id: string }) {
+  const manager = await getInitializedHybridManager();
+  const knowledge = manager.getKnowledge();
+
+  const result = await knowledge.getKnowledgeById(args.id);
+
+  if (!result) {
+    return {
+      success: false,
+      message: `지식 ID ${args.id}를 찾을 수 없습니다.`,
+    };
+  }
+
+  return {
+    success: true,
+    knowledge: {
+      ...result,
+      vector: undefined,  // 벡터는 제외
+    },
+  };
+}
+
+/**
+ * 스마트 검색 (통합 검색)
+ */
+export async function smartSearch(args: {
+  query: string;
+  includeCompatibility?: boolean;
+  includeStandardTerms?: boolean;
+  includeKnowledge?: boolean;
+  limit?: number;
+}) {
+  const manager = await getInitializedHybridManager();
+
+  const results = await manager.smartSearch({
+    query: args.query,
+    includeCompatibility: args.includeCompatibility !== false,
+    includeStandardTerms: args.includeStandardTerms !== false,
+    includeKnowledge: args.includeKnowledge !== false,
+    limit: args.limit || 5,
+  });
+
+  return {
+    success: true,
+    query: args.query,
+    totalResults: results.totalResults,
+    compatibility: results.compatibility.map(s => ({
+      product: `${s.product_name} ${s.product_version}`,
+      framework: s.framework_version,
+      category: s.category,
+      level: s.compatibility_level,
+      vendor: s.vendor,
+      description: s.description,
+    })),
+    standardTerms: results.standardTerms.map(t => ({
+      korean: t.korean_name,
+      english: t.english_name,
+      domain: t.domain_name,
+      description: t.description,
+    })),
+    knowledge: results.knowledge.map(k => ({
+      title: k.title,
+      type: k.type,
+      content: k.content.substring(0, 200) + (k.content.length > 200 ? '...' : ''),
+      tags: k.tags,
+      importance: k.importance,
+      similarity: (1 - k.score).toFixed(3),
+    })),
+  };
+}
+
+/**
+ * 전체 통계
+ */
+export async function getOverallStats() {
+  const manager = await getInitializedHybridManager();
+  const stats = await manager.getOverallStats();
+
+  return {
+    success: true,
+    stats,
+  };
+}
+
+

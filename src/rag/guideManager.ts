@@ -1,0 +1,460 @@
+/**
+ * eGovFrame Guide Search Manager (LanceDB)
+ * 전자정부 표준프레임워크 공식 문서 검색 시스템
+ * 
+ * egovframe-docs 마크다운 파일을 벡터화하여 의미 기반 검색 제공
+ */
+
+import * as lancedb from '@lancedb/lancedb';
+import { getEmbedder } from './embedder.js';
+import path from 'path';
+import { randomUUID } from 'crypto';
+import { fileURLToPath } from 'url';
+import { getKnowledgeBasePath } from '../utils/projectPath.js';
+
+// ─── 타입 정의 ────────────────────────────────────────────
+
+/** 가이드 문서 청크 */
+export interface GuideChunk {
+  id: string;
+  title: string;       // 문서제목: 섹션제목 (예: "MyBatis 적용 가이드: Step 3. DAO 작성")
+  content: string;     // 섹션 본문 (마크다운)
+  source: string;      // 상대 파일 경로 (예: "egovframe-runtime/persistence-layer/dataaccess-mybatis-guide.md")
+  layer: string;       // 최상위 카테고리 (예: "egovframe-runtime")
+  category: string;    // 하위 카테고리 (예: "persistence-layer")
+  section: string;     // 섹션 제목 (예: "Step 3. DAO 작성")
+  docTitle: string;    // 문서 제목 (예: "MyBatis 적용 가이드")
+  url: string;         // Hugo URL (예: "/egovframe-runtime/persistence-layer/dataaccess-mybatis-guide/")
+  vector: number[];    // 384차원 임베딩 벡터
+}
+
+/** 가이드 검색 결과 */
+export interface GuideSearchResult {
+  id: string;
+  title: string;
+  content: string;
+  source: string;
+  layer: string;
+  category: string;
+  section: string;
+  docTitle: string;
+  url: string;
+  score: number;       // 거리 점수 (낮을수록 유사)
+}
+
+/** 가이드 검색 옵션 */
+export interface GuideSearchOptions {
+  limit?: number;
+  layer?: string;      // 특정 레이어만 검색 (예: "egovframe-runtime")
+  category?: string;   // 특정 카테고리만 검색 (예: "persistence-layer")
+}
+
+/** 가이드 인덱싱 통계 */
+export interface GuideIndexStats {
+  totalFiles: number;
+  totalChunks: number;
+  skippedFiles: number;
+  byLayer: Record<string, number>;
+}
+
+/** Hugo 프론트매터 파싱 결과 */
+interface FrontMatter {
+  title: string;
+  linkTitle?: string;
+  description?: string;
+  url?: string;
+}
+
+// ─── 프론트매터 파싱 ──────────────────────────────────────
+
+/**
+ * Hugo YAML 프론트매터 파싱 (경량 구현, 외부 의존성 없음)
+ */
+export function parseFrontMatter(content: string): { frontmatter: FrontMatter; body: string } {
+  const fmMatch = content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+  
+  if (!fmMatch) {
+    return {
+      frontmatter: { title: '' },
+      body: content,
+    };
+  }
+
+  const yamlStr = fmMatch[1];
+  const body = fmMatch[2];
+
+  // 간단한 YAML 파싱 (top-level key: value만)
+  const fm: Record<string, string> = {};
+  for (const line of yamlStr.split('\n')) {
+    const match = line.match(/^(\w+):\s*"?([^"]*)"?\s*$/);
+    if (match) {
+      fm[match[1]] = match[2].trim();
+    }
+  }
+
+  return {
+    frontmatter: {
+      title: fm.title || fm.linkTitle || '',
+      linkTitle: fm.linkTitle,
+      description: fm.description,
+      url: fm.url,
+    },
+    body,
+  };
+}
+
+// ─── 마크다운 청킹 ───────────────────────────────────────
+
+/**
+ * 마크다운 파일을 ## 헤더 기준으로 섹션 분할
+ * 긴 섹션(>2000자)은 ### 헤더로 추가 분할
+ */
+export function chunkMarkdown(
+  body: string,
+  frontmatter: FrontMatter,
+  filePath: string,  // 상대 경로
+): Omit<GuideChunk, 'id' | 'vector'>[] {
+  const pathParts = filePath.split('/');
+  const layer = pathParts[0] || 'unknown';
+  const category = pathParts.length > 2 ? pathParts[1] : '';
+  const docTitle = frontmatter.title || path.basename(filePath, '.md');
+  const url = frontmatter.url || '';
+
+  const chunks: Omit<GuideChunk, 'id' | 'vector'>[] = [];
+
+  // ## 기준 분할
+  const h2Sections = body.split(/^##\s+/gm);
+  
+  for (let i = 0; i < h2Sections.length; i++) {
+    const raw = h2Sections[i].trim();
+    if (!raw) continue;
+
+    if (i === 0) {
+      // 첫 번째 청크: ## 이전 내용 (개요/소개)
+      // H1 제거
+      const cleanedContent = raw.replace(/^#\s+.*\n?/, '').trim();
+      if (cleanedContent.length >= 50) {
+        chunks.push({
+          title: docTitle,
+          content: cleanedContent,
+          source: filePath,
+          layer,
+          category,
+          section: '개요',
+          docTitle,
+          url,
+        });
+      }
+      continue;
+    }
+
+    // ## 섹션
+    const lines = raw.split('\n');
+    const sectionHeading = lines[0].trim();
+    const sectionContent = lines.slice(1).join('\n').trim();
+
+    if (sectionContent.length < 50) continue;
+
+    // 긴 섹션은 ### 기준으로 추가 분할
+    if (sectionContent.length > 2000) {
+      const h3Sections = sectionContent.split(/^###\s+/gm);
+
+      if (h3Sections.length > 1) {
+        // ### 이전 내용
+        const preH3 = h3Sections[0].trim();
+        if (preH3.length >= 50) {
+          chunks.push({
+            title: `${docTitle}: ${sectionHeading}`,
+            content: preH3,
+            source: filePath,
+            layer,
+            category,
+            section: sectionHeading,
+            docTitle,
+            url,
+          });
+        }
+
+        // 각 ### 섹션
+        for (let j = 1; j < h3Sections.length; j++) {
+          const h3Lines = h3Sections[j].split('\n');
+          const h3Heading = h3Lines[0].trim();
+          const h3Content = h3Lines.slice(1).join('\n').trim();
+
+          if (h3Content.length < 50) continue;
+
+          chunks.push({
+            title: `${docTitle}: ${sectionHeading} > ${h3Heading}`,
+            content: h3Content,
+            source: filePath,
+            layer,
+            category,
+            section: `${sectionHeading} > ${h3Heading}`,
+            docTitle,
+            url,
+          });
+        }
+        continue;
+      }
+    }
+
+    // 일반 크기 섹션 - 그대로 추가
+    chunks.push({
+      title: `${docTitle}: ${sectionHeading}`,
+      content: sectionContent,
+      source: filePath,
+      layer,
+      category,
+      section: sectionHeading,
+      docTitle,
+      url,
+    });
+  }
+
+  return chunks;
+}
+
+// ─── GuideSearchManager 클래스 ───────────────────────────
+
+export class GuideSearchManager {
+  private db!: lancedb.Connection;
+  private table!: any;
+  private dbPath: string;
+  private tableName = 'egovframe_guide';
+
+  constructor(dbPath?: string) {
+    const currentFile = fileURLToPath(import.meta.url);
+    this.dbPath = dbPath || getKnowledgeBasePath(currentFile);
+  }
+
+  /**
+   * 데이터베이스 초기화
+   */
+  async initialize(): Promise<void> {
+    try {
+      this.db = await lancedb.connect(this.dbPath);
+
+      try {
+        this.table = await this.db.openTable(this.tableName);
+        console.error(`✅ eGovFrame 가이드 검색 테이블 로드 완료 (${this.tableName})`);
+      } catch {
+        console.error(`📝 eGovFrame 가이드 테이블을 새로 생성합니다...`);
+        await this.createTable();
+      }
+    } catch (error) {
+      console.error('❌ LanceDB 초기화 실패:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 테이블 생성 (스키마 추론용 더미 데이터)
+   */
+  private async createTable(): Promise<void> {
+    const dummyData = {
+      id: '__placeholder__',
+      title: 'Placeholder',
+      content: 'This is a placeholder entry.',
+      source: 'placeholder.md',
+      layer: 'placeholder',
+      category: 'placeholder',
+      section: 'placeholder',
+      docTitle: 'Placeholder',
+      url: '/placeholder/',
+      vector: new Array(384).fill(0),
+    };
+
+    this.table = await this.db.createTable(this.tableName, [dummyData]);
+    await this.table.delete(`id = '__placeholder__'`);
+    console.error(`✅ 테이블 '${this.tableName}' 생성 완료`);
+  }
+
+  /**
+   * 기존 데이터 전체 삭제 (재인덱싱 시)
+   */
+  async clearAll(): Promise<void> {
+    try {
+      await this.db.dropTable(this.tableName);
+      await this.createTable();
+      console.error('🗑️ 기존 가이드 데이터 전체 삭제 완료');
+    } catch {
+      // 테이블이 없는 경우 무시
+    }
+  }
+
+  /**
+   * 배치 가이드 청크 추가
+   */
+  async addGuideBatch(chunks: Omit<GuideChunk, 'id' | 'vector'>[]): Promise<number> {
+    if (chunks.length === 0) return 0;
+
+    const embedder = getEmbedder();
+
+    console.error(`📦 ${chunks.length}개 가이드 청크 처리 중...`);
+
+    // 검색 텍스트 생성
+    const searchTexts = chunks.map(chunk =>
+      this.createSearchText(chunk.title, chunk.content, chunk.layer, chunk.category)
+    );
+
+    // 배치 임베딩 생성 (인덱싱용: passage prefix)
+    const vectors = await embedder.embedBatch(searchTexts, {
+      purpose: 'passage',
+      onProgress: (current, total) => {
+        if (current % 100 === 0 || current === total) {
+          console.error(`  임베딩 진행률: ${current}/${total}`);
+        }
+      },
+    });
+
+    const guideChunks: GuideChunk[] = chunks.map((chunk, idx) => ({
+      ...chunk,
+      id: randomUUID(),
+      vector: Array.from(vectors[idx]),
+    }));
+
+    await this.table.add(guideChunks);
+
+    console.error(`✅ ${chunks.length}개 가이드 청크 추가 완료`);
+    return chunks.length;
+  }
+
+  /**
+   * 가이드 검색 (의미 기반)
+   */
+  async searchGuide(
+    query: string,
+    options: GuideSearchOptions = {}
+  ): Promise<GuideSearchResult[]> {
+    const { limit = 5, layer, category } = options;
+
+    const embedder = getEmbedder();
+    const queryVector = await embedder.embed(query, 'query');
+
+    // 필터 조건 생성
+    const filters: string[] = [];
+
+    if (layer) {
+      filters.push(`layer = '${layer}'`);
+    }
+
+    if (category) {
+      filters.push(`category = '${category}'`);
+    }
+
+    // 벡터 검색
+    let searchQuery = this.table
+      .vectorSearch(Array.from(queryVector))
+      .limit(limit);
+
+    if (filters.length > 0) {
+      searchQuery = searchQuery.where(filters.join(' AND '));
+    }
+
+    const results = await searchQuery.toArray();
+
+    return results.map((r: any) => ({
+      id: r.id,
+      title: r.title,
+      content: r.content,
+      source: r.source,
+      layer: r.layer,
+      category: r.category,
+      section: r.section,
+      docTitle: r.docTitle,
+      url: r.url,
+      score: r._distance,
+    }));
+  }
+
+  /**
+   * 인덱스 통계 조회
+   */
+  async getStats(): Promise<{ total: number; byLayer: Record<string, number> }> {
+    const all = await this.table.query().toArray();
+
+    const byLayer: Record<string, number> = {};
+    for (const row of all) {
+      const layer = row.layer;
+      byLayer[layer] = (byLayer[layer] || 0) + 1;
+    }
+
+    return { total: all.length, byLayer };
+  }
+
+  /**
+   * 벡터 인덱스 생성 (성능 향상)
+   */
+  async createIndex(): Promise<void> {
+    console.error('🔨 가이드 벡터 인덱스 생성 중...');
+
+    try {
+      await this.table.createIndex('vector', {
+        config: lancedb.Index.ivfPq({
+          numPartitions: 256,
+          numSubVectors: 96,
+        }),
+      });
+      console.error('✅ 가이드 벡터 인덱스 생성 완료');
+    } catch (error) {
+      console.warn('⚠️ 인덱스 생성 실패 (데이터가 부족할 수 있음):', error);
+    }
+  }
+
+  /**
+   * 테이블 최적화
+   */
+  async optimize(): Promise<void> {
+    console.error('⚡ 가이드 테이블 최적화 중...');
+    await this.table.optimize();
+    console.error('✅ 최적화 완료');
+  }
+
+  /**
+   * 검색 텍스트 생성 (임베딩용)
+   */
+  private createSearchText(
+    title: string,
+    content: string,
+    layer: string,
+    category: string,
+  ): string {
+    const parts = [
+      `제목: ${title}`,
+      `내용: ${content}`,
+    ];
+
+    if (layer) {
+      parts.push(`분류: ${layer}`);
+    }
+
+    if (category) {
+      parts.push(`카테고리: ${category}`);
+    }
+
+    return parts.join('\n');
+  }
+}
+
+// ─── 싱글톤 인스턴스 ─────────────────────────────────────
+
+let guideManagerInstance: GuideSearchManager | null = null;
+
+/**
+ * 싱글톤 GuideSearchManager 인스턴스 가져오기
+ */
+export function getGuideManager(): GuideSearchManager {
+  if (!guideManagerInstance) {
+    guideManagerInstance = new GuideSearchManager();
+  }
+  return guideManagerInstance;
+}
+
+/**
+ * 초기화된 GuideSearchManager 인스턴스 반환
+ */
+export async function getInitializedGuideManager(): Promise<GuideSearchManager> {
+  const manager = getGuideManager();
+  await manager.initialize();
+  return manager;
+}

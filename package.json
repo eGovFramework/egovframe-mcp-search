@@ -1,0 +1,47 @@
+{
+  "name": "egovframe-mcp-search",
+  "version": "1.0.0",
+  "description": "Unified eGovFrame knowledge search exposed as a single MCP tool (egov_search_knowledge). Searches official guides, personal knowledge, standard terms, common components, and compatible software through one local hybrid (SQLite + LanceDB) store.",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "egovframe-mcp-search": "./build/index.js"
+  },
+  "files": [
+    "build",
+    "templates"
+  ],
+  "keywords": [
+    "egovframe",
+    "mcp",
+    "knowledge-base",
+    "rag",
+    "ai-assistant",
+    "search"
+  ],
+  "scripts": {
+    "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
+    "prepare": "npm run build",
+    "watch": "tsc --watch",
+    "inspector": "npx @modelcontextprotocol/inspector build/index.js",
+    "build-index": "node build/scripts/buildIndex.js",
+    "test": "npm run build && vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@lancedb/lancedb": "^0.22.0",
+    "@modelcontextprotocol/sdk": "0.6.0",
+    "@xenova/transformers": "^2.17.0",
+    "better-sqlite3": "^9.6.0",
+    "fs-extra": "^11.2.0",
+    "pdf-parse": "^2.4.5",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^20.11.24",
+    "typescript": "^5.3.3",
+    "vitest": "^1.6.1"
+  }
+}
