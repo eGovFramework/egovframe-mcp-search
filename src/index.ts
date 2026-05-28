@@ -57,7 +57,7 @@ server.registerTool(
           "Optional sub-action for scoped lookup. Components support: get/info, dependencies, sourceFiles, readSource, ddl, dml. Terms support: get.",
         ),
       filters: z
-        .record(z.any())
+        .record(z.string(), z.any())
         .optional()
         .describe(
           "Scope-specific filters. Examples: { layer, category, limit }, { koreanName, fulltext }, { componentId, componentIds, dbType, filePath }, { frameworkVersion, vendor, productName, includeKnowledge }.",
