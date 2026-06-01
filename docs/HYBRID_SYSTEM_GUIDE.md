@@ -30,8 +30,9 @@
 | Tool | 사용하는 데이터 |
 |------|----------------|
 | `egov_search_knowledge` | SQLite와 LanceDB의 지식/참조 데이터 통합 검색 |
+| `egov_ddl_assist` | SQLite의 표준용어/단어/도메인(+ 기관 custom) 사전 lookup |
 
-본 서버에서 노출되는 도구는 `egov_search_knowledge` 단 하나이며, 그 외 옛 도구(`egov_check_compliance`, `egov_scaffold_project` 등)는 모두 제거되었습니다.
+본 서버에서 노출되는 도구는 `egov_search_knowledge` 와 `egov_ddl_assist` 둘이며, 그 외 옛 도구(`egov_check_compliance`, `egov_scaffold_project` 등)는 모두 제거되었습니다.
 
 ## 초기화
 

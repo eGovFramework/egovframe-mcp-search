@@ -14,11 +14,12 @@ TypeScript 컴파일과 실행 파일 권한 설정을 함께 확인합니다.
 npm run inspector
 ```
 
-Inspector에서 공개 도구 목록이 **`egov_search_knowledge` 단 하나**인지 확인합니다.
+Inspector에서 공개 도구 목록이 **`egov_search_knowledge` 와 `egov_ddl_assist` 둘**인지 확인합니다.
 
 | Tool | 확인 포인트 |
 |------|-------------|
 | `egov_search_knowledge` | 통합 검색 입력 스키마와 scope/action/filter 동작 |
+| `egov_ddl_assist` | action/input/domainHint 입력 스키마와 lookup/decompose/validate 동작 |
 
 ## 자동화된 통합 테스트
 
@@ -29,9 +30,10 @@ npm test
 `tests/integration/server.test.ts` 가 다음을 동결합니다.
 
 - 서버가 stdio 로 정상 핸드셰이크 응답
-- `ListToolsRequestSchema` 가 `egov_search_knowledge` 하나만 노출
+- `tools/list` 가 `egov_search_knowledge` 와 `egov_ddl_assist` 두 도구만 노출
 - 각 도구가 `description` + `inputSchema(type=object)` 를 가진다
 - `egov_search_knowledge` 의 핵심 파라미터 6개(`query`/`scope`/`action`/`filters`/`limit`/`strictScope`) 모두 존재
+- `egov_ddl_assist` 의 핵심 파라미터(`action`/`input`/`domainHint`)와 `action` enum 6종 모두 존재
 
 ## 인덱스 생성 확인
 

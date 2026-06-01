@@ -9,7 +9,7 @@
 
 **MCP (Model Context Protocol)** 는 Anthropic 이 공개한 개방형 표준으로, LLM 클라이언트(Claude Desktop, Cursor, Claude Code 등) 와 외부 도구/데이터 소스를 안전하고 일관된 방식으로 연결합니다. MCP 서버는 stdio 또는 HTTP 위에 JSON-RPC 로 동작하며, LLM 에게 호출 가능한 **Tool** 목록과 각 Tool 의 입력 스키마를 노출합니다.
 
-**eGovFrame MCP Search** 는 전자정부 표준프레임워크 개발에 필요한 **다섯 종류의 지식 소스**를 단일 MCP 도구(`egov_search_knowledge`) 로 통합 노출합니다:
+**eGovFrame MCP Search** 는 전자정부 표준프레임워크 개발에 필요한 **다섯 종류의 지식 소스**를 `egov_search_knowledge` 도구 하나로 통합 노출하며, 여기에 한글 도메인 기반 스키마 설계를 돕는 `egov_ddl_assist` 도구를 더해 총 **두 개의 도구**를 제공합니다. `egov_search_knowledge` 가 통합 검색하는 다섯 소스는 다음과 같습니다:
 
 1. **공식 개발자 가이드** — eGovFrame 공식 위키 콘텐츠 (의미 기반 검색)
 2. **개발자 개인 지식** — 팀이 축적한 노하우/스니펫 (의미 기반 검색)
@@ -23,7 +23,14 @@ LLM 은 사용자 질의로부터 `scope` (검색 영역) 와 `action` (하위 �
 
 ## 🛠️ 제공 도구 (Tools)
 
-이 MCP 서버는 **단 하나의 도구**만 외부에 노출합니다: `egov_search_knowledge`. 과거 분리되어 있던 십수 개의 도구(`search_guide`, `search_standard_terms`, `list_common_components` 등) 는 이 도구의 `scope`/`action` 파라미터로 통합되었으며, 옛 이름으로 호출하면 안내 에러가 반환됩니다.
+이 MCP 서버는 **두 개의 도구**를 외부에 노출합니다.
+
+| Tool | 분류 | 핵심 용도 |
+|------|------|-----------|
+| [`egov_ddl_assist`](#egov_ddl_assist) | 스키마 설계/검토 oracle | 한글 → 행정안전부 표준 영문 컬럼명/SQL 타입 변환·검증, 테이블 개념별 후보 제안 (CREATE TABLE 작성 보조) |
+| [`egov_search_knowledge`](#egov_search_knowledge) | 통합 지식/레퍼런스 검색 (읽기 전용) | 가이드·개인 지식·표준 용어·공통컴포넌트(미리 정의된 CREATE TABLE 포함)·호환성 SW 를 하나의 관문으로 조회 |
+
+두 도구의 역할 경계는 명확합니다 — **새 스키마를 한글 도메인 지식으로 설계/검토할 때는 `egov_ddl_assist`**, **이미 존재하는 자료(가이드·공통컴포넌트의 미리 정의된 DDL·표준용어 사전 검색)를 조회할 때는 `egov_search_knowledge`** 입니다. 옛 이름의 분리 도구(`search_guide`, `search_standard_terms`, `list_common_components` 등)는 모두 `egov_search_knowledge` 의 `scope`/`action` 파라미터로 통합되었습니다. 이 이름들은 더 이상 등록되지 않으므로, 옛 이름으로 호출하면 SDK 가 표준 JSON-RPC `Method not found` 에러를 반환합니다.
 
 ### `egov_search_knowledge`
 
@@ -58,6 +65,33 @@ LLM 은 사용자 질의로부터 `scope` (검색 영역) 와 `action` (하위 �
 | `readSource`   | 특정 `filePath` 의 원본 소스 코드                                              |
 | `ddl`          | `dbType` (mysql/oracle/h2) 별 CREATE TABLE 문                                |
 | `dml`          | 초기 데이터 INSERT 문                                                         |
+
+### `egov_ddl_assist`
+
+행정안전부 공통표준용어 사전(`templates/standard_terms/*.csv`, 8차 2025-11) + 기관 custom 사전(`templates/custom_terms/*.csv`, 단일 기관)을 lookup oracle 로 노출합니다. LLM 이 한글 도메인으로 CREATE TABLE 을 작성할 때 표준/Custom 영문 컬럼명과 SQL 타입을 *조각* 단위로 받아 직접 조립하는 방식 — 도구는 DDL 문장을 생성하지 않습니다.
+
+**우선순위**: `custom > standard` (transparent override). 같은 한글명이 양쪽 모두에 있으면 custom 이 우선되고, 응답에 가려진 표준 정의가 `standardEquivalent` 로 함께 노출됩니다. 기관 custom 등록은 [templates/custom_terms/README.md](templates/custom_terms/README.md) 참고.
+
+**Custom 만 빠른 재적재**: 기관 custom CSV 만 수정한 경우 `npm run build-index:custom` (1~2초) 로 LanceDB 재벡터화 없이 바로 반영. 전체 인덱싱은 `npm run build-index` (5~15분).
+
+| 파라미터 | 타입 | 필수 | 설명 |
+|---------|-----|------|------|
+| `action` | enum | ✓ | `lookup_term` / `decompose_phrase` / `resolve_domain` / `propose_column` / `validate_column` / `suggest_table_columns` |
+| `input` | string | ✓ | 한글 용어/구문, 도메인명 또는 영문 컬럼명 |
+| `domainHint` | string | - | `propose_column` 분해 폴백 시 SQL 타입 결정용 도메인명 |
+| `sqlType` | string | - | `validate_column` 전용. 실제 사용된 SQL 타입 (예: `VARCHAR(100)`) |
+| `limit` | number | - | `suggest_table_columns` 전용. 후보 수 상한 (기본 30, 최대 100) |
+
+| action | 입력 예시 | 출력 핵심 |
+|--------|----------|----------|
+| `lookup_term` | `사용자명` | `{matchType: "exact", term: {englishName: "USER_NM", resolvedDomain.ddlFragment: "VARCHAR(100)", synonyms, ...}}` |
+| `decompose_phrase` | `신규사용자등록일자` | `{tokens: [{korean:"신규", english:"NEW"}, ...], suggestedColumnName: "NEW_USER_REG_YMD"}` |
+| `resolve_domain` | `명V100` | `{domain: {dataType:"VARCHAR", dataLength:"100", ddlFragment:"VARCHAR(100)"}}` |
+| `propose_column` | `회원가입일자` | `{method:"exact", ddlFragment:"MBR_JOIN_YMD CHAR(8)", confidence:1.0}` |
+| `validate_column` | `USER_NM` + `sqlType:"VARCHAR(50)"` | `{status:"type_mismatch", findings:[{level:"error", code:"TYPE_MISMATCH", message:"길이 불일치 (입력 50, 표준 100)"}]}` |
+| `suggest_table_columns` | `게시판` | `{total, suggestions:[{koreanName:"게시판내용", englishName:"BBS_CN", ddlFragment:"BBS_CN VARCHAR(4000)", matchType:"prefix"}, ...]}` |
+
+**`propose_column` 매칭 우선순위**: ① exact (표준 용어 정확 매칭, `confidence: 1.0`) → ② synonym (동의어 매칭, `0.85`, `note` 로 표준명 권장) → ③ composed (표준 단어 longest-prefix 분해 후 영문 조합, `0.5~0.85`; SQL 타입은 `domainHint` 필요).
 
 ## 🚀 설치 (Installation)
 
@@ -212,7 +246,7 @@ Claude:
 ┌────────────────────────────────────────────────┐
 │         eGovFrame MCP Search Server            │
 ├────────────────────────────────────────────────┤
-│  egov_search_knowledge (단일 외부 도구)         │
+│  egov_search_knowledge + egov_ddl_assist        │
 │                  │                              │
 │        ┌─────────┴──────────┐                  │
 │        ▼                    ▼                  │
@@ -237,7 +271,8 @@ Claude:
 | `rag/embedder.ts`              | 로컬 임베딩 (Transformers.js)                                   |
 | `rag/guideManager.ts`          | LanceDB 기반 공식 가이드 검색                                    |
 | `rag/knowledgeManager.ts`      | LanceDB 기반 개인 지식 검색                                      |
-| `tools/egovSearchKnowledge.ts` | 단일 외부 도구 — scope/action 라우터                             |
+| `tools/egovSearchKnowledge.ts` | 외부 도구 1 — 통합 검색 scope/action 라우터                        |
+| `tools/egovDdlAssist.ts`       | 외부 도구 2 — DDL 작성 보조 (한글 → 표준 영문/SQL 타입)            |
 | `tools/commonComponents.ts`    | 공통컴포넌트 메타/의존성/DDL/DML/소스 조회                        |
 | `tools/standardTerms.ts`       | 표준 용어/단어/도메인 정형 검색                                   |
 | `tools/compatibility.ts`       | 호환 SW 검색                                                   |
@@ -249,7 +284,7 @@ Claude:
 ```
 egovframe-mcp-search/
 ├── src/
-│   ├── index.ts                            # MCP 서버 진입점 (egov_search_knowledge 만 노출)
+│   ├── index.ts                            # MCP 서버 진입점 (egov_search_knowledge + egov_ddl_assist 노출)
 │   ├── database/
 │   │   ├── sqliteManager.ts                # SQLite 접근 계층
 │   │   └── hybridManager.ts                # SQLite + LanceDB 통합
@@ -274,7 +309,7 @@ egovframe-mcp-search/
 │   ├── common-components-src/              # 공통컴포넌트 소스/SQL 원본
 │   ├── common-components.json              # 공통컴포넌트 메타/의존성 매니페스트
 │   ├── compatibility/                      # 호환 SW 카탈로그 (Excel/JSON)
-│   ├── ddlguide/                           # 표준 용어/단어/도메인 원본
+│   ├── standard_terms/                     # 표준 용어/단어/도메인 CSV (data.go.kr 8차)
 │   ├── developer_knowledge/                # 개인 지식 원본
 │   └── egovframe_guide/                    # 공식 가이드 마크다운/PDF
 │
@@ -284,7 +319,7 @@ egovframe-mcp-search/
 │   └── developer_knowledge.lance/          # LanceDB (개인 지식 임베딩)
 │
 ├── tests/                                  # Vitest 통합 테스트
-│   └── integration/server.test.ts          # 노출 surface 고정 (egov_search_knowledge 만)
+│   └── integration/server.test.ts          # 노출 surface 고정 (egov_search_knowledge, egov_ddl_assist)
 │
 ├── docs/                                   # 상세 문서
 │   ├── INDEX.md                            # 📚 문서 인덱스

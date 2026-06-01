@@ -24,9 +24,12 @@ knowledge-base/
 | # | 테이블 | 설명 | 데이터 소스 | 레코드 수 |
 |---|--------|------|-------------|-----------|
 | 1 | `compatibility_software` | 호환성 소프트웨어 정보 | `templates/compatibility/compatibility-software.json` | ~481 |
-| 2 | `standard_terms` | 표준 용어 | `templates/ddlguide/standard-terms.json` | 535 |
-| 3 | `standard_words` | 표준 단어 | `templates/ddlguide/standard-words.json` | 339 |
-| 4 | `standard_domains` | 표준 도메인 | `templates/ddlguide/standard-domains.json` | 62 |
+| 2 | `standard_terms` | 표준 용어 (행안부) | `templates/standard_terms/mois_standard_terms.csv` | ~13,159 |
+| 3 | `standard_words` | 표준 단어 (행안부) | `templates/standard_terms/mois_standard_words.csv` | ~3,280 |
+| 4 | `standard_domains` | 표준 도메인 (행안부) | `templates/standard_terms/mois_standard_domains.csv` | ~126 |
+| 4a | `custom_terms` | 기관 Custom 용어 (override 우선) | `templates/custom_terms/custom_standard_terms.csv` | 기관별 |
+| 4b | `custom_words` | 기관 Custom 단어 | `templates/custom_terms/custom_standard_words.csv` | 기관별 |
+| 4c | `custom_domains` | 기관 Custom 도메인 | `templates/custom_terms/custom_standard_domains.csv` | 기관별 |
 | 5 | `component_categories` | 공통컴포넌트 카테고리 | `templates/common-components.json` | 37 |
 | 6 | `common_components` | 공통컴포넌트 | `templates/common-components.json` | 147 |
 | 7 | `component_dependencies` | 컴포넌트 의존성 | `templates/common-components.json` | ~1,400 |
@@ -79,20 +82,25 @@ CREATE INDEX idx_compat_verified_date ON compatibility_software(verified_date DE
 
 ### 2. standard_terms (표준 용어)
 
-eGovFrame 표준 용어 사전입니다. 535개 용어를 포함합니다.
+행정안전부 공공데이터 공통표준용어 (data.go.kr/15156379, 8차 2025-11). 폐기 표기된 행은 적재 시 제외하여 약 13,159개 활성 용어만 보존.
 
 ```sql
 CREATE TABLE standard_terms (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  korean_name TEXT NOT NULL UNIQUE,     -- 한글명 (예: '게시판ID')
-  english_name TEXT NOT NULL,           -- 영문약어명 (예: 'BBS_ID')
-  description TEXT,                     -- 설명
-  domain_name TEXT,                     -- 도메인명
+  korean_name TEXT NOT NULL UNIQUE,     -- 공통표준용어명 (예: '게시판ID')
+  english_name TEXT NOT NULL,           -- 공통표준용어영문약어명 (예: 'BBS_ID')
+  description TEXT,                     -- 공통표준용어설명
+  domain_name TEXT,                     -- 공통표준도메인명 (FK 성격, 비강제)
   allowed_values TEXT,                  -- 허용값
   storage_format TEXT,                  -- 저장 형식
-  display_format TEXT,                  -- 표시 형식
-  standard_code_name TEXT,              -- 행정표준 코드명
-  authority TEXT                        -- 소관 기관명
+  display_format TEXT,                  -- 표현 형식
+  standard_code_name TEXT,              -- 행정표준코드명
+  authority TEXT,                       -- 소관기관명
+  synonyms TEXT,                        -- 용어 이음동의어 목록 (LLM DDL 보조의 핵심 신호)
+  revision_round TEXT,                  -- 제정차수 (예: '8차(2025-11)')
+  revision_type TEXT,                   -- 개정구분명 (변경/폐기)
+  revision_item TEXT,                   -- 개정항목
+  revision_reason TEXT                  -- 개정사유
 );
 ```
 
@@ -101,7 +109,11 @@ CREATE TABLE standard_terms (
 CREATE INDEX idx_term_english ON standard_terms(english_name);
 ```
 
-**데이터 소스:** `templates/ddlguide/standard-terms.json`
+**데이터 소스:** `templates/standard_terms/mois_standard_terms.csv` (data.go.kr/data/15156379)
+
+**적재 규칙:**
+- `제정차수` 가 `(폐기)` 표기이고 `폐기후제정` 이 아닌 행은 제외 (deprecated 표준이 DDL 생성에 잡히지 않게).
+- CSV 빈 셀과 `-` 는 NULL 로 정규화.
 
 **관련 공개 도구:** `egov_search_knowledge(scope: "terms")`
 
@@ -109,19 +121,23 @@ CREATE INDEX idx_term_english ON standard_terms(english_name);
 
 ### 3. standard_words (표준 단어)
 
-공통표준 단어 사전입니다. 339개 단어를 포함합니다.
+행정안전부 공공데이터 공통표준단어 (data.go.kr/15156439, 8차 2025-11). 폐기 행 제외 후 약 3,280개 활성 단어. 단어는 표준 용어를 구성하는 최소 단위로, DDL 컬럼명 신규 조합 시 사용됨.
 
 ```sql
 CREATE TABLE standard_words (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  korean_name TEXT NOT NULL UNIQUE,     -- 공통표준 단어명 (예: '게시판')
-  english_name TEXT NOT NULL,           -- 공통표준단어 영문약어명 (예: 'BBS')
+  korean_name TEXT NOT NULL UNIQUE,     -- 공통표준단어명 (예: '게시판')
+  english_name TEXT NOT NULL,           -- 공통표준단어영문약어명 (예: 'BBS')
   english_full_name TEXT,               -- 공통표준단어 영문명 (예: 'Bulletin Board System')
   description TEXT,                     -- 공통표준단어 설명
-  is_format_word INTEGER DEFAULT 0,     -- 형식단어 여부 (0/1)
-  domain_category TEXT,                 -- 공통표준도메인 분류명
+  is_format_word INTEGER DEFAULT 0,     -- 형식단어여부 (0/1) — 도메인을 의미하는 단어
+  domain_category TEXT,                 -- 공통표준도메인분류명 (형식단어인 경우)
   synonyms TEXT,                        -- 이음동의어 목록
-  forbidden_words TEXT                  -- 금칙어 목록
+  forbidden_words TEXT,                 -- 금칙어 목록
+  revision_round TEXT,                  -- 제정차수
+  revision_type TEXT,                   -- 개정구분명
+  revision_item TEXT,                   -- 개정항목
+  revision_reason TEXT                  -- 개정사유
 );
 ```
 
@@ -130,63 +146,65 @@ CREATE TABLE standard_words (
 CREATE INDEX idx_word_english ON standard_words(english_name);
 ```
 
-**데이터 소스:** `templates/ddlguide/standard-words.json`
+**데이터 소스:** `templates/standard_terms/mois_standard_words.csv` (data.go.kr/data/15156439)
 
-**필드 매핑:**
-
-| JSON 필드명 | DB 컬럼명 | 설명 |
-|-------------|-----------|------|
-| `공통표준 단어명` | `korean_name` | 한글 단어명 |
-| `공통표준단어영문약어명` | `english_name` | 영문 약어 |
-| `공통표준단어영문명` | `english_full_name` | 영문 전체명 |
-| `공통표준단어 설명` | `description` | 단어 설명 |
-| `형식단어 여부` | `is_format_word` | Y→1, N→0 |
-| `공통표준도메인 분류명` | `domain_category` | '-'는 NULL |
-| `이음동의어 목록` | `synonyms` | '-'는 NULL |
-| `금칙어 목록` | `forbidden_words` | '-'는 NULL |
+**적재 규칙:** `제정차수` 가 `(폐기)` 인 행은 제외. `형식단어여부` 는 `Y` → 1, 그 외 → 0.
 
 ---
 
 ### 4. standard_domains (표준 도메인)
 
-공통표준 도메인 정의입니다. 62개 도메인을 포함합니다.
+행정안전부 공공데이터 공통표준도메인 (data.go.kr/15156442, 8차 2025-11). 폐기 행 제외 후 약 126개 활성 도메인. DDL 생성 시 도메인명 → SQL 데이터 타입/길이 매핑의 정답지 역할.
 
 ```sql
 CREATE TABLE standard_domains (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  domain_name TEXT NOT NULL UNIQUE,     -- 공통표준도메인명 (예: '금액N15')
-  domain_group TEXT,                    -- 공통표준도메인 그룹명 (예: '금액')
-  domain_category TEXT,                 -- 공통표준도메인 분류명 (예: '금액')
-  description TEXT,                     -- 공통표준도메인 설명
-  data_type TEXT NOT NULL,              -- 데이터 타입 (예: 'NUMERIC', 'VARCHAR')
-  data_length TEXT,                     -- 데이터 길이 (예: '15')
-  decimal_length TEXT,                  -- 소수점 길이
-  storage_format TEXT,                  -- 저장 형식
-  display_format TEXT,                  -- 표현 형식
+  domain_name TEXT NOT NULL UNIQUE,     -- 공통표준도메인명 (예: '금액N15', '명V100')
+  domain_group TEXT,                    -- 공통표준도메인그룹명 (예: '금액')
+  domain_category TEXT,                 -- 공통표준도메인분류명 (예: '금액', '가격')
+  description TEXT,                     -- 공통표준도메인설명
+  data_type TEXT NOT NULL,              -- 데이터타입 (NUMERIC | VARCHAR | CHAR | DATETIME)
+  data_length TEXT,                     -- 데이터길이 (예: '15')
+  decimal_length TEXT,                  -- 데이터소수점길이
+  storage_format TEXT,                  -- 저장형식 (예: '999999999999999')
+  display_format TEXT,                  -- 표현형식
   unit TEXT,                            -- 단위 (예: '원', '건')
   allowed_values TEXT,                  -- 허용값
-  standard_code_name TEXT               -- 행정표준 코드명
+  standard_code_name TEXT,              -- (구) 행정표준 코드명 — 8차 CSV 에는 없음, 레거시 호환용
+  revision_round TEXT,                  -- 제정차수
+  revision_type TEXT,                   -- 개정구분명
+  revision_item TEXT,                   -- 개정항목
+  revision_reason TEXT                  -- 개정사유
 );
 ```
 
-**데이터 소스:** `templates/ddlguide/standard-domains.json`
+**데이터 소스:** `templates/standard_terms/mois_standard_domains.csv` (data.go.kr/data/15156442)
 
-**필드 매핑:**
+**적재 규칙:** `제정차수` 가 `(폐기)` 인 행은 제외. CSV 빈 셀과 `-` 는 NULL 로 정규화.
 
-| JSON 필드명 | DB 컬럼명 | 설명 |
-|-------------|-----------|------|
-| `공통표준도메인명` | `domain_name` | 도메인명 |
-| `공통표준도메인 그룹명` | `domain_group` | 도메인 그룹 |
-| `공통표준도메인 분류명` | `domain_category` | 도메인 분류 |
-| `공통표준도메인 설명` | `description` | 도메인 설명 |
-| `데이터 타입` | `data_type` | 데이터 타입 |
-| `데이터 길이` | `data_length` | 데이터 크기 |
-| `소수점길이` | `decimal_length` | '-'는 NULL |
-| `저장형식` | `storage_format` | '-'는 NULL |
-| `표현형식` | `display_format` | '-'는 NULL |
-| `단위` | `unit` | '-'는 NULL |
-| `허용값` | `allowed_values` | '-'는 NULL |
-| `행정표준 코드명` | `standard_code_name` | '-'는 NULL |
+---
+
+### 4a-4c. custom_terms / custom_words / custom_domains (기관 Custom 사전)
+
+행정안전부 공통표준용어를 기관별로 확장한 사전. **단일 기관 deployment** 기준. 스키마는 standard 짝과 완전히 동일하게 미러링 (직렬화/검증 코드 재사용).
+
+```sql
+-- custom_terms: standard_terms 와 동일한 컬럼 셋
+-- custom_words: standard_words 와 동일한 컬럼 셋
+-- custom_domains: standard_domains 와 동일한 컬럼 셋
+```
+
+**데이터 소스:** `templates/custom_terms/custom_standard_*.csv` (gitignored, 기관별 자산)
+
+**우선순위 정책 — `egov_ddl_assist` lookup 시:**
+1. custom 사전에서 먼저 검색
+2. 매치되면 standard 동등 항목(같은 korean_name/domain_name)을 함께 조회해 `standardEquivalent` 로 노출
+3. custom 미매치 시 standard 사전 검색
+4. 양쪽 모두 미매치 시 동의어 fallback (custom 동의어 → standard 동의어 순)
+
+**build-index 시 충돌 감지:** 같은 korean_name 이 양쪽에 존재하지만 english_name/domain_name 이 다르면 콘솔에 경고 표시 (의도된 override 인지 확인용).
+
+**적재 규칙:** standard 사전과 동일. `(폐기)` 행 제외, CSV 빈 셀/`-` → NULL.
 
 ---
 
