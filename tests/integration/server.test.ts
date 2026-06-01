@@ -2,13 +2,13 @@
  * Server connectivity & tool inventory integration test
  *
  * MCP 서버가 stdio 로 정상 부팅되고, ListTools 가 현재 노출하기로 합의된 도구
- * (egov_search_knowledge 단 하나) 만 돌려주는지 검증한다.
+ * (egov_search_knowledge, egov_ddl_assist) 만 돌려주는지 검증한다.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { createMcpClient } from "./_helper.js";
 
-const EXPECTED_TOOLS = ["egov_search_knowledge"];
+const EXPECTED_TOOLS = ["egov_ddl_assist", "egov_search_knowledge"];
 
 describe("integration — MCP server connectivity & inventory", () => {
   let client: Client;
@@ -26,7 +26,7 @@ describe("integration — MCP server connectivity & inventory", () => {
     expect(Array.isArray(tools.tools)).toBe(true);
   });
 
-  it("노출 도구가 정확히 egov_search_knowledge 하나뿐이다", async () => {
+  it("노출 도구가 정확히 egov_search_knowledge, egov_ddl_assist 뿐이다", async () => {
     const tools = await client.listTools();
     const actual = tools.tools.map((t) => t.name).sort();
     expect(actual).toEqual(EXPECTED_TOOLS);
@@ -49,5 +49,25 @@ describe("integration — MCP server connectivity & inventory", () => {
     for (const key of ["query", "scope", "action", "filters", "limit", "strictScope"]) {
       expect(props[key], `${key} 가 inputSchema 에 없습니다`).toBeDefined();
     }
+  });
+
+  it("egov_ddl_assist 가 action/input/domainHint 파라미터를 노출한다", async () => {
+    const tools = await client.listTools();
+    const ddl = tools.tools.find((t) => t.name === "egov_ddl_assist");
+    expect(ddl).toBeDefined();
+    const props = (ddl!.inputSchema as any).properties || {};
+    for (const key of ["action", "input", "domainHint"]) {
+      expect(props[key], `${key} 가 inputSchema 에 없습니다`).toBeDefined();
+    }
+    expect(props.action.enum).toEqual(
+      expect.arrayContaining([
+        "lookup_term",
+        "decompose_phrase",
+        "resolve_domain",
+        "propose_column",
+        "validate_column",
+        "suggest_table_columns",
+      ]),
+    );
   });
 });
