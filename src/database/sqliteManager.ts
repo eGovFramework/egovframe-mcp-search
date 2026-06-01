@@ -14,6 +14,9 @@ import {
   StandardTerm,
   StandardWord,
   StandardDomain,
+  CustomTerm,
+  CustomWord,
+  CustomDomain,
   CompatibilitySearchFilter,
   CompatibilitySummary,
   ComponentCategory,
@@ -81,7 +84,12 @@ export class SQLiteManager {
         storage_format TEXT,
         display_format TEXT,
         standard_code_name TEXT,
-        authority TEXT
+        authority TEXT,
+        synonyms TEXT,
+        revision_round TEXT,
+        revision_type TEXT,
+        revision_item TEXT,
+        revision_reason TEXT
       );
 
       -- 표준 단어 테이블
@@ -94,7 +102,11 @@ export class SQLiteManager {
         is_format_word INTEGER DEFAULT 0,
         domain_category TEXT,
         synonyms TEXT,
-        forbidden_words TEXT
+        forbidden_words TEXT,
+        revision_round TEXT,
+        revision_type TEXT,
+        revision_item TEXT,
+        revision_reason TEXT
       );
 
       -- 표준 도메인 테이블
@@ -111,8 +123,74 @@ export class SQLiteManager {
         display_format TEXT,
         unit TEXT,
         allowed_values TEXT,
-        standard_code_name TEXT
+        standard_code_name TEXT,
+        revision_round TEXT,
+        revision_type TEXT,
+        revision_item TEXT,
+        revision_reason TEXT
       );
+
+      -- ==================== Custom 사전 (기관별 확장, 단일 기관) ====================
+      -- standard_* 와 동일한 컬럼. 우선순위: custom > standard.
+
+      CREATE TABLE IF NOT EXISTS custom_terms (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        korean_name TEXT NOT NULL UNIQUE,
+        english_name TEXT NOT NULL,
+        description TEXT,
+        domain_name TEXT,
+        allowed_values TEXT,
+        storage_format TEXT,
+        display_format TEXT,
+        standard_code_name TEXT,
+        authority TEXT,
+        synonyms TEXT,
+        revision_round TEXT,
+        revision_type TEXT,
+        revision_item TEXT,
+        revision_reason TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS custom_words (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        korean_name TEXT NOT NULL UNIQUE,
+        english_name TEXT NOT NULL,
+        english_full_name TEXT,
+        description TEXT,
+        is_format_word INTEGER DEFAULT 0,
+        domain_category TEXT,
+        synonyms TEXT,
+        forbidden_words TEXT,
+        revision_round TEXT,
+        revision_type TEXT,
+        revision_item TEXT,
+        revision_reason TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS custom_domains (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        domain_name TEXT NOT NULL UNIQUE,
+        domain_group TEXT,
+        domain_category TEXT,
+        description TEXT,
+        data_type TEXT NOT NULL,
+        data_length TEXT,
+        decimal_length TEXT,
+        storage_format TEXT,
+        display_format TEXT,
+        unit TEXT,
+        allowed_values TEXT,
+        standard_code_name TEXT,
+        revision_round TEXT,
+        revision_type TEXT,
+        revision_item TEXT,
+        revision_reason TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_custom_term_english
+        ON custom_terms(english_name);
+      CREATE INDEX IF NOT EXISTS idx_custom_word_english
+        ON custom_words(english_name);
 
       -- 인덱스 생성
       CREATE INDEX IF NOT EXISTS idx_compat_framework 
@@ -223,7 +301,47 @@ export class SQLiteManager {
       END;
     `);
 
+    this.runMigrations();
+
     console.error('✅ SQLite 데이터베이스 초기화 완료');
+  }
+
+  /**
+   * 기존 DB 스키마에 누락된 컬럼을 ALTER TABLE 로 보충.
+   * CREATE TABLE IF NOT EXISTS 는 기존 테이블을 건드리지 않으므로,
+   * 새 컬럼은 여기서 명시적으로 추가해야 한다.
+   */
+  private runMigrations() {
+    this.ensureColumns('standard_terms', [
+      ['synonyms', 'TEXT'],
+      ['revision_round', 'TEXT'],
+      ['revision_type', 'TEXT'],
+      ['revision_item', 'TEXT'],
+      ['revision_reason', 'TEXT'],
+    ]);
+    this.ensureColumns('standard_words', [
+      ['revision_round', 'TEXT'],
+      ['revision_type', 'TEXT'],
+      ['revision_item', 'TEXT'],
+      ['revision_reason', 'TEXT'],
+    ]);
+    this.ensureColumns('standard_domains', [
+      ['revision_round', 'TEXT'],
+      ['revision_type', 'TEXT'],
+      ['revision_item', 'TEXT'],
+      ['revision_reason', 'TEXT'],
+    ]);
+  }
+
+  private ensureColumns(table: string, columns: Array<[string, string]>) {
+    const existing = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    const have = new Set(existing.map((c) => c.name));
+    for (const [name, type] of columns) {
+      if (!have.has(name)) {
+        this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+        console.error(`🛠  마이그레이션: ${table}.${name} 추가`);
+      }
+    }
   }
 
   // ==================== 호환성 소프트웨어 관리 ====================
@@ -435,14 +553,29 @@ export class SQLiteManager {
   // ==================== 표준 용어 관리 ====================
 
   /**
+   * 표준 용어/단어/도메인 테이블을 모두 비운다.
+   * CSV 가 진실 공급원이므로 build-index 매 회 호출하여 deterministic 재빌드 보장.
+   * 옛 차수에만 존재하고 8차 CSV 에서 빠진 행이 잔존하지 않도록 막는 목적.
+   */
+  clearStandardReferenceData(): void {
+    this.db.exec(`
+      DELETE FROM standard_terms;
+      DELETE FROM standard_words;
+      DELETE FROM standard_domains;
+    `);
+    console.error('🧹 표준 용어/단어/도메인 테이블 비움');
+  }
+
+  /**
    * 표준 용어 추가
    */
   addStandardTerm(term: Omit<StandardTerm, 'id'>): number {
     const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO standard_terms 
-      (korean_name, english_name, description, domain_name, 
-       allowed_values, storage_format, display_format, standard_code_name, authority)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO standard_terms
+      (korean_name, english_name, description, domain_name,
+       allowed_values, storage_format, display_format, standard_code_name, authority,
+       synonyms, revision_round, revision_type, revision_item, revision_reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const info = stmt.run(
@@ -454,7 +587,12 @@ export class SQLiteManager {
       term.storage_format || null,
       term.display_format || null,
       term.standard_code_name || null,
-      term.authority || null
+      term.authority || null,
+      term.synonyms || null,
+      term.revision_round || null,
+      term.revision_type || null,
+      term.revision_item || null,
+      term.revision_reason || null
     );
 
     return info.lastInsertRowid as number;
@@ -465,10 +603,11 @@ export class SQLiteManager {
    */
   addStandardTermsBatch(terms: Omit<StandardTerm, 'id'>[]): void {
     const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO standard_terms 
-      (korean_name, english_name, description, domain_name, 
-       allowed_values, storage_format, display_format, standard_code_name, authority)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO standard_terms
+      (korean_name, english_name, description, domain_name,
+       allowed_values, storage_format, display_format, standard_code_name, authority,
+       synonyms, revision_round, revision_type, revision_item, revision_reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const transaction = this.db.transaction((list: typeof terms) => {
@@ -482,7 +621,12 @@ export class SQLiteManager {
           term.storage_format || null,
           term.display_format || null,
           term.standard_code_name || null,
-          term.authority || null
+          term.authority || null,
+          term.synonyms || null,
+          term.revision_round || null,
+          term.revision_type || null,
+          term.revision_item || null,
+          term.revision_reason || null
         );
       }
     });
@@ -550,16 +694,95 @@ export class SQLiteManager {
     ) as StandardTerm[];
   }
 
+  /**
+   * 영문 약어로 표준 용어 조회 (DDL validate_column 용).
+   * english_name 은 UNIQUE 가 아니므로 여러 건이 반환될 수 있음.
+   */
+  getStandardTermsByEnglishName(englishName: string): StandardTerm[] {
+    return this.db.prepare(`
+      SELECT * FROM standard_terms
+      WHERE english_name = ?
+      ORDER BY korean_name
+    `).all(englishName) as StandardTerm[];
+  }
+
+  /**
+   * 한글 개념 키워드로 관련 표준 용어 후보 ranked 리스트 반환 (suggest_table_columns 용).
+   * 매칭 우선순위:
+   *   1. korean_name 정확 일치
+   *   2. korean_name 이 키워드로 시작 (prefix)
+   *   3. korean_name 안에 키워드 포함 (contains)
+   *   4. description 안에 키워드 포함 (description)
+   */
+  suggestTermsForConcept(
+    keyword: string,
+    limit: number = 30,
+  ): Array<StandardTerm & { matchRank: number }> {
+    return this.db
+      .prepare(
+        `
+      SELECT *,
+        CASE
+          WHEN korean_name = ? THEN 1
+          WHEN korean_name LIKE ? || '%' THEN 2
+          WHEN korean_name LIKE '%' || ? || '%' THEN 3
+          WHEN description LIKE '%' || ? || '%' THEN 4
+          ELSE 5
+        END AS matchRank
+      FROM standard_terms
+      WHERE korean_name LIKE '%' || ? || '%'
+         OR description LIKE '%' || ? || '%'
+      ORDER BY matchRank, LENGTH(korean_name), korean_name
+      LIMIT ?
+    `,
+      )
+      .all(keyword, keyword, keyword, keyword, keyword, keyword, limit) as Array<
+      StandardTerm & { matchRank: number }
+    >;
+  }
+
+  /**
+   * 동의어 컬럼에서 정확한 한글명 매칭으로 표준 용어를 역추적한다.
+   *
+   * synonyms 컬럼은 콤마 구분 문자열 (예: "사용자이름, 사용인명, 사용인이름").
+   * LIKE 로 1차 후보를 좁힌 뒤 JS 에서 split-and-trim 으로 정확 매칭 검증.
+   * "사용자명" 검색 시 "회사사용자명" 같은 부분 일치를 걸러내기 위한 단계.
+   */
+  lookupTermsBySynonym(korean: string): StandardTerm[] {
+    const candidates = this.db.prepare(`
+      SELECT * FROM standard_terms
+      WHERE synonyms LIKE ?
+    `).all(`%${korean}%`) as StandardTerm[];
+
+    return candidates.filter((t) => {
+      if (!t.synonyms) return false;
+      const tokens = t.synonyms.split(',').map((s) => s.trim());
+      return tokens.includes(korean);
+    });
+  }
+
   // ==================== 표준 단어 관리 ====================
+
+  /**
+   * 한글 단어명으로 표준 단어 단일 조회 (DDL 보조 longest-prefix 분해용).
+   */
+  getStandardWordByName(koreanName: string): StandardWord | undefined {
+    return this.db.prepare(`
+      SELECT * FROM standard_words
+      WHERE korean_name = ?
+    `).get(koreanName) as StandardWord | undefined;
+  }
 
   /**
    * 표준 단어 배치 추가
    */
   addStandardWordsBatch(words: Omit<StandardWord, 'id'>[]): void {
     const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO standard_words 
-      (korean_name, english_name, english_full_name, description, is_format_word, domain_category, synonyms, forbidden_words)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO standard_words
+      (korean_name, english_name, english_full_name, description, is_format_word,
+       domain_category, synonyms, forbidden_words,
+       revision_round, revision_type, revision_item, revision_reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const transaction = this.db.transaction((list: typeof words) => {
@@ -572,7 +795,11 @@ export class SQLiteManager {
           word.is_format_word ? 1 : 0,
           word.domain_category || null,
           word.synonyms || null,
-          word.forbidden_words || null
+          word.forbidden_words || null,
+          word.revision_round || null,
+          word.revision_type || null,
+          word.revision_item || null,
+          word.revision_reason || null
         );
       }
     });
@@ -584,13 +811,25 @@ export class SQLiteManager {
   // ==================== 표준 도메인 관리 ====================
 
   /**
+   * 도메인명으로 단일 조회 (DDL 보조 SQL 타입 변환용).
+   */
+  getStandardDomainByName(domainName: string): StandardDomain | undefined {
+    return this.db.prepare(`
+      SELECT * FROM standard_domains
+      WHERE domain_name = ?
+    `).get(domainName) as StandardDomain | undefined;
+  }
+
+  /**
    * 표준 도메인 배치 추가
    */
   addStandardDomainsBatch(domains: Omit<StandardDomain, 'id'>[]): void {
     const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO standard_domains 
-      (domain_name, domain_group, domain_category, description, data_type, data_length, decimal_length, storage_format, display_format, unit, allowed_values, standard_code_name)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO standard_domains
+      (domain_name, domain_group, domain_category, description, data_type,
+       data_length, decimal_length, storage_format, display_format, unit, allowed_values, standard_code_name,
+       revision_round, revision_type, revision_item, revision_reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const transaction = this.db.transaction((list: typeof domains) => {
@@ -607,13 +846,195 @@ export class SQLiteManager {
           domain.display_format || null,
           domain.unit || null,
           domain.allowed_values || null,
-          domain.standard_code_name || null
+          domain.standard_code_name || null,
+          domain.revision_round || null,
+          domain.revision_type || null,
+          domain.revision_item || null,
+          domain.revision_reason || null
         );
       }
     });
 
     transaction(domains);
     console.error(`✅ ${domains.length}개의 표준 도메인 추가 완료`);
+  }
+
+  // ==================== Custom 사전 관리 (기관별) ====================
+
+  /**
+   * Custom 용어/단어/도메인 테이블을 모두 비운다.
+   * build-index 매 회 호출하여 templates/custom_terms/*.csv 기준으로 재빌드.
+   */
+  clearCustomReferenceData(): void {
+    this.db.exec(`
+      DELETE FROM custom_terms;
+      DELETE FROM custom_words;
+      DELETE FROM custom_domains;
+    `);
+    console.error('🧹 Custom 용어/단어/도메인 테이블 비움');
+  }
+
+  // -------- Custom 용어 --------
+
+  addCustomTermsBatch(terms: Omit<CustomTerm, 'id'>[]): void {
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO custom_terms
+      (korean_name, english_name, description, domain_name,
+       allowed_values, storage_format, display_format, standard_code_name, authority,
+       synonyms, revision_round, revision_type, revision_item, revision_reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const tx = this.db.transaction((list: typeof terms) => {
+      for (const t of list) {
+        stmt.run(
+          t.korean_name,
+          t.english_name,
+          t.description || null,
+          t.domain_name || null,
+          t.allowed_values || null,
+          t.storage_format || null,
+          t.display_format || null,
+          t.standard_code_name || null,
+          t.authority || null,
+          t.synonyms || null,
+          t.revision_round || null,
+          t.revision_type || null,
+          t.revision_item || null,
+          t.revision_reason || null,
+        );
+      }
+    });
+    tx(terms);
+    console.error(`✅ ${terms.length}개의 Custom 용어 추가 완료`);
+  }
+
+  getCustomTermByName(koreanName: string): CustomTerm | undefined {
+    return this.db
+      .prepare(`SELECT * FROM custom_terms WHERE korean_name = ?`)
+      .get(koreanName) as CustomTerm | undefined;
+  }
+
+  getCustomTermsByEnglishName(englishName: string): CustomTerm[] {
+    return this.db
+      .prepare(`SELECT * FROM custom_terms WHERE english_name = ? ORDER BY korean_name`)
+      .all(englishName) as CustomTerm[];
+  }
+
+  lookupCustomTermsBySynonym(korean: string): CustomTerm[] {
+    const candidates = this.db
+      .prepare(`SELECT * FROM custom_terms WHERE synonyms LIKE ?`)
+      .all(`%${korean}%`) as CustomTerm[];
+    return candidates.filter((t) => {
+      if (!t.synonyms) return false;
+      return t.synonyms.split(',').map((s) => s.trim()).includes(korean);
+    });
+  }
+
+  suggestCustomTermsForConcept(
+    keyword: string,
+    limit: number = 30,
+  ): Array<CustomTerm & { matchRank: number }> {
+    return this.db
+      .prepare(
+        `
+      SELECT *,
+        CASE
+          WHEN korean_name = ? THEN 1
+          WHEN korean_name LIKE ? || '%' THEN 2
+          WHEN korean_name LIKE '%' || ? || '%' THEN 3
+          WHEN description LIKE '%' || ? || '%' THEN 4
+          ELSE 5
+        END AS matchRank
+      FROM custom_terms
+      WHERE korean_name LIKE '%' || ? || '%'
+         OR description LIKE '%' || ? || '%'
+      ORDER BY matchRank, LENGTH(korean_name), korean_name
+      LIMIT ?
+    `,
+      )
+      .all(keyword, keyword, keyword, keyword, keyword, keyword, limit) as Array<
+      CustomTerm & { matchRank: number }
+    >;
+  }
+
+  // -------- Custom 단어 --------
+
+  addCustomWordsBatch(words: Omit<CustomWord, 'id'>[]): void {
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO custom_words
+      (korean_name, english_name, english_full_name, description, is_format_word,
+       domain_category, synonyms, forbidden_words,
+       revision_round, revision_type, revision_item, revision_reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const tx = this.db.transaction((list: typeof words) => {
+      for (const w of list) {
+        stmt.run(
+          w.korean_name,
+          w.english_name,
+          w.english_full_name || null,
+          w.description || null,
+          w.is_format_word ? 1 : 0,
+          w.domain_category || null,
+          w.synonyms || null,
+          w.forbidden_words || null,
+          w.revision_round || null,
+          w.revision_type || null,
+          w.revision_item || null,
+          w.revision_reason || null,
+        );
+      }
+    });
+    tx(words);
+    console.error(`✅ ${words.length}개의 Custom 단어 추가 완료`);
+  }
+
+  getCustomWordByName(koreanName: string): CustomWord | undefined {
+    return this.db
+      .prepare(`SELECT * FROM custom_words WHERE korean_name = ?`)
+      .get(koreanName) as CustomWord | undefined;
+  }
+
+  // -------- Custom 도메인 --------
+
+  addCustomDomainsBatch(domains: Omit<CustomDomain, 'id'>[]): void {
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO custom_domains
+      (domain_name, domain_group, domain_category, description, data_type,
+       data_length, decimal_length, storage_format, display_format, unit, allowed_values, standard_code_name,
+       revision_round, revision_type, revision_item, revision_reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const tx = this.db.transaction((list: typeof domains) => {
+      for (const d of list) {
+        stmt.run(
+          d.domain_name,
+          d.domain_group || null,
+          d.domain_category || null,
+          d.description || null,
+          d.data_type,
+          d.data_length || null,
+          d.decimal_length || null,
+          d.storage_format || null,
+          d.display_format || null,
+          d.unit || null,
+          d.allowed_values || null,
+          d.standard_code_name || null,
+          d.revision_round || null,
+          d.revision_type || null,
+          d.revision_item || null,
+          d.revision_reason || null,
+        );
+      }
+    });
+    tx(domains);
+    console.error(`✅ ${domains.length}개의 Custom 도메인 추가 완료`);
+  }
+
+  getCustomDomainByName(domainName: string): CustomDomain | undefined {
+    return this.db
+      .prepare(`SELECT * FROM custom_domains WHERE domain_name = ?`)
+      .get(domainName) as CustomDomain | undefined;
   }
 
   /**
@@ -625,6 +1046,9 @@ export class SQLiteManager {
       terms: this.db.prepare('SELECT COUNT(*) as count FROM standard_terms').get() as { count: number },
       words: this.db.prepare('SELECT COUNT(*) as count FROM standard_words').get() as { count: number },
       domains: this.db.prepare('SELECT COUNT(*) as count FROM standard_domains').get() as { count: number },
+      customTerms: this.db.prepare('SELECT COUNT(*) as count FROM custom_terms').get() as { count: number },
+      customWords: this.db.prepare('SELECT COUNT(*) as count FROM custom_words').get() as { count: number },
+      customDomains: this.db.prepare('SELECT COUNT(*) as count FROM custom_domains').get() as { count: number },
       componentCategories: this.db.prepare('SELECT COUNT(*) as count FROM component_categories').get() as { count: number },
       commonComponents: this.db.prepare('SELECT COUNT(*) as count FROM common_components').get() as { count: number },
     };
