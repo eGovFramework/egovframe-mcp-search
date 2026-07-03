@@ -299,10 +299,12 @@ export class HybridDatabaseManager {
 
     console.error('⚡ 전체 데이터베이스 최적화 시작...');
 
-    // SQLite 최적화
+    // SQLite 최적화 — 연결 재생성 없이 수행한다.
+    // (과거 close() 후 process.cwd() 기준 경로로 재오픈했는데, MCP 서버는 임의의
+    //  cwd 에서 기동되므로 잘못된 DB 를 열 수 있었고, getSQLite() 로 보관된
+    //  참조도 무효화되는 문제가 있었다.)
     console.error('  SQLite 최적화 중...');
-    this.sqlite.close();
-    this.sqlite = new SQLiteManager(path.join(process.cwd(), 'knowledge-base', 'egovframe.db'));
+    this.sqlite.optimize();
 
     // LanceDB 최적화
     console.error('  LanceDB 최적화 중...');

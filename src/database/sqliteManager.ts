@@ -9,6 +9,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { getSQLiteDBPath } from '../utils/projectPath.js';
 import { sanitizeFts5MatchQuery } from '../utils/fts5Query.js';
+import { escapeLikePattern } from '../utils/sqlLike.js';
 import {
   CompatibilitySoftware,
   StandardTerm,
@@ -426,13 +427,13 @@ export class SQLiteManager {
     }
 
     if (filters.vendor) {
-      sql += ' AND vendor LIKE ?';
-      params.push(`%${filters.vendor}%`);
+      sql += " AND vendor LIKE ? ESCAPE '\\'";
+      params.push(`%${escapeLikePattern(filters.vendor)}%`);
     }
 
     if (filters.productName) {
-      sql += ' AND product_name LIKE ?';
-      params.push(`%${filters.productName}%`);
+      sql += " AND product_name LIKE ? ESCAPE '\\'";
+      params.push(`%${escapeLikePattern(filters.productName)}%`);
     }
 
     sql += ' ORDER BY verified_date DESC';
@@ -474,10 +475,12 @@ export class SQLiteManager {
       return [];
     }
 
-    const clause = tokens.map(() => '(product_name LIKE ? OR vendor LIKE ? OR description LIKE ? OR category LIKE ?)').join(' OR ');
+    const clause = tokens
+      .map(() => "(product_name LIKE ? ESCAPE '\\' OR vendor LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' OR category LIKE ? ESCAPE '\\')")
+      .join(' OR ');
     const params: string[] = [];
     for (const t of tokens) {
-      const p = `%${t}%`;
+      const p = `%${escapeLikePattern(t)}%`;
       params.push(p, p, p, p);
     }
 
@@ -647,12 +650,13 @@ export class SQLiteManager {
         LIMIT ? OFFSET ?
       `).all(limit, offset) as StandardTerm[];
     }
+    const kw = `%${escapeLikePattern(keyword)}%`;
     return this.db.prepare(`
       SELECT * FROM standard_terms
-      WHERE korean_name LIKE ? OR english_name LIKE ? OR description LIKE ?
+      WHERE korean_name LIKE ? ESCAPE '\\' OR english_name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\'
       ORDER BY korean_name
       LIMIT ? OFFSET ?
-    `).all(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, limit, offset) as StandardTerm[];
+    `).all(kw, kw, kw, limit, offset) as StandardTerm[];
   }
 
   /**
@@ -670,26 +674,28 @@ export class SQLiteManager {
    */
   fullTextSearchTerms(query: string, limit: number = 20): StandardTerm[] {
     // FTS5 테이블이 없을 수 있으므로 일반 LIKE 검색 사용
+    const contains = `%${escapeLikePattern(query)}%`;
+    const prefix = `${escapeLikePattern(query)}%`;
     return this.db.prepare(`
       SELECT * FROM standard_terms
-      WHERE korean_name LIKE ? 
-         OR english_name LIKE ? 
-         OR description LIKE ?
-         OR domain_name LIKE ?
-         OR standard_code_name LIKE ?
-      ORDER BY 
-        CASE 
+      WHERE korean_name LIKE ? ESCAPE '\\'
+         OR english_name LIKE ? ESCAPE '\\'
+         OR description LIKE ? ESCAPE '\\'
+         OR domain_name LIKE ? ESCAPE '\\'
+         OR standard_code_name LIKE ? ESCAPE '\\'
+      ORDER BY
+        CASE
           WHEN korean_name = ? THEN 1
           WHEN english_name = ? THEN 2
-          WHEN korean_name LIKE ? THEN 3
-          WHEN english_name LIKE ? THEN 4
+          WHEN korean_name LIKE ? ESCAPE '\\' THEN 3
+          WHEN english_name LIKE ? ESCAPE '\\' THEN 4
           ELSE 5
         END,
         korean_name
       LIMIT ?
     `).all(
-      `%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`,
-      query, query, `${query}%`, `${query}%`,
+      contains, contains, contains, contains, contains,
+      query, query, prefix, prefix,
       limit
     ) as StandardTerm[];
   }
@@ -718,25 +724,27 @@ export class SQLiteManager {
     keyword: string,
     limit: number = 30,
   ): Array<StandardTerm & { matchRank: number }> {
+    const prefix = `${escapeLikePattern(keyword)}%`;
+    const contains = `%${escapeLikePattern(keyword)}%`;
     return this.db
       .prepare(
         `
       SELECT *,
         CASE
           WHEN korean_name = ? THEN 1
-          WHEN korean_name LIKE ? || '%' THEN 2
-          WHEN korean_name LIKE '%' || ? || '%' THEN 3
-          WHEN description LIKE '%' || ? || '%' THEN 4
+          WHEN korean_name LIKE ? ESCAPE '\\' THEN 2
+          WHEN korean_name LIKE ? ESCAPE '\\' THEN 3
+          WHEN description LIKE ? ESCAPE '\\' THEN 4
           ELSE 5
         END AS matchRank
       FROM standard_terms
-      WHERE korean_name LIKE '%' || ? || '%'
-         OR description LIKE '%' || ? || '%'
+      WHERE korean_name LIKE ? ESCAPE '\\'
+         OR description LIKE ? ESCAPE '\\'
       ORDER BY matchRank, LENGTH(korean_name), korean_name
       LIMIT ?
     `,
       )
-      .all(keyword, keyword, keyword, keyword, keyword, keyword, limit) as Array<
+      .all(keyword, prefix, contains, contains, contains, contains, limit) as Array<
       StandardTerm & { matchRank: number }
     >;
   }
@@ -751,8 +759,8 @@ export class SQLiteManager {
   lookupTermsBySynonym(korean: string): StandardTerm[] {
     const candidates = this.db.prepare(`
       SELECT * FROM standard_terms
-      WHERE synonyms LIKE ?
-    `).all(`%${korean}%`) as StandardTerm[];
+      WHERE synonyms LIKE ? ESCAPE '\\'
+    `).all(`%${escapeLikePattern(korean)}%`) as StandardTerm[];
 
     return candidates.filter((t) => {
       if (!t.synonyms) return false;
@@ -922,8 +930,8 @@ export class SQLiteManager {
 
   lookupCustomTermsBySynonym(korean: string): CustomTerm[] {
     const candidates = this.db
-      .prepare(`SELECT * FROM custom_terms WHERE synonyms LIKE ?`)
-      .all(`%${korean}%`) as CustomTerm[];
+      .prepare(`SELECT * FROM custom_terms WHERE synonyms LIKE ? ESCAPE '\\'`)
+      .all(`%${escapeLikePattern(korean)}%`) as CustomTerm[];
     return candidates.filter((t) => {
       if (!t.synonyms) return false;
       return t.synonyms.split(',').map((s) => s.trim()).includes(korean);
@@ -934,25 +942,27 @@ export class SQLiteManager {
     keyword: string,
     limit: number = 30,
   ): Array<CustomTerm & { matchRank: number }> {
+    const prefix = `${escapeLikePattern(keyword)}%`;
+    const contains = `%${escapeLikePattern(keyword)}%`;
     return this.db
       .prepare(
         `
       SELECT *,
         CASE
           WHEN korean_name = ? THEN 1
-          WHEN korean_name LIKE ? || '%' THEN 2
-          WHEN korean_name LIKE '%' || ? || '%' THEN 3
-          WHEN description LIKE '%' || ? || '%' THEN 4
+          WHEN korean_name LIKE ? ESCAPE '\\' THEN 2
+          WHEN korean_name LIKE ? ESCAPE '\\' THEN 3
+          WHEN description LIKE ? ESCAPE '\\' THEN 4
           ELSE 5
         END AS matchRank
       FROM custom_terms
-      WHERE korean_name LIKE '%' || ? || '%'
-         OR description LIKE '%' || ? || '%'
+      WHERE korean_name LIKE ? ESCAPE '\\'
+         OR description LIKE ? ESCAPE '\\'
       ORDER BY matchRank, LENGTH(korean_name), korean_name
       LIMIT ?
     `,
       )
-      .all(keyword, keyword, keyword, keyword, keyword, keyword, limit) as Array<
+      .all(keyword, prefix, contains, contains, contains, contains, limit) as Array<
       CustomTerm & { matchRank: number }
     >;
   }
@@ -1224,8 +1234,8 @@ export class SQLiteManager {
     }
 
     if (filters.keyword) {
-      sql += ' AND (c.name LIKE ? OR c.name_en LIKE ? OR c.description LIKE ? OR c.package_name LIKE ?)';
-      const kw = `%${filters.keyword}%`;
+      sql += " AND (c.name LIKE ? ESCAPE '\\' OR c.name_en LIKE ? ESCAPE '\\' OR c.description LIKE ? ESCAPE '\\' OR c.package_name LIKE ? ESCAPE '\\')";
+      const kw = `%${escapeLikePattern(filters.keyword)}%`;
       params.push(kw, kw, kw, kw);
     }
 
@@ -1302,11 +1312,11 @@ export class SQLiteManager {
     }
 
     const clause = tokens
-      .map(() => '(c.name LIKE ? OR c.name_en LIKE ? OR c.description LIKE ? OR c.package_name LIKE ?)')
+      .map(() => "(c.name LIKE ? ESCAPE '\\' OR c.name_en LIKE ? ESCAPE '\\' OR c.description LIKE ? ESCAPE '\\' OR c.package_name LIKE ? ESCAPE '\\')")
       .join(' OR ');
     const params: string[] = [];
     for (const t of tokens) {
-      const p = `%${t}%`;
+      const p = `%${escapeLikePattern(t)}%`;
       params.push(p, p, p, p);
     }
 
@@ -1419,6 +1429,15 @@ export class SQLiteManager {
   /**
    * 데이터베이스 닫기
    */
+  /**
+   * 쿼리 플래너 통계 갱신 + WAL 체크포인트(부속 -wal/-shm 파일 정리).
+   * 연결을 유지한 채 수행하므로 외부에서 보관 중인 참조가 무효화되지 않는다.
+   */
+  optimize(): void {
+    this.db.pragma('optimize');
+    this.db.pragma('wal_checkpoint(TRUNCATE)');
+  }
+
   close() {
     this.db.close();
     console.error('📦 SQLite 데이터베이스 연결 종료');
