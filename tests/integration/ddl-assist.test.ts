@@ -291,10 +291,15 @@ describe("integration — egov_ddl_assist behavior", () => {
   // ==================== error handling ====================
 
   describe("error handling", () => {
-    it("미지원 action → success: false + 안내 메시지", async () => {
-      const r = await callDdl({ action: "unknown_action_zzz", input: "test" });
-      expect(r.success).toBe(false);
-      expect(r.message).toMatch(/알 수 없는 action/);
+    it("미지원 action → inputSchema enum 이 프로토콜 단계에서 거부", async () => {
+      // action 은 z.enum 이라 핸들러에 도달하기 전에 SDK 가 invalid params 로 거부한다.
+      const result = await client.callTool({
+        name: "egov_ddl_assist",
+        arguments: { action: "unknown_action_zzz", input: "test" },
+      });
+      expect(result.isError).toBe(true);
+      const content = result.content as Array<{ type: string; text: string }>;
+      expect(content[0].text).toMatch(/-32602|[Ii]nvalid|action/);
     });
 
     it("빈 input → success: false", async () => {
