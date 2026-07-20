@@ -1,0 +1,56 @@
+# Build outputs
+build/
+
+# Dependencies
+node_modules/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Test coverage
+coverage/
+*.lcov
+
+# npm pack 산출물
+*.tgz
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.venv
+
+# Temporary files
+tmp/
+
+# IDE / Editor
+.vscode/
+.idea/
+.cursor/
+*.swp
+*.swo
+*~
+
+# AI 도구 로컬 파일 (커밋 금지)
+.claude/
+CLAUDE.md
+AGENT.md
+AI.md
+.cursorrules
+.cline/
+.clineignore
+.serena/
+
+# OS
+.DS_Store
+._*
+Thumbs.db
+
+# SQLite WAL 부속 파일 (지식베이스 DB 접속 시 자동 생성 — 커밋 금지)
+*.db-shm
+*.db-wal
