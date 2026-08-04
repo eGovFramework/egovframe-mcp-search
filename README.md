@@ -97,7 +97,7 @@ LLM 은 사용자 질의로부터 `scope` (검색 영역) 와 `action` (하위 �
 
 ### Prerequisites
 
-- **Node.js**: v18.0.0 이상 (v22.x 권장)
+- **Node.js**: v20.0.0 이상 (v22.x 권장) — better-sqlite3 v12 가 Node 20/22/23/24 만 지원
 - **npm**: v8.0.0 이상
 
 ### Install & Build
