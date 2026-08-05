@@ -30,6 +30,11 @@ for t in $targets; do
   echo "==> $t"
   rm -rf node_modules
   npm_config_platform="$os" npm_config_arch="$cpu" npm ci "${flags[@]}"
+  if [ "$os" = linux ]; then
+    # npm ci 는 lockfile 기반 설치라 --libc 필터가 동작하지 않는다 (lockfile 에
+    # libc 메타데이터가 없음) → glibc 타깃에 불필요한 musl 변형을 제거해 크기 절감.
+    rm -rf node_modules/@lancedb/lancedb-*-musl
+  fi
   npm pack --pack-destination dist
   mv "dist/$name-$ver.tgz" "dist/$name-$ver-$t.tgz"
 done
