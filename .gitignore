@@ -54,3 +54,6 @@ Thumbs.db
 # SQLite WAL 부속 파일 (지식베이스 DB 접속 시 자동 생성 — 커밋 금지)
 *.db-shm
 *.db-wal
+
+# 플랫폼별 번들 tgz 산출물
+dist/

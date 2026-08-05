@@ -15,6 +15,7 @@
   "engines": {
     "node": ">=20"
   },
+  "bundleDependencies": true,
   "keywords": [
     "egovframe",
     "mcp",
@@ -26,6 +27,7 @@
   "scripts": {
     "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
     "prepare": "npm run build",
+    "pack:platforms": "bash scripts/pack-platforms.sh",
     "watch": "tsc --watch",
     "inspector": "npx @modelcontextprotocol/inspector build/index.js",
     "build-index": "node build/scripts/buildIndex.js",
