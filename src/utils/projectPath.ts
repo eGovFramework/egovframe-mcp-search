@@ -58,3 +58,12 @@ export function getSQLiteDBPath(startPath?: string): string {
   return path.join(knowledgeBasePath, 'egovframe.db');
 }
 
+/**
+ * 프로젝트 루트 기준 로컬 임베딩 모델 디렉토리 경로
+ * (폐쇄망 대응 — 모델은 tgz 에 동봉되며 런타임 다운로드를 하지 않는다)
+ */
+export function getModelsPath(startPath?: string): string {
+  const projectRoot = findProjectRoot(startPath);
+  return path.join(projectRoot, 'models');
+}
+

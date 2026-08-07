@@ -10,7 +10,8 @@
   "files": [
     "build",
     "templates/common-components-src",
-    "knowledge-base"
+    "knowledge-base",
+    "models"
   ],
   "engines": {
     "node": ">=20"
@@ -28,6 +29,7 @@
     "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
     "prepare": "npm run build",
     "pack:platforms": "bash scripts/pack-platforms.sh",
+    "fetch-model": "node scripts/fetch-model.mjs",
     "watch": "tsc --watch",
     "inspector": "npx @modelcontextprotocol/inspector build/index.js",
     "build-index": "node build/scripts/buildIndex.js",

@@ -57,3 +57,6 @@ Thumbs.db
 
 # 플랫폼별 번들 tgz 산출물
 dist/
+
+# 로컬 임베딩 모델 (113MB 파일이 GitHub 100MB 제한 초과 — npm run fetch-model 로 생성, tgz 에는 files 로 동봉)
+models/

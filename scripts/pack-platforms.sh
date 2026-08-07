@@ -22,6 +22,14 @@ name=$(node -p "require('./package.json').name") # package.json 에서 추출한
 ver=$(node -p "require('./package.json').version") # package.json 에서 추출한 패키지 버전(파일명 조립용)
 mkdir -p dist # dist 디렉토리 생성(번들 파일 저장용)
 
+# 임베딩 모델 확보 — models/ 는 git 미추적(113MB 파일이 GitHub 100MB 제한 초과)이므로
+# 없으면 1회 다운로드(네트워크 필요). 이후 pack 부터는 로컬에 남아 재사용된다.
+# models/ 는 package.json files 에 포함되어 모든 타깃 tgz 에 동일하게 동봉된다.
+if [ ! -f "models/Xenova/multilingual-e5-small/onnx/model_quantized.onnx" ]; then
+  [ -d node_modules ] || npm ci
+  npm run fetch-model
+fi
+
 for t in $targets; do # 타깃 반복(darwin-arm64, darwin-x64, linux-x64, linux-arm64, win32-x64)
   os=${t%%-*} # 타깃 플랫폼 추출(os 부분 추출). 예: darwin-arm64 -> darwin
   cpu=${t#*-} # 타깃 아키텍처 추출(cpu 부분 추출). 예: darwin-arm64 -> arm64

@@ -9,14 +9,21 @@
  *   - 인덱싱 문서: "passage: 게시판은 글을 등록하고..."
  */
 
-import { pipeline } from '@xenova/transformers';
+import { pipeline, env } from '@xenova/transformers';
+import { fileURLToPath } from 'url';
+import { getModelsPath } from '../utils/projectPath.js';
+
+// 폐쇄망 대응: 패키지에 동봉된 로컬 모델(models/)만 사용하고 원격 다운로드를 금지한다.
+// 절대 경로로 지정해 MCP 서버가 임의의 cwd 에서 실행돼도 모델을 찾을 수 있게 한다.
+env.localModelPath = getModelsPath(fileURLToPath(import.meta.url));
+env.allowRemoteModels = false;
 
 /** 임베딩 용도 구분 (E5 모델 prefix) */
 export type EmbedPurpose = 'query' | 'passage';
 
 export class LocalEmbedder {
   private model: any = null;
-  private modelName = 'Xenova/multilingual-e5-small';  // 384차원, 다국어 모델 (~120MB)
+  private modelName = 'Xenova/multilingual-e5-small';  // 384차원, 다국어 모델 (models/ 에 동봉, ~130MB)
   private isInitializing = false;
   private initPromise: Promise<void> | null = null;
 
@@ -47,7 +54,7 @@ export class LocalEmbedder {
 
   private async _doInitialize(): Promise<void> {
     console.error(`🤖 임베딩 모델 로드 중: ${this.modelName}`);
-    console.error('   (첫 실행 시 모델 다운로드 - 약 30MB, 1-2분 소요)');
+    console.error(`   (로컬 모델 사용: ${env.localModelPath} — 원격 다운로드 없음)`);
     
     try {
       this.model = await pipeline('feature-extraction', this.modelName);
