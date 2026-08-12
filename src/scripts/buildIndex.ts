@@ -14,10 +14,17 @@ import { GuideSearchManager, parseFrontMatter, chunkMarkdown, GuideIndexStats } 
 import { DeveloperKnowledgeManager } from '../rag/knowledgeManager.js';
 import { getEmbedder } from '../rag/embedder.js';
 import { type AddKnowledgeInput } from '../types/knowledge.js';
+import {
+  ensureEgovframeDocs,
+  ensureCommonComponentsSrc,
+  runTagSelectionPrompt,
+  TagSelectionAbortedError,
+  EGOVDOCS_DIR,
+  type TagSelector,
+} from './templateSources.js';
 import fs from 'fs-extra';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import XLSX from 'xlsx';
@@ -31,8 +38,6 @@ const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
 export const TEMPLATES_DIR = path.join(PROJECT_ROOT, 'templates');
 const DEVELOPER_KNOWLEDGE_DIR = path.join(TEMPLATES_DIR, 'developer_knowledge');
-const EGOVDOCS_DIR = path.join(TEMPLATES_DIR, 'egovframe_guide');
-const EGOVDOCS_REPO = 'https://github.com/egovframework/egovframe-docs.git';
 
 interface BuildIndexOptions {
   yes: boolean;
@@ -95,9 +100,11 @@ async function confirmDestructiveReindex(options: BuildIndexOptions): Promise<vo
     throw new Error('비대화형 환경에서는 확인을 받을 수 없습니다. 계속하려면 `npm run build-index -- --yes`를 사용하세요.');
   }
 
-  const rl = createInterface({ input, output });
+  // output 은 stderr — 나머지 안내 출력과 스트림을 통일하고, stdout 리다이렉트 시에도
+  // readline 이 터미널 모드를 유지하게 한다 (질문이 로그 파일로 사라지는 문제 방지)
+  const rl = createInterface({ input, output: process.stderr });
   try {
-    const answer = await rl.question('계속하려면 "yes"를 입력하세요: ');
+    const answer = await askQuestion(rl, '계속하려면 "yes"를 입력하세요: ');
     if (answer.trim().toLowerCase() !== 'yes') {
       throw new Error('사용자 확인이 없어 인덱싱을 중단했습니다.');
     }
@@ -106,11 +113,88 @@ async function confirmDestructiveReindex(options: BuildIndexOptions): Promise<vo
   }
 }
 
+/**
+ * EOF 에 안전한 질문 헬퍼.
+ *
+ * non-terminal 모드(stdin/stderr 모두 리다이렉트)에서 stdin EOF 가 오면 rl.question
+ * 프라미스가 영원히 settle 되지 않아 프로세스가 unsettled top-level await 로 조용히
+ * 죽는다. 이를 방지하기 위해 사용자 입력 외에 close 이벤트와 race 해 빈 문자열 ''을 반환한다.
+ * - rl.question(question)으로 사용자 입력을 기다리고
+ * - rl.once('close', ...)으로 stdin이 EOF로 닫히면(close) 빈 문자열 ''을 반환하는데
+ * - Promise.race(...)로 위 두가지 경우를 감싸서
+ *   사용자 입력과 close 이벤트 중 먼저 발생한 결과를 사용한다.
+ * - catch(...)로 사용자의 Ctrl+C 등으로 인한 예기치 않은 오류가 발생하더라도
+ *   빈 문자열 ''을 반환한다.
+ */
+async function askQuestion(
+  rl: ReturnType<typeof createInterface>,
+  question: string,
+): Promise<string> {
+  return Promise.race([
+    rl.question(question),
+    new Promise<string>(resolve => rl.once('close', () => resolve(''))),
+  ]).catch(() => '');
+}
+
+/**
+ * 터미널 인터랙티브 태그 선택 프롬프트.
+ *
+ * 저장소 차례가 되면 최신 버전 태그(최대 10개)와 현재 적용 태그를 보여주고
+ * 태그명을 입력받는다. 엔터(빈 입력) 또는 현재 태그명 입력 = 현재 소스 유지,
+ * 다른 태그명 입력 = 그 태그의 소스로 전환. 없는 태그명은 재입력을 요청한다.
+ */
+export function createInteractiveTagSelector(): TagSelector {
+  return async (ctx) => {
+    console.error('');
+    console.error(`  🔖 ${ctx.label} 버전 태그 선택`);
+    if (ctx.fetchFailed) {
+      console.error('     (원격 태그 fetch 실패 — 로컬에 저장된 태그 기준)');
+    }
+    console.error(`     현재 적용: ${ctx.currentTag ?? `${ctx.currentDescription} (정확히 태그 위가 아님)`}`);
+    console.error(`     최신 태그 ${ctx.latestTags.length}개:`);
+    for (const tag of ctx.latestTags) {
+      const marker = tag === ctx.currentTag ? '→' : '-';
+      console.error(`      ${marker} ${tag}`);
+    }
+
+    // readline의 output(질문)도 "stdout이 아니라 stderr로 처리"하여
+    // 태그 목록과 같은 스트림에 질문을 표시하고,
+    // stdout 리다이렉트 시에도 readline이 터미널 모드를 유지하게 한다
+    // (질문이 로그 파일로 사라지는 문제 방지)
+    const rl = createInterface({ input, output: process.stderr });
+    // Ctrl+C: readline 이 raw mode 로 SIGINT 를 가로채므로 직접 감지해
+    // '태그 적용 실패' 로 뭉개지지 않는 전용 에러로 build-index 전체를 중단시킨다.
+    // (Ctrl+D/EOF 는 askQuestion 이 '' 로 정규화 → 현재 체크아웃 유지)
+    let userInterrupted = false;
+    rl.on('SIGINT', () => {
+      userInterrupted = true;
+      rl.close();
+    });
+
+    const ask = async (question: string): Promise<string> => {
+      const answer = await askQuestion(rl, question);
+      if (userInterrupted) {
+        throw new TagSelectionAbortedError();
+      }
+      return answer;
+    };
+
+    try {
+      return await runTagSelectionPrompt(ctx, ask);
+    } finally {
+      rl.close();
+    }
+  };
+}
+
 async function buildIndex(options: BuildIndexOptions) {
   console.error('🚀 eGovFrame Companion - 초기 데이터 인덱싱 시작\n');
 
   try {
     await confirmDestructiveReindex(options);
+
+    // 태그 선택은 대화형 터미널에서만 — --yes 또는 비 TTY 환경에서는 현재 체크아웃 유지
+    const selectTag = !options.yes && input.isTTY ? createInteractiveTagSelector() : undefined;
 
     // 1. SQLite 데이터베이스 초기화
     console.error('📊 SQLite 데이터베이스 초기화 중...');
@@ -141,13 +225,13 @@ async function buildIndex(options: BuildIndexOptions) {
     reportShadowingConflicts(sqlite);
 
     // 10. 공통컴포넌트 로드
-    await loadCommonComponents(sqlite);
+    await loadCommonComponents(sqlite, selectTag);
 
     // 11. 개발자 지식 벡터화 (LanceDB)
     const knowledgeStats = await indexDeveloperKnowledge();
 
     // 12. eGovFrame 가이드 벡터화 (LanceDB)
-    const guideStats = await indexEgovframeDocs();
+    const guideStats = await indexEgovframeDocs(selectTag);
 
     // 13. 통계 출력
     console.error('\n📊 인덱싱 완료 통계:');
@@ -182,6 +266,10 @@ async function buildIndex(options: BuildIndexOptions) {
     console.error('  3. Claude Desktop에 MCP 서버 등록');
 
   } catch (error) {
+    if (error instanceof TagSelectionAbortedError) {
+      console.error(`\n🛑 ${error.message}`);
+      process.exit(130);
+    }
     console.error('\n❌ 인덱싱 중 오류 발생:', error);
     process.exit(1);
   }
@@ -602,9 +690,16 @@ interface ComponentJSON {
   }>;
 }
 
-async function loadCommonComponents(sqlite: SQLiteManager) {
+async function loadCommonComponents(sqlite: SQLiteManager, selectTag?: TagSelector) {
   console.error('\n📚 9/11 공통컴포넌트 인덱싱...');
-  
+
+  // 소스 서브모듈 태그 선택/확보 — 검색 도구가 런타임에 이 체크아웃을 직접 탐색하므로
+  // build-index 시점에 사용할 버전 태그를 확정한다 (실패해도 인덱싱은 계속).
+  const srcReady = await ensureCommonComponentsSrc({ selectTag });
+  if (!srcReady) {
+    console.warn('  ⚠️ 공통컴포넌트 소스 확보 실패 — 소스 탐색 기능이 빈 결과를 반환할 수 있습니다.');
+  }
+
   const componentsFile = path.join(TEMPLATES_DIR, 'common-components.json');
   
   if (!await fs.pathExists(componentsFile)) {
@@ -852,38 +947,6 @@ async function indexDeveloperKnowledge(): Promise<DeveloperKnowledgeIndexStats |
 }
 
 /**
- * egovframe-docs 클론/업데이트
- */
-async function ensureEgovframeDocs(): Promise<boolean> {
-  if (await fs.pathExists(path.join(EGOVDOCS_DIR, '_index.md'))) {
-    // 이미 클론되어 있으면 pull 시도
-    console.error('  📂 기존 egovframe-docs 감지, git pull 중...');
-    try {
-      execSync('git pull --rebase', { cwd: EGOVDOCS_DIR, stdio: 'pipe' });
-      console.error('  ✓ 최신 상태로 업데이트 완료');
-    } catch {
-      console.error('  ⚠️ git pull 실패 (오프라인 환경일 수 있음), 기존 파일 사용');
-    }
-    return true;
-  }
-
-  // 클론
-  console.error(`  📥 egovframe-docs 클론 중: ${EGOVDOCS_REPO}`);
-  try {
-    execSync(`git clone --depth 1 ${EGOVDOCS_REPO} "${EGOVDOCS_DIR}"`, {
-      stdio: 'pipe',
-    });
-    console.error('  ✓ 클론 완료');
-    return true;
-  } catch (error) {
-    console.error('  ❌ egovframe-docs 클론 실패:', error);
-    console.error('  💡 수동으로 클론하세요:');
-    console.error(`     git clone --depth 1 ${EGOVDOCS_REPO} ${EGOVDOCS_DIR}`);
-    return false;
-  }
-}
-
-/**
  * 마크다운 파일 재귀 수집 (이미지/git/github 제외)
  */
 async function collectMarkdownFiles(dir: string, basePath: string): Promise<string[]> {
@@ -915,11 +978,11 @@ async function collectMarkdownFiles(dir: string, basePath: string): Promise<stri
 /**
  * egovframe-docs 벡터화 (LanceDB)
  */
-async function indexEgovframeDocs(): Promise<GuideIndexStats | null> {
+async function indexEgovframeDocs(selectTag?: TagSelector): Promise<GuideIndexStats | null> {
   console.error('\n📚 11/11 eGovFrame 가이드 벡터화 (LanceDB)...');
 
-  // 1. egovframe-docs 확인/클론
-  const docsReady = await ensureEgovframeDocs();
+  // 1. egovframe-docs 확인/클론 + 버전 태그 선택
+  const docsReady = await ensureEgovframeDocs({ selectTag });
   if (!docsReady) {
     console.error('  ⚠️ egovframe-docs를 찾을 수 없어 가이드 인덱싱을 건너뜁니다.');
     return null;

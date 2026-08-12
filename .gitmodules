@@ -1,0 +1,6 @@
+[submodule "templates/common-components-src"]
+	path = templates/common-components-src
+	url = https://github.com/eGovFramework/egovframe-common-components.git
+[submodule "templates/egovframe_guide"]
+	path = templates/egovframe_guide
+	url = https://github.com/eGovFramework/egovframe-docs.git
