@@ -108,12 +108,15 @@ export async function runTagSelectionPrompt(
  * 프롬프트를 전면 차단한다 — 인증이 필요한 원격은 즉시 실패하고, 그 실패는
  * 기존 fetchFailed(오프라인 폴백) 경로로 흡수된다. timeout 은 최후 방어선.
  */
-const GIT_NONINTERACTIVE_ENV = {
-  ...process.env,
-  GIT_TERMINAL_PROMPT: '0',
-  GIT_ASKPASS: 'echo',
-  GCM_INTERACTIVE: 'never',
-};
+function gitNonInteractiveEnv(): NodeJS.ProcessEnv {
+  // 호출 시점의 process.env 를 기준으로 조립한다 (테스트 등 런타임 env 변경 반영)
+  return {
+    ...process.env,
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_ASKPASS: 'echo',
+    GCM_INTERACTIVE: 'never',
+  };
+}
 const GIT_TIMEOUT_MS = 120_000;
 
 /** 셸 미경유 git 실행 (사용자 입력이 아닌 내부 상수/검증된 인자만 전달) */
@@ -121,7 +124,7 @@ export function runGit(args: string[], cwd?: string): void {
   execFileSync('git', args, {
     cwd,
     stdio: 'pipe',
-    env: GIT_NONINTERACTIVE_ENV,
+    env: gitNonInteractiveEnv(),
     timeout: GIT_TIMEOUT_MS,
   });
 }
@@ -132,7 +135,7 @@ export function runGitCapture(args: string[], cwd?: string): string {
     cwd,
     stdio: ['ignore', 'pipe', 'pipe'],
     encoding: 'utf-8',
-    env: GIT_NONINTERACTIVE_ENV,
+    env: gitNonInteractiveEnv(),
     timeout: GIT_TIMEOUT_MS,
   });
 }
