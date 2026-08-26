@@ -109,18 +109,54 @@ npm run build
 
 ### Knowledge Base 구축
 
-표준 용어 / 공통컴포넌트 / 호환성 데이터 / eGovFrame 가이드를 로컬 SQLite + LanceDB 에 인덱싱합니다:
+표준 용어 / 공통컴포넌트 / 호환성 데이터 / 개발자 지식 / eGovFrame 가이드를 로컬 SQLite + LanceDB 에 인덱싱합니다:
 
 ```bash
 npm run build-index
 ```
 
-처음 한 번만 수행하면 됩니다. 결과는 `knowledge-base/` 폴더 아래에 생성됩니다 (`egovframe.db`, `egovframe_guide.lance/`, `developer_knowledge.lance/`). 약 15–25MB 소요.
+처음 한 번만 수행하면 됩니다. 결과는 `knowledge-base/` 폴더 아래에 생성됩니다 (`egovframe.db`, `egovframe_guide.lance/`, `developer_knowledge.lance/`, `state.json`, 스냅샷 동봉 파일). 
 
-- 표준 용어 6,400+ 건
-- 표준 단어 1,000+ 건
-- 표준 도메인 100+ 건
-- eGovFrame 공식 가이드 문서 임베딩
+모든 대화형 질문(소스 모드·버전 태그 선택)은 **프리플라이트**에서 끝나고, 이후 빌드는 무인으로 완주합니다. 빌드는 `knowledge-base.staging/` 에 재구축한 뒤 검증을 거쳐 **원자 교체**되므로, 도중에 실패해도 기존 인덱스는 손상되지 않습니다 (직전본은 `knowledge-base.prev/` 에 1개 보존).
+
+```bash
+npm run build-index                                    # 대화형 — 소스 모드 선택 (online/local/bundled)
+npm run build-index -- --yes                           # 비대화형 = bundled (네트워크 접근 0)
+npm run build-index -- --source=online --yes           # 비대화형 온라인 (버전 태그는 현재 유지)
+npm run build-index -- --source=online \
+  --guide-tag=v5.0.0 --components-tag=v5.0.1 --yes     # 버전 고정 (재현 빌드)
+npm run build-index -- --source=local \
+  --template-dir=/media/usb/kb --yes                   # 폐쇄망 반입 경로 사용
+```
+
+| 소스 모드 | 동작 |
+|-----------|------|
+| `online`  | GitHub 에서 최신 소스·스냅샷 확보 (도달성 프로브 실패 시 프리플라이트에서 재질의) |
+| `local`   | `--template-dir` 하위의 반입 소스 사용 (폐쇄망) |
+| `bundled` | 레포 현재 체크아웃만 사용 — **네트워크 접근 0** (`--yes` 의 기본값) |
+
+## 🔄 지식베이스 갱신 (update CLI)
+
+설치·패키징된 MCP 에서도 지식베이스를 최신으로 갱신할 수 있습니다. 갱신분은 패키지 디렉토리가 아니라 **사용자 데이터 디렉토리(오버레이)** 에 저장되므로 npm 재설치/업그레이드/npx 캐시 정리에 소실되지 않습니다.
+
+```bash
+npx egovframe-mcp-search update                # 전체 리소스 갱신 (TTY 면 확인 1회)
+npx egovframe-mcp-search update --check        # 현재/최신 버전 조회만
+npx egovframe-mcp-search update --resource=guide
+npx egovframe-mcp-search update --from-file /media/usb/kb   # 폐쇄망 반입 (동일 코드 경로)
+npx egovframe-mcp-search update --rollback     # 직전 버전 복귀
+```
+
+| 리소스 | 갱신 단위 | 소스 | 클라이언트 비용 |
+|--------|-----------|------|----------------|
+| `developer_knowledge` (Q&A/FAQ) | **행 증분** — 직전 적용 스냅샷과 id 대조 | 릴리스 스냅샷 (`manifest.json` + `snapshot.jsonl.gz`) | 변경분만 로컬 임베딩 (수십 건 ≈ 수십 초) |
+| `guide` | **전량 재인덱싱** | GitHub 태그 (sparse checkout, 이미지 제외) | md 전체 재임베딩 (수 분) |
+| `components` | **트리 교체** | GitHub 태그 소스 tarball (~37MB) | 임베딩 0 — 압축 해제만. SQLite 메타(목록·설명·FTS)는 동봉본 유지 |
+
+- 오버레이 위치: macOS `~/Library/Application Support/egovframe-mcp-search`, Linux `~/.local/share/egovframe-mcp-search`, Windows `%LOCALAPPDATA%\egovframe-mcp-search` (`EGOV_MCP_DATA_DIR` 로 override)
+- 리소스별 **독립 갱신** — 하나가 실패해도 나머지는 적용되고, 실패한 리소스는 이전 상태를 유지합니다
+- 임베딩 모델이 패키지에 동봉되어 갱신의 임베딩도 **완전 오프라인**으로 동작합니다
+- 폐쇄망: 반입 담당자가 준비한 디렉토리(`manifest.json`/`snapshot.jsonl.gz`, `guide-md.tar.gz`, `components-src.tar.gz`)를 `--from-file` 로 지정 — 온라인 경로와 100% 동일한 코드로 검증·적용됩니다
 
 ## 🔧 MCP 클라이언트 설정 (Configuration)
 
@@ -284,7 +320,14 @@ Claude:
 ```
 egovframe-mcp-search/
 ├── src/
-│   ├── index.ts                            # MCP 서버 진입점 (egov_search_knowledge + egov_ddl_assist 노출)
+│   ├── index.ts                            # 진입점 디스패처 (인자 없음 → 서버 / update → CLI)
+│   ├── server.ts                           # MCP 서버 (egov_search_knowledge + egov_ddl_assist 노출)
+│   ├── cli/
+│   │   └── update.ts                       # 지식베이스 갱신 CLI (npx egovframe-mcp-search update)
+│   ├── kb/
+│   │   ├── snapshot.ts                     # 개발자 지식 스냅샷 형식 (manifest/jsonl.gz, diff)
+│   │   ├── sources.ts                      # 원격 소스 채널 정의 (URL 상수·태그 조회)
+│   │   └── guideIndexer.ts                 # 가이드 md 인덱싱 공용 로직 (build-index/update 공유)
 │   ├── database/
 │   │   ├── sqliteManager.ts                # SQLite 접근 계층
 │   │   └── hybridManager.ts                # SQLite + LanceDB 통합
@@ -301,7 +344,10 @@ egovframe-mcp-search/
 │   ├── types/                              # 공통 타입
 │   ├── utils/
 │   │   ├── fts5Query.ts                    # SQLite FTS5 쿼리 빌더
-│   │   └── projectPath.ts                  # 경로 유틸
+│   │   ├── projectPath.ts                  # 경로 유틸
+│   │   ├── dataPaths.ts                    # 리소스 단위 오버레이 경로 해석 + state.json
+│   │   ├── download.ts                     # HTTPS 다운로드 (크기 상한·타임아웃)
+│   │   └── tarSafe.ts                      # tar.gz 안전 해제 (탈출·폭탄 가드)
 │   └── scripts/
 │       └── buildIndex.ts                   # 인덱스 빌더 (npm run build-index)
 │
@@ -313,10 +359,13 @@ egovframe-mcp-search/
 │   ├── developer_knowledge/                # 개인 지식 원본
 │   └── egovframe_guide/                    # 공식 가이드 마크다운/PDF
 │
-├── knowledge-base/                         # build-index 산출물 (gitignored)
+├── knowledge-base/                         # build-index 산출물
 │   ├── egovframe.db                        # SQLite (표준용어/호환성/컴포넌트 메타)
 │   ├── egovframe_guide.lance/              # LanceDB (가이드 임베딩)
-│   └── developer_knowledge.lance/          # LanceDB (개인 지식 임베딩)
+│   ├── developer_knowledge.lance/          # LanceDB (개인 지식 임베딩)
+│   ├── state.json                          # 리소스별 적용 버전 기록
+│   ├── manifest.json                       # 동봉 스냅샷 manifest (update diff 부트스트랩)
+│   └── snapshot.jsonl.gz                   # 동봉 스냅샷 (Q&A/FAQ canonical)
 │
 ├── tests/                                  # Vitest 통합 테스트
 │   └── integration/server.test.ts          # 노출 surface 고정 (egov_search_knowledge, egov_ddl_assist)
