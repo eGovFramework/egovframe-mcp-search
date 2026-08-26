@@ -530,10 +530,18 @@ function normalizeVersionLabel(value: string | null | undefined): string | null 
 }
 
 /** 스테이징에 state.json + 스냅샷 동봉 파일 기록 */
+interface SqliteResourceCounts {
+  compat: number;
+  customTerms: number;
+  customWords: number;
+  customDomains: number;
+}
+
 async function writeStateAndArtifacts(
   plan: BuildPlan,
   knowledgeStats: DeveloperKnowledgeIndexStats | null,
   guideStats: GuideIndexStats | null,
+  sqliteCounts: SqliteResourceCounts,
 ): Promise<void> {
   console.error('\n📚 12/12 상태 기록·검증·원자 교체...');
 
@@ -603,6 +611,30 @@ async function writeStateAndArtifacts(
     console.error('     목록·설명·FTS 검색은 메타(common-components.json) 기준입니다 — 메타 재생성을 검토하세요.');
   }
 
+  // SQLite 리소스 (호환성 SW · 기관 Custom 사전) — 사용자 update 의 현재 버전 기준값.
+  // 원본 JSON/CSV 에 버전 표기가 없어 파일 mtime 에서 날짜 버전을 합성한다.
+  const compatFile = path.join(TEMPLATES_DIR, 'compatibility', 'compatibility-software.json');
+  if (sqliteCounts.compat > 0 && await fs.pathExists(compatFile)) {
+    state.resources.compatibility = {
+      version: synthesizeDatasetVersion([compatFile]),
+      row_count: sqliteCounts.compat,
+      origin: 'bundled',
+      applied_at: new Date().toISOString(),
+    };
+  }
+
+  const customCsvPaths = ['custom_standard_terms.csv', 'custom_standard_words.csv', 'custom_standard_domains.csv']
+    .map((name) => path.join(CUSTOM_TERMS_DIR, name))
+    .filter((p) => fs.existsSync(p));
+  if (customCsvPaths.length > 0) {
+    state.resources.custom_terms = {
+      version: synthesizeDatasetVersion(customCsvPaths),
+      row_count: sqliteCounts.customTerms + sqliteCounts.customWords + sqliteCounts.customDomains,
+      origin: 'bundled',
+      applied_at: new Date().toISOString(),
+    };
+  }
+
   await fs.writeFile(
     path.join(STAGING_DIR, 'state.json'),
     JSON.stringify(state, null, 2) + '\n',
@@ -660,7 +692,12 @@ async function buildIndex(options: BuildIndexOptions) {
     const stats = sqlite.getOverallStats();
 
     // ── Phase 3-5: 상태 기록 → 검증 → 원자 교체 ──
-    await writeStateAndArtifacts(plan, knowledgeStats, guideStats);
+    await writeStateAndArtifacts(plan, knowledgeStats, guideStats, {
+      compat: compatCount,
+      customTerms: stats.customTerms.count,
+      customWords: stats.customWords.count,
+      customDomains: stats.customDomains.count,
+    });
     sqlite.close();
     await verifyStaging(plan);
     await swapStagingIntoPlace();

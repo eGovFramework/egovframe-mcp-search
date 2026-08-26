@@ -6,8 +6,7 @@
  */
 
 import { SQLiteManager } from '../database/sqliteManager.js';
-import { getSQLiteDBPath } from '../utils/projectPath.js';
-import { resolveComponentsSrcRoot } from '../utils/dataPaths.js';
+import { resolveComponentsSrcRoot, resolveSQLiteDbPath } from '../utils/dataPaths.js';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import fs from 'fs';
@@ -24,7 +23,7 @@ let dbInstance: SQLiteManager | null = null;
 
 function getDB(): SQLiteManager {
   if (!dbInstance) {
-    dbInstance = new SQLiteManager(getSQLiteDBPath(currentFile));
+    dbInstance = new SQLiteManager(resolveSQLiteDbPath(currentFile));
   }
   return dbInstance;
 }

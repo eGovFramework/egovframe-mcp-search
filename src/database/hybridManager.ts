@@ -7,8 +7,8 @@ import { SQLiteManager } from './sqliteManager.js';
 import { DeveloperKnowledgeManager } from '../rag/knowledgeManager.js';
 import { getEmbedder } from '../rag/embedder.js';
 import { fileURLToPath } from 'url';
-import { getKnowledgeBasePath, getSQLiteDBPath } from '../utils/projectPath.js';
-import { resolveDeveloperKnowledgeDbDir } from '../utils/dataPaths.js';
+import { getKnowledgeBasePath } from '../utils/projectPath.js';
+import { resolveDeveloperKnowledgeDbDir, resolveSQLiteDbPath } from '../utils/dataPaths.js';
 import {
   CompatibilitySoftware,
   CompatibilitySearchFilter,
@@ -53,7 +53,8 @@ export class HybridDatabaseManager {
     console.error(`🔍 process.cwd(): ${process.cwd()}`);
     
     // SQLite 초기화 (동기)
-    this.sqlite = new SQLiteManager(basePath ? path.join(basePath, 'egovframe.db') : getSQLiteDBPath(currentFile));
+    // basePath 미지정 시 SQLite 도 오버레이(compatibility/custom_terms 적용분) 우선
+    this.sqlite = new SQLiteManager(basePath ? path.join(basePath, 'egovframe.db') : resolveSQLiteDbPath(currentFile));
     
     // LanceDB 초기화 (비동기 - initialize()에서 처리)
     // basePath 미지정 시 오버레이(사용자 update 적용분) 우선 해석

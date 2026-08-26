@@ -261,6 +261,8 @@ const RESOURCE_LABELS: Record<ResourceName, string> = {
   developer_knowledge: '개발자 지식(Q&A/FAQ)',
   guide: '가이드',
   common_components: '공통컴포넌트',
+  compatibility: '호환성 SW',
+  custom_terms: 'Custom 사전',
 };
 
 // ─── 개발자 지식 갱신 ────────────────────────────────────

@@ -16,6 +16,10 @@ import {
   resolveDeveloperKnowledgeDbDir,
   resolveGuideDbDir,
   resolveComponentsSrcRoot,
+  resolveSQLiteDbPath,
+  isOverlaySqliteValid,
+  getOverlaySqliteDbPath,
+  writeOverlaySqliteBase,
   writeOverlayStateAtomic,
   readOverlayState,
   type StateFile,
@@ -141,5 +145,82 @@ describe('dataPaths overlay resolution', () => {
     await fs.writeFile(path.join(tmpDir, 'state.json'), '{ 깨진 JSON');
     expect(readOverlayState()).toBeNull();
     expect(resolveDeveloperKnowledgeDbDir(REPO_ROOT)).toBe(getKnowledgeBasePath(REPO_ROOT));
+  });
+});
+
+describe('SQLite 오버레이 해석 (번들이 이기는 규칙)', () => {
+  let tmpDir: string;
+  let fakeRoot: string;
+  let savedEnv: string | undefined;
+
+  /** 번들 state.json 을 가진 가짜 패키지 루트 */
+  async function seedFakePackage(generatedAt: string | null): Promise<void> {
+    await fs.outputJSON(path.join(fakeRoot, 'package.json'), { name: 'fake' });
+    const statePath = path.join(fakeRoot, 'knowledge-base', 'state.json');
+    if (generatedAt === null) {
+      await fs.remove(statePath);
+      await fs.ensureDir(path.dirname(statePath));
+    } else {
+      await fs.outputJSON(statePath, {
+        schema_version: SCHEMA_VERSION,
+        generated_at: generatedAt,
+        resources: {},
+      });
+    }
+  }
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'egov-sqlite-ov-'));
+    fakeRoot = path.join(tmpDir, 'pkg');
+    savedEnv = process.env.EGOV_MCP_DATA_DIR;
+    process.env.EGOV_MCP_DATA_DIR = path.join(tmpDir, 'overlay');
+  });
+
+  afterEach(async () => {
+    if (savedEnv === undefined) delete process.env.EGOV_MCP_DATA_DIR;
+    else process.env.EGOV_MCP_DATA_DIR = savedEnv;
+    await fs.remove(tmpDir);
+  });
+
+  it('오버레이 사본이 없으면 번들 DB 경로다', async () => {
+    await seedFakePackage('G1');
+    expect(resolveSQLiteDbPath(fakeRoot)).toBe(
+      path.join(fakeRoot, 'knowledge-base', 'egovframe.db'),
+    );
+  });
+
+  it('base 가 번들 generated_at 과 일치하면 오버레이 DB 를 사용한다', async () => {
+    await seedFakePackage('G1');
+    await fs.outputFile(getOverlaySqliteDbPath(), 'db');
+    writeOverlaySqliteBase({ bundled_generated_at: 'G1' });
+    expect(isOverlaySqliteValid(fakeRoot)).toBe(true);
+    expect(resolveSQLiteDbPath(fakeRoot)).toBe(getOverlaySqliteDbPath());
+  });
+
+  it('번들이 갱신되면(base 불일치) 오버레이는 무효 — 번들 폴백', async () => {
+    await seedFakePackage('G2-신규번들');
+    await fs.outputFile(getOverlaySqliteDbPath(), 'db');
+    writeOverlaySqliteBase({ bundled_generated_at: 'G1' });
+    expect(isOverlaySqliteValid(fakeRoot)).toBe(false);
+    expect(resolveSQLiteDbPath(fakeRoot)).toBe(
+      path.join(fakeRoot, 'knowledge-base', 'egovframe.db'),
+    );
+  });
+
+  it('번들 state.json 이 없으면(구버전 패키지) 오버레이를 신뢰하지 않는다', async () => {
+    await seedFakePackage(null);
+    await fs.outputFile(getOverlaySqliteDbPath(), 'db');
+    writeOverlaySqliteBase({ bundled_generated_at: 'G1' });
+    expect(isOverlaySqliteValid(fakeRoot)).toBe(false);
+  });
+
+  it('compatibility/custom_terms 의 번들 원본 위치는 templates 하위다', async () => {
+    await seedFakePackage('G1');
+    expect(resolveResource('compatibility', fakeRoot).dir).toBe(
+      path.join(fakeRoot, 'templates', 'compatibility'),
+    );
+    expect(resolveResource('custom_terms', fakeRoot).dir).toBe(
+      path.join(fakeRoot, 'templates', 'custom_terms'),
+    );
   });
 });

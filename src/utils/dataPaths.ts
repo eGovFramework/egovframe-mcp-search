@@ -9,7 +9,11 @@
  *   developer_knowledge.lance   오버레이 우선 → 번들 폴백
  *   egovframe_guide.lance       오버레이 우선 → 번들 폴백
  *   common-components-src/      오버레이 우선 → 번들 폴백
- *   egovframe.db (SQLite)       번들 고정
+ *   egovframe.db (SQLite)       오버레이 우선 → 번들 폴백 — 단, 번들이 이긴다:
+ *                               오버레이 사본은 복사 시점의 번들 state.json
+ *                               generated_at 을 base 로 기록하며, 패키지 갱신으로
+ *                               번들이 바뀌면 오버레이는 무효(번들 폴백)가 되고
+ *                               다음 update 실행이 재베이스 + 재적용으로 치유한다
  *   models/                     번들 고정
  *
  * 오버레이가 유효하지 않으면(스키마/임베딩 모델 불일치, 마커 파일 부재 등)
@@ -31,13 +35,22 @@ export const SCHEMA_VERSION = 1;
 /** 동봉 임베딩 모델 ID (임베더와 단일 출처 공유) */
 export const EMBEDDING_MODEL_ID = 'Xenova/multilingual-e5-small';
 
-export type ResourceName = 'developer_knowledge' | 'guide' | 'common_components';
+export type ResourceName =
+  | 'developer_knowledge'
+  | 'guide'
+  | 'common_components'
+  | 'compatibility'
+  | 'custom_terms';
 
 /** 리소스별 유효성 판정 마커 (오버레이 디렉토리 안에 있어야 하는 파일/디렉토리) */
 const RESOURCE_MARKERS: Record<ResourceName, string> = {
   developer_knowledge: 'developer_knowledge.lance',
   guide: 'egovframe_guide.lance',
   common_components: 'pom.xml',
+  // SQLite 리소스의 버전 디렉토리는 적용 원본(artifact)을 보관하고,
+  // update CLI 가 적용 요약(applied.json)을 함께 기록한다
+  compatibility: 'applied.json',
+  custom_terms: 'applied.json',
 };
 
 /** 벡터를 보유해 임베딩 모델과 결합되는 리소스 */
@@ -187,6 +200,12 @@ function bundledDirFor(name: ResourceName, startPath?: string): string {
   if (name === 'common_components') {
     return path.join(findProjectRoot(startPath), 'templates', 'common-components-src');
   }
+  if (name === 'compatibility') {
+    return path.join(findProjectRoot(startPath), 'templates', 'compatibility');
+  }
+  if (name === 'custom_terms') {
+    return path.join(findProjectRoot(startPath), 'templates', 'custom_terms');
+  }
   // lance 리소스는 번들 knowledge-base 디렉토리에 연결 (테이블명으로 구분)
   return getKnowledgeBasePath(startPath);
 }
@@ -215,6 +234,62 @@ export function resolveResource(name: ResourceName, startPath?: string): Effecti
   };
 }
 
+// ─── SQLite 오버레이 (compatibility · custom_terms 공유) ─
+//
+// 두 SQLite 리소스는 하나의 물리 DB(egovframe.db 오버레이 사본)를 공유한다.
+// 사본은 복사 시점의 번들 state.json generated_at 을 base.json 에 기록하며,
+// 번들이 갱신되면(패키지 업그레이드) base 불일치 → 오버레이 무효 → 번들 폴백.
+// 다음 update 실행이 새 번들을 재베이스하고 보관된 원본을 재적용해 치유한다.
+
+export function getOverlaySqliteDir(): string {
+  return path.join(getOverlayRoot(), 'sqlite');
+}
+
+export function getOverlaySqliteDbPath(): string {
+  return path.join(getOverlaySqliteDir(), 'egovframe.db');
+}
+
+function getOverlaySqliteBasePath(): string {
+  return path.join(getOverlaySqliteDir(), 'base.json');
+}
+
+export interface SqliteBaseInfo {
+  /** 복사 원본이 된 번들 state.json 의 generated_at */
+  bundled_generated_at: string;
+}
+
+export function readOverlaySqliteBase(): SqliteBaseInfo | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(getOverlaySqliteBasePath(), 'utf-8')) as unknown;
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      typeof (parsed as SqliteBaseInfo).bundled_generated_at !== 'string'
+    ) {
+      return null;
+    }
+    return parsed as SqliteBaseInfo;
+  } catch {
+    return null;
+  }
+}
+
+export function writeOverlaySqliteBase(info: SqliteBaseInfo): void {
+  fs.mkdirSync(getOverlaySqliteDir(), { recursive: true });
+  fs.writeFileSync(getOverlaySqliteBasePath(), JSON.stringify(info, null, 2) + '\n', 'utf-8');
+}
+
+/** 오버레이 SQLite 가 현재 번들 기준으로 유효한가 (번들이 이기는 규칙) */
+export function isOverlaySqliteValid(startPath?: string): boolean {
+  if (!fs.existsSync(getOverlaySqliteDbPath())) return false;
+  const base = readOverlaySqliteBase();
+  if (!base) return false;
+  const bundled = readBundledState(startPath);
+  // 번들 state 가 없으면(구버전 패키지) 오버레이 SQLite 를 신뢰하지 않는다
+  if (!bundled?.generated_at) return false;
+  return bundled.generated_at === base.bundled_generated_at;
+}
+
 // ─── 런타임용 경로 해석기 ────────────────────────────────
 
 /** developer_knowledge 테이블의 LanceDB 연결 디렉토리 */
@@ -230,4 +305,12 @@ export function resolveGuideDbDir(startPath?: string): string {
 /** 공통컴포넌트 소스 트리 루트 */
 export function resolveComponentsSrcRoot(startPath?: string): string {
   return resolveResource('common_components', startPath).dir;
+}
+
+/** SQLite DB 경로 — 오버레이 사본이 유효하면 오버레이, 아니면 번들 */
+export function resolveSQLiteDbPath(startPath?: string): string {
+  if (isOverlaySqliteValid(startPath)) {
+    return getOverlaySqliteDbPath();
+  }
+  return path.join(getKnowledgeBasePath(startPath), 'egovframe.db');
 }
