@@ -12,6 +12,7 @@
 import { pipeline, env } from '@xenova/transformers';
 import { fileURLToPath } from 'url';
 import { getModelsPath } from '../utils/projectPath.js';
+import { EMBEDDING_MODEL_ID } from '../utils/dataPaths.js';
 
 // 폐쇄망 대응: 패키지에 동봉된 로컬 모델(models/)만 사용하고 원격 다운로드를 금지한다.
 // 절대 경로로 지정해 MCP 서버가 임의의 cwd 에서 실행돼도 모델을 찾을 수 있게 한다.
@@ -23,7 +24,7 @@ export type EmbedPurpose = 'query' | 'passage';
 
 export class LocalEmbedder {
   private model: any = null;
-  private modelName = 'Xenova/multilingual-e5-small';  // 384차원, 다국어 모델 (models/ 에 동봉, ~130MB)
+  private modelName = EMBEDDING_MODEL_ID;  // 384차원, 다국어 모델 (models/ 에 동봉, ~130MB)
   private isInitializing = false;
   private initPromise: Promise<void> | null = null;
 

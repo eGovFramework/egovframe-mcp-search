@@ -49,10 +49,15 @@ export class SQLiteManager {
     console.error(`📂 SQLite DB 경로: ${this.dbPath}`);
     
     this.db = new Database(this.dbPath);
-    
+
     // WAL 모드로 설정 (동시성 향상)
     this.db.pragma('journal_mode = WAL');
-    
+
+    // INSERT OR REPLACE 의 암묵적 DELETE 에서도 삭제 트리거가 발화하도록 설정.
+    // OFF(기본값)이면 components_ad 트리거가 건너뛰어져 external-content FTS5
+    // (components_fts) 인덱스에 옛 토큰이 남는 드리프트가 누적된다.
+    this.db.pragma('recursive_triggers = ON');
+
     this.initializeTables();
   }
 
@@ -286,17 +291,28 @@ export class SQLiteManager {
       );
 
       -- 컴포넌트 FTS 트리거
-      CREATE TRIGGER IF NOT EXISTS components_ai AFTER INSERT ON common_components BEGIN
+      -- external-content FTS5 는 일반 DELETE 문으로 인덱스 토큰을 제거할 수 없다
+      -- (AFTER DELETE 시점엔 content 행이 이미 없어 원본 토큰을 알 수 없음).
+      -- 반드시 old 값을 실어 보내는 'delete' 특수 커맨드를 사용해야 하며,
+      -- 과거의 잘못된 트리거(DELETE FROM ... WHERE rowid=)를 교정하기 위해
+      -- 매 연결마다 DROP 후 올바른 형태로 재생성한다 (비용 무시 가능).
+      DROP TRIGGER IF EXISTS components_ai;
+      DROP TRIGGER IF EXISTS components_ad;
+      DROP TRIGGER IF EXISTS components_au;
+
+      CREATE TRIGGER components_ai AFTER INSERT ON common_components BEGIN
         INSERT INTO components_fts(rowid, name, name_en, description, description_en, package_name)
         VALUES (new.id, new.name, new.name_en, new.description, new.description_en, new.package_name);
       END;
 
-      CREATE TRIGGER IF NOT EXISTS components_ad AFTER DELETE ON common_components BEGIN
-        DELETE FROM components_fts WHERE rowid = old.id;
+      CREATE TRIGGER components_ad AFTER DELETE ON common_components BEGIN
+        INSERT INTO components_fts(components_fts, rowid, name, name_en, description, description_en, package_name)
+        VALUES ('delete', old.id, old.name, old.name_en, old.description, old.description_en, old.package_name);
       END;
 
-      CREATE TRIGGER IF NOT EXISTS components_au AFTER UPDATE ON common_components BEGIN
-        DELETE FROM components_fts WHERE rowid = old.id;
+      CREATE TRIGGER components_au AFTER UPDATE ON common_components BEGIN
+        INSERT INTO components_fts(components_fts, rowid, name, name_en, description, description_en, package_name)
+        VALUES ('delete', old.id, old.name, old.name_en, old.description, old.description_en, old.package_name);
         INSERT INTO components_fts(rowid, name, name_en, description, description_en, package_name)
         VALUES (new.id, new.name, new.name_en, new.description, new.description_en, new.package_name);
       END;
@@ -1192,6 +1208,18 @@ export class SQLiteManager {
 
     transaction(dependencies);
     console.error(`✅ ${dependencies.length}개의 컴포넌트 의존성 추가 완료`);
+  }
+
+  /**
+   * components_fts 인덱스를 content 테이블(common_components) 기준으로 전체 재구축.
+   *
+   * recursive_triggers 가 OFF 였던 과거 연결에서 INSERT OR REPLACE 가 남긴
+   * 드리프트(옛 토큰 잔존)를 치유한다. 수백 건 규모라 비용은 무시 가능 —
+   * 컴포넌트 메타를 재적재하는 경로(build-index)에서 항상 호출한다.
+   */
+  rebuildComponentsFts(): void {
+    this.db.prepare(`INSERT INTO components_fts(components_fts) VALUES('rebuild')`).run();
+    console.error('✅ components_fts 인덱스 재구축 완료');
   }
 
   /**
