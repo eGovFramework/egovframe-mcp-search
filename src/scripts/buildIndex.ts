@@ -748,6 +748,9 @@ async function loadCommonComponents(sqlite: SQLiteManager, selectTag?: TagSelect
   }
   sqlite.addComponentDependenciesBatch(dependencies);
 
+  // 과거 연결(recursive_triggers OFF)에서 REPLACE 가 남긴 FTS 드리프트 치유
+  sqlite.rebuildComponentsFts();
+
   const summary = sqlite.getComponentSummary();
   console.error(`  ✓ ${categories.length}개 카테고리, ${summary.totalComponents}개 컴포넌트, ${dependencies.length}개 의존성 추가 완료`);
 }
