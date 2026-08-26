@@ -13,12 +13,13 @@
  */
 
 import { SQLiteManager } from '../database/sqliteManager.js';
+import { CUSTOM_TERMS_DIR } from './buildIndex.js';
 import {
   loadCustomTerms,
   loadCustomWords,
   loadCustomDomains,
   reportShadowingConflicts,
-} from './buildIndex.js';
+} from '../kb/sqliteLoaders.js';
 
 async function buildCustomIndex() {
   console.error('🚀 Custom 사전만 재적재 시작\n');
@@ -31,9 +32,9 @@ async function buildCustomIndex() {
 
   try {
     sqlite.clearCustomReferenceData();
-    await loadCustomTerms(sqlite);
-    await loadCustomWords(sqlite);
-    await loadCustomDomains(sqlite);
+    await loadCustomTerms(sqlite, CUSTOM_TERMS_DIR);
+    await loadCustomWords(sqlite, CUSTOM_TERMS_DIR);
+    await loadCustomDomains(sqlite, CUSTOM_TERMS_DIR);
     reportShadowingConflicts(sqlite);
 
     const after = sqlite.getOverallStats();

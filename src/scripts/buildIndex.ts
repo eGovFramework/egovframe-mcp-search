@@ -49,6 +49,16 @@ import {
   MANIFEST_FILENAME,
 } from '../kb/snapshot.js';
 import { snapshotManifestUrl, snapshotFileUrl } from '../kb/sources.js';
+import {
+  readCsvRows,
+  normalizeCell,
+  isDeprecatedRevision,
+  loadCompatibilityFromJson,
+  loadCustomTerms,
+  loadCustomWords,
+  loadCustomDomains,
+  reportShadowingConflicts,
+} from '../kb/sqliteLoaders.js';
 import { indexGuideDirectory } from '../kb/guideIndexer.js';
 import { probeReachable, downloadToFile } from '../utils/download.js';
 import { SCHEMA_VERSION, EMBEDDING_MODEL_ID, readStateFile, type StateFile } from '../utils/dataPaths.js';
@@ -59,7 +69,6 @@ import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input } from 'node:process';
 import { PDFParse } from 'pdf-parse';
-import { parse as parseCsvSync } from 'csv-parse/sync';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -105,41 +114,6 @@ interface BuildPlan {
   guideOrigin: 'bundled' | 'user-path';
   componentsSrcReady: boolean;
   componentsOrigin: 'bundled' | 'user-path';
-}
-
-/**
- * data.go.kr 표준 데이터셋 CSV 파일을 행 단위 객체 배열로 읽는다.
- * BOM 처리, 따옴표 안 콤마/줄바꿈, 행별 컬럼 수 가변 모두 csv-parse 가 처리.
- */
-export async function readCsvRows(filePath: string): Promise<Record<string, string>[]> {
-  const buffer = await fs.readFile(filePath);
-  return parseCsvSync(buffer, {
-    bom: true,
-    columns: true,
-    skip_empty_lines: true,
-    trim: true,
-    relax_quotes: true,
-    relax_column_count: true,
-  }) as Record<string, string>[];
-}
-
-/**
- * 행안부 표준 CSV 의 "-" 또는 빈 문자열을 null 로 정규화.
- */
-export function normalizeCell(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  const s = String(value).trim();
-  if (s === '' || s === '-') return null;
-  return s;
-}
-
-/**
- * `제정차수` 컬럼에 (폐기) 만 표기되고 폐기후제정 이 아닌 행은 deprecated 로 간주.
- * DDL 보조 시 LLM 이 폐기된 옛 표준을 잡지 않도록 적재 단계에서 거른다.
- */
-export function isDeprecatedRevision(revisionRound: string | null | undefined): boolean {
-  if (!revisionRound) return false;
-  return revisionRound.includes('(폐기)') && !revisionRound.includes('폐기후제정');
 }
 
 function parseArgs(argv: string[]): BuildIndexOptions {
@@ -662,11 +636,15 @@ async function buildIndex(options: BuildIndexOptions) {
 
     // Custom 사전 (기관별 확장, 표준 다음에 우선순위 부여)
     sqlite.clearCustomReferenceData();
-    await loadCustomTerms(sqlite);
-    await loadCustomWords(sqlite);
-    await loadCustomDomains(sqlite);
+    console.error('\n📚 5/12 Custom 용어 인덱싱...');
+    await loadCustomTerms(sqlite, CUSTOM_TERMS_DIR);
+    console.error('\n📚 6/12 Custom 단어 인덱싱...');
+    await loadCustomWords(sqlite, CUSTOM_TERMS_DIR);
+    console.error('\n📚 7/12 Custom 도메인 인덱싱...');
+    await loadCustomDomains(sqlite, CUSTOM_TERMS_DIR);
 
     // 충돌 감지: custom 이 standard 를 가리는 항목 출력
+    console.error('\n📚 8/12 Custom ↔ Standard 충돌 검사...');
     reportShadowingConflicts(sqlite);
 
     // 9/12 공통컴포넌트 (SQLite 메타 — 소스 확보는 프리플라이트에서 완료)
@@ -742,29 +720,9 @@ async function loadCompatibilitySoftware(sqlite: SQLiteManager): Promise<number>
     return 0;
   }
 
-  const data: Array<{
-    product_name: string;
-    product_version: string;
-    framework_version: string;
-    category: string;
-    compatibility_level: number;
-    vendor: string;
-    verified_date: string;
-    description: string | null;
-    url: string;
-  }> = await fs.readJSON(compatFile);
-
-  // JSON 기준 deterministic 재적재 — 원본에서 삭제된 행이 남지 않도록
-  sqlite.clearCompatibilitySoftware();
-  sqlite.addCompatibilitySoftwareBatch(data.map(d => ({
-    ...d,
-    compatibility_level: d.compatibility_level === 1 ? 1 : 2,
-    description: d.description ?? undefined,
-  })));
-  // 과거 연결(잘못된 트리거)이 남긴 FTS 드리프트 치유
-  sqlite.rebuildCompatibilityFts();
-  console.error(`  ✓ ${data.length}개의 호환성 소프트웨어 추가 완료`);
-  return data.length;
+  const count = await loadCompatibilityFromJson(sqlite, compatFile);
+  console.error(`  ✓ ${count}개의 호환성 소프트웨어 추가 완료`);
+  return count;
 }
 
 /**
@@ -928,192 +886,6 @@ async function loadStandardDomains(sqlite: SQLiteManager) {
 // 파일이 없으면 조용히 건너뛴다 (기관에서 아직 등록 안 한 상태도 정상).
 
 export const CUSTOM_TERMS_DIR = path.join(TEMPLATES_DIR, 'custom_terms');
-
-export async function loadCustomTerms(sqlite: SQLiteManager) {
-  console.error('\n📚 5/12 Custom 용어 인덱싱...');
-  const file = path.join(CUSTOM_TERMS_DIR, 'custom_standard_terms.csv');
-  if (!await fs.pathExists(file)) {
-    console.warn(`  ⚠️ Custom 용어 CSV 가 없습니다: ${file} — 건너뜀.`);
-    return;
-  }
-
-  const rows = await readCsvRows(file);
-  let dropped = 0;
-  const terms = rows
-    .filter((r) => {
-      if (!r['공통표준용어명'] || !r['공통표준용어영문약어명']) return false;
-      if (isDeprecatedRevision(r['제정차수'])) {
-        dropped++;
-        return false;
-      }
-      return true;
-    })
-    .map((r) => ({
-      korean_name: r['공통표준용어명'].trim(),
-      english_name: r['공통표준용어영문약어명'].trim(),
-      description: normalizeCell(r['공통표준용어설명']) ?? undefined,
-      domain_name: normalizeCell(r['공통표준도메인명']) ?? undefined,
-      allowed_values: normalizeCell(r['허용값']) ?? undefined,
-      storage_format: normalizeCell(r['저장 형식']) ?? undefined,
-      display_format: normalizeCell(r['표현 형식']) ?? undefined,
-      standard_code_name: normalizeCell(r['행정표준코드명']) ?? undefined,
-      authority: normalizeCell(r['소관기관명']) ?? undefined,
-      synonyms: normalizeCell(r['용어 이음동의어 목록']) ?? undefined,
-      revision_round: normalizeCell(r['제정차수']) ?? undefined,
-      revision_type: normalizeCell(r['개정구분명(폐기 또는 변경)']) ?? undefined,
-      revision_item: normalizeCell(r['개정항목']) ?? undefined,
-      revision_reason: normalizeCell(r['개정사유']) ?? undefined,
-    }));
-
-  if (terms.length === 0) {
-    console.error(`  ⚠️ 활성 Custom 용어가 없습니다 (CSV: ${rows.length}행, 폐기 제외: ${dropped}건)`);
-    return;
-  }
-  sqlite.addCustomTermsBatch(terms);
-  console.error(`  ✓ ${terms.length}개의 Custom 용어 추가 완료 (CSV: ${rows.length}행, 폐기 제외: ${dropped}건)`);
-}
-
-export async function loadCustomWords(sqlite: SQLiteManager) {
-  console.error('\n📚 6/12 Custom 단어 인덱싱...');
-  const file = path.join(CUSTOM_TERMS_DIR, 'custom_standard_words.csv');
-  if (!await fs.pathExists(file)) {
-    console.warn(`  ⚠️ Custom 단어 CSV 가 없습니다: ${file} — 건너뜀.`);
-    return;
-  }
-
-  const rows = await readCsvRows(file);
-  let dropped = 0;
-  const words = rows
-    .filter((r) => {
-      if (!r['공통표준단어명'] || !r['공통표준단어영문약어명']) return false;
-      if (isDeprecatedRevision(r['제정차수'])) {
-        dropped++;
-        return false;
-      }
-      return true;
-    })
-    .map((r) => ({
-      korean_name: r['공통표준단어명'].trim(),
-      english_name: r['공통표준단어영문약어명'].trim(),
-      english_full_name: normalizeCell(r['공통표준단어 영문명']) ?? undefined,
-      description: normalizeCell(r['공통표준단어 설명']) ?? undefined,
-      is_format_word: normalizeCell(r['형식단어여부']) === 'Y',
-      domain_category: normalizeCell(r['공통표준도메인분류명']) ?? undefined,
-      synonyms: normalizeCell(r['이음동의어 목록']) ?? undefined,
-      forbidden_words: normalizeCell(r['금칙어 목록']) ?? undefined,
-      revision_round: normalizeCell(r['제정차수']) ?? undefined,
-      revision_type: normalizeCell(r['개정구분명(폐기 또는 변경)']) ?? undefined,
-      revision_item: normalizeCell(r['개정항목']) ?? undefined,
-      revision_reason: normalizeCell(r['개정사유']) ?? undefined,
-    }));
-
-  if (words.length === 0) {
-    console.error(`  ⚠️ 활성 Custom 단어가 없습니다 (CSV: ${rows.length}행, 폐기 제외: ${dropped}건)`);
-    return;
-  }
-  sqlite.addCustomWordsBatch(words);
-  console.error(`  ✓ ${words.length}개의 Custom 단어 추가 완료 (CSV: ${rows.length}행, 폐기 제외: ${dropped}건)`);
-}
-
-export async function loadCustomDomains(sqlite: SQLiteManager) {
-  console.error('\n📚 7/12 Custom 도메인 인덱싱...');
-  const file = path.join(CUSTOM_TERMS_DIR, 'custom_standard_domains.csv');
-  if (!await fs.pathExists(file)) {
-    console.warn(`  ⚠️ Custom 도메인 CSV 가 없습니다: ${file} — 건너뜀.`);
-    return;
-  }
-
-  const rows = await readCsvRows(file);
-  let dropped = 0;
-  const domains = rows
-    .filter((r) => {
-      if (!r['공통표준도메인명'] || !r['데이터타입']) return false;
-      if (isDeprecatedRevision(r['제정차수'])) {
-        dropped++;
-        return false;
-      }
-      return true;
-    })
-    .map((r) => ({
-      domain_name: r['공통표준도메인명'].trim(),
-      data_type: r['데이터타입'].trim(),
-      domain_group: normalizeCell(r['공통표준도메인그룹명']) ?? undefined,
-      domain_category: normalizeCell(r['공통표준도메인분류명']) ?? undefined,
-      description: normalizeCell(r['공통표준도메인설명']) ?? undefined,
-      data_length: normalizeCell(r['데이터길이']) ?? undefined,
-      decimal_length: normalizeCell(r['데이터소수점길이']) ?? undefined,
-      storage_format: normalizeCell(r['저장형식']) ?? undefined,
-      display_format: normalizeCell(r['표현형식']) ?? undefined,
-      unit: normalizeCell(r['단위']) ?? undefined,
-      allowed_values: normalizeCell(r['허용값']) ?? undefined,
-      revision_round: normalizeCell(r['제정차수']) ?? undefined,
-      revision_type: normalizeCell(r['개정구분명(폐기 또는 변경)']) ?? undefined,
-      revision_item: normalizeCell(r['개정항목']) ?? undefined,
-      revision_reason: normalizeCell(r['개정사유']) ?? undefined,
-    }));
-
-  if (domains.length === 0) {
-    console.error(`  ⚠️ 활성 Custom 도메인이 없습니다 (CSV: ${rows.length}행, 폐기 제외: ${dropped}건)`);
-    return;
-  }
-  sqlite.addCustomDomainsBatch(domains);
-  console.error(`  ✓ ${domains.length}개의 Custom 도메인 추가 완료 (CSV: ${rows.length}행, 폐기 제외: ${dropped}건)`);
-}
-
-/**
- * Custom 사전이 standard 사전의 항목을 가리는 경우(같은 한글명/도메인명이지만 영문명/타입이 다름)를
- * 콘솔에 경고로 출력. 빌드를 막진 않는다 (의도된 override 일 수도 있음).
- */
-export function reportShadowingConflicts(sqlite: SQLiteManager) {
-  console.error('\n📚 8/12 Custom ↔ Standard 충돌 검사...');
-  const db = (sqlite as any).db; // 내부 better-sqlite3 인스턴스 접근
-  const termConflicts = db.prepare(`
-    SELECT ct.korean_name,
-           ct.english_name AS custom_eng, st.english_name AS std_eng,
-           ct.domain_name AS custom_domain, st.domain_name AS std_domain
-    FROM custom_terms ct
-    JOIN standard_terms st ON ct.korean_name = st.korean_name
-    WHERE ct.english_name != st.english_name OR IFNULL(ct.domain_name,'') != IFNULL(st.domain_name,'')
-  `).all() as Array<{ korean_name: string; custom_eng: string; std_eng: string; custom_domain: string | null; std_domain: string | null }>;
-
-  const domainConflicts = db.prepare(`
-    SELECT cd.domain_name,
-           cd.data_type AS custom_type, sd.data_type AS std_type,
-           cd.data_length AS custom_len, sd.data_length AS std_len
-    FROM custom_domains cd
-    JOIN standard_domains sd ON cd.domain_name = sd.domain_name
-    WHERE cd.data_type != sd.data_type OR IFNULL(cd.data_length,'') != IFNULL(sd.data_length,'')
-  `).all() as Array<{ domain_name: string; custom_type: string; std_type: string; custom_len: string | null; std_len: string | null }>;
-
-  const wordConflicts = db.prepare(`
-    SELECT cw.korean_name,
-           cw.english_name AS custom_eng, sw.english_name AS std_eng
-    FROM custom_words cw
-    JOIN standard_words sw ON cw.korean_name = sw.korean_name
-    WHERE cw.english_name != sw.english_name
-  `).all() as Array<{ korean_name: string; custom_eng: string; std_eng: string }>;
-
-  const total = termConflicts.length + domainConflicts.length + wordConflicts.length;
-  if (total === 0) {
-    console.error('  ✓ Custom 이 standard 를 가리는 항목 없음.');
-    return;
-  }
-
-  console.error(`  ⚠️ Custom override 감지: 용어 ${termConflicts.length}건 / 단어 ${wordConflicts.length}건 / 도메인 ${domainConflicts.length}건`);
-  for (const c of termConflicts.slice(0, 20)) {
-    console.error(`     [용어] '${c.korean_name}': custom=${c.custom_eng}/${c.custom_domain ?? '-'} ⇄ standard=${c.std_eng}/${c.std_domain ?? '-'}`);
-  }
-  for (const c of wordConflicts.slice(0, 20)) {
-    console.error(`     [단어] '${c.korean_name}': custom=${c.custom_eng} ⇄ standard=${c.std_eng}`);
-  }
-  for (const c of domainConflicts.slice(0, 20)) {
-    console.error(`     [도메인] '${c.domain_name}': custom=${c.custom_type}(${c.custom_len ?? '-'}) ⇄ standard=${c.std_type}(${c.std_len ?? '-'})`);
-  }
-  if (total > 60) {
-    console.error(`     … (총 ${total}건 중 최대 60건만 표시)`);
-  }
-  console.error('  ℹ️ Override 는 의도된 동작입니다 — lookup 시 custom 이 우선되고, 응답에 standard 동등 항목이 함께 노출됩니다.');
-}
 
 /**
  * 공통컴포넌트 데이터 로드
