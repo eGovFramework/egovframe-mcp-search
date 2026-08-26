@@ -102,14 +102,39 @@ export async function runTagSelectionPrompt(
   }
 }
 
+/**
+ * git 무인 실행 환경.
+ * stdio: 'pipe' 상태에서 자격증명 프롬프트가 뜨면 영원히 행이 걸리므로
+ * 프롬프트를 전면 차단한다 — 인증이 필요한 원격은 즉시 실패하고, 그 실패는
+ * 기존 fetchFailed(오프라인 폴백) 경로로 흡수된다. timeout 은 최후 방어선.
+ */
+const GIT_NONINTERACTIVE_ENV = {
+  ...process.env,
+  GIT_TERMINAL_PROMPT: '0',
+  GIT_ASKPASS: 'echo',
+  GCM_INTERACTIVE: 'never',
+};
+const GIT_TIMEOUT_MS = 120_000;
+
 /** 셸 미경유 git 실행 (사용자 입력이 아닌 내부 상수/검증된 인자만 전달) */
-function runGit(args: string[], cwd?: string): void {
-  execFileSync('git', args, { cwd, stdio: 'pipe' });
+export function runGit(args: string[], cwd?: string): void {
+  execFileSync('git', args, {
+    cwd,
+    stdio: 'pipe',
+    env: GIT_NONINTERACTIVE_ENV,
+    timeout: GIT_TIMEOUT_MS,
+  });
 }
 
 /** 셸 미경유 git 실행 + stdout 반환 */
-function runGitCapture(args: string[], cwd?: string): string {
-  return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8' });
+export function runGitCapture(args: string[], cwd?: string): string {
+  return execFileSync('git', args, {
+    cwd,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+    env: GIT_NONINTERACTIVE_ENV,
+    timeout: GIT_TIMEOUT_MS,
+  });
 }
 
 /** posix 구분자로 정규화한 프로젝트 루트 기준 상대 경로 */
@@ -149,6 +174,18 @@ function describeHead(sourceDir: string): string {
     return runGitCapture(['describe', '--tags', '--always', 'HEAD'], sourceDir).trim();
   } catch {
     return '(알 수 없음)';
+  }
+}
+
+/**
+ * 소스 체크아웃의 사람 친화 버전 표기 (state.json 기록용).
+ * 정확히 태그 위면 그 태그, 아니면 describe 결과, git 정보가 없으면 null.
+ */
+export function describeSourceVersion(sourceDir: string): string | null {
+  try {
+    return describeExactTag(sourceDir) ?? describeHead(sourceDir);
+  } catch {
+    return null;
   }
 }
 
