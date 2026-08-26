@@ -754,11 +754,15 @@ async function loadCompatibilitySoftware(sqlite: SQLiteManager): Promise<number>
     url: string;
   }> = await fs.readJSON(compatFile);
 
+  // JSON 기준 deterministic 재적재 — 원본에서 삭제된 행이 남지 않도록
+  sqlite.clearCompatibilitySoftware();
   sqlite.addCompatibilitySoftwareBatch(data.map(d => ({
     ...d,
     compatibility_level: d.compatibility_level === 1 ? 1 : 2,
     description: d.description ?? undefined,
   })));
+  // 과거 연결(잘못된 트리거)이 남긴 FTS 드리프트 치유
+  sqlite.rebuildCompatibilityFts();
   console.error(`  ✓ ${data.length}개의 호환성 소프트웨어 추가 완료`);
   return data.length;
 }

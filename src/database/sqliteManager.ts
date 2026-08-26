@@ -220,17 +220,26 @@ export class SQLiteManager {
       );
 
       -- FTS5 트리거 (데이터 동기화)
-      CREATE TRIGGER IF NOT EXISTS compatibility_ai AFTER INSERT ON compatibility_software BEGIN
+      -- components_fts 와 동일한 external-content 규칙: 일반 DELETE 문 대신
+      -- old 값을 동봉하는 'delete' 특수 커맨드를 사용해야 하며, 과거의 잘못된
+      -- 트리거를 교정하기 위해 매 연결마다 DROP 후 재생성한다.
+      DROP TRIGGER IF EXISTS compatibility_ai;
+      DROP TRIGGER IF EXISTS compatibility_ad;
+      DROP TRIGGER IF EXISTS compatibility_au;
+
+      CREATE TRIGGER compatibility_ai AFTER INSERT ON compatibility_software BEGIN
         INSERT INTO compatibility_fts(rowid, product_name, vendor, category, description)
         VALUES (new.id, new.product_name, new.vendor, new.category, new.description);
       END;
 
-      CREATE TRIGGER IF NOT EXISTS compatibility_ad AFTER DELETE ON compatibility_software BEGIN
-        DELETE FROM compatibility_fts WHERE rowid = old.id;
+      CREATE TRIGGER compatibility_ad AFTER DELETE ON compatibility_software BEGIN
+        INSERT INTO compatibility_fts(compatibility_fts, rowid, product_name, vendor, category, description)
+        VALUES ('delete', old.id, old.product_name, old.vendor, old.category, old.description);
       END;
 
-      CREATE TRIGGER IF NOT EXISTS compatibility_au AFTER UPDATE ON compatibility_software BEGIN
-        DELETE FROM compatibility_fts WHERE rowid = old.id;
+      CREATE TRIGGER compatibility_au AFTER UPDATE ON compatibility_software BEGIN
+        INSERT INTO compatibility_fts(compatibility_fts, rowid, product_name, vendor, category, description)
+        VALUES ('delete', old.id, old.product_name, old.vendor, old.category, old.description);
         INSERT INTO compatibility_fts(rowid, product_name, vendor, category, description)
         VALUES (new.id, new.product_name, new.vendor, new.category, new.description);
       END;
@@ -1220,6 +1229,24 @@ export class SQLiteManager {
   rebuildComponentsFts(): void {
     this.db.prepare(`INSERT INTO components_fts(components_fts) VALUES('rebuild')`).run();
     console.error('✅ components_fts 인덱스 재구축 완료');
+  }
+
+  /**
+   * compatibility_fts 인덱스 전체 재구축 — rebuildComponentsFts 와 동일한
+   * 사유의 드리프트 치유. 호환성 데이터를 재적재하는 경로에서 항상 호출한다.
+   */
+  rebuildCompatibilityFts(): void {
+    this.db.prepare(`INSERT INTO compatibility_fts(compatibility_fts) VALUES('rebuild')`).run();
+    console.error('✅ compatibility_fts 인덱스 재구축 완료');
+  }
+
+  /**
+   * 호환성 SW 테이블 비움 — JSON 기준 deterministic 재적재용.
+   * (REPLACE 만으로는 원본에서 삭제된 행이 남는다)
+   */
+  clearCompatibilitySoftware(): void {
+    this.db.exec('DELETE FROM compatibility_software;');
+    console.error('🧹 호환성 SW 테이블 비움');
   }
 
   /**
