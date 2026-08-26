@@ -17,7 +17,7 @@ import {
 } from '../types/knowledge.js';
 import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
-import { getKnowledgeBasePath } from '../utils/projectPath.js';
+import { resolveDeveloperKnowledgeDbDir } from '../utils/dataPaths.js';
 
 export class DeveloperKnowledgeManager {
   private db!: lancedb.Connection;
@@ -27,7 +27,8 @@ export class DeveloperKnowledgeManager {
 
   constructor(dbPath?: string) {
     const currentFile = fileURLToPath(import.meta.url);
-    this.dbPath = dbPath || getKnowledgeBasePath(currentFile);
+    // 오버레이(사용자 update 적용분) 우선, 없으면 번들 knowledge-base
+    this.dbPath = dbPath || resolveDeveloperKnowledgeDbDir(currentFile);
   }
 
   /**

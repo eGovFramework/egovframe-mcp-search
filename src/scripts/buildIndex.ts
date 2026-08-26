@@ -37,6 +37,9 @@ const __dirname = path.dirname(__filename);
 // 프로젝트 루트 경로 (build/scripts/buildIndex.js -> project root)
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
 export const TEMPLATES_DIR = path.join(PROJECT_ROOT, 'templates');
+// build-index 는 항상 저장소의 knowledge-base 를 대상으로 한다
+// (유지보수자 머신에 사용자 오버레이가 있어도 간섭받지 않도록 명시 고정)
+const KNOWLEDGE_BASE_DIR = path.join(PROJECT_ROOT, 'knowledge-base');
 const DEVELOPER_KNOWLEDGE_DIR = path.join(TEMPLATES_DIR, 'developer_knowledge');
 
 interface BuildIndexOptions {
@@ -898,7 +901,7 @@ async function indexDeveloperKnowledge(): Promise<DeveloperKnowledgeIndexStats |
     return null;
   }
 
-  const knowledgeManager = new DeveloperKnowledgeManager();
+  const knowledgeManager = new DeveloperKnowledgeManager(KNOWLEDGE_BASE_DIR);
   await knowledgeManager.initialize();
   await knowledgeManager.clearAll();
 
@@ -992,7 +995,7 @@ async function indexEgovframeDocs(selectTag?: TagSelector): Promise<GuideIndexSt
   }
 
   // 2. GuideSearchManager 초기화
-  const guideManager = new GuideSearchManager();
+  const guideManager = new GuideSearchManager(KNOWLEDGE_BASE_DIR);
   await guideManager.initialize();
 
   // 기존 데이터 삭제 후 재인덱싱
