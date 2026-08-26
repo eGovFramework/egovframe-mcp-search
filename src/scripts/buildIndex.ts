@@ -19,9 +19,8 @@
  */
 
 import { SQLiteManager } from '../database/sqliteManager.js';
-import { GuideSearchManager, parseFrontMatter, chunkMarkdown, GuideIndexStats } from '../rag/guideManager.js';
+import { GuideSearchManager, GuideIndexStats } from '../rag/guideManager.js';
 import { DeveloperKnowledgeManager } from '../rag/knowledgeManager.js';
-import { getEmbedder } from '../rag/embedder.js';
 import { type AddKnowledgeInput } from '../types/knowledge.js';
 import {
   ensureEgovframeDocs,
@@ -36,6 +35,7 @@ import {
 import {
   type SnapshotRow,
   type SnapshotManifest,
+  assertManifestCompatible,
   parseManifestFile,
   parseSnapshotFile,
   writeSnapshotFile,
@@ -49,6 +49,7 @@ import {
   MANIFEST_FILENAME,
 } from '../kb/snapshot.js';
 import { snapshotManifestUrl, snapshotFileUrl } from '../kb/sources.js';
+import { indexGuideDirectory } from '../kb/guideIndexer.js';
 import { probeReachable, downloadToFile } from '../utils/download.js';
 import { SCHEMA_VERSION, EMBEDDING_MODEL_ID, readStateFile, type StateFile } from '../utils/dataPaths.js';
 import fs from 'fs-extra';
@@ -254,20 +255,6 @@ function buildTagSelector(options: BuildIndexOptions, interactive: boolean): Tag
   };
 }
 
-/** manifest 호환성 검사 — 실패 시 이 소스는 채택 불가 */
-function checkManifestCompat(manifest: SnapshotManifest): void {
-  if (manifest.schema_version !== SCHEMA_VERSION) {
-    throw new Error(
-      `스냅샷 schema_version(${manifest.schema_version})이 지원 버전(${SCHEMA_VERSION})과 다릅니다. MCP 패키지를 업그레이드하세요.`,
-    );
-  }
-  if (manifest.embedding_model.id !== EMBEDDING_MODEL_ID) {
-    throw new Error(
-      `스냅샷 임베딩 모델(${manifest.embedding_model.id})이 동봉 모델(${EMBEDDING_MODEL_ID})과 다릅니다.`,
-    );
-  }
-}
-
 /** 디렉토리에서 개발자 지식 소스 로드 — 스냅샷 쌍 우선, 없으면 xlsx 합성 */
 async function loadKnowledgeFromDir(
   dir: string,
@@ -278,7 +265,7 @@ async function loadKnowledgeFromDir(
 
   if (await fs.pathExists(manifestPath) && await fs.pathExists(snapshotPath)) {
     const manifest = parseManifestFile(manifestPath);
-    checkManifestCompat(manifest);
+    assertManifestCompatible(manifest);
     const rows = parseSnapshotFile(snapshotPath);
     if (rows.length !== manifest.row_count) {
       throw new Error(`스냅샷 행 수(${rows.length})가 manifest(${manifest.row_count})와 다릅니다 — 산출물 손상 의심.`);
@@ -327,7 +314,7 @@ async function acquireKnowledge(
         maxBytes: 10 * 1024 * 1024,
       });
       const manifest = parseManifestFile(manifestPath);
-      checkManifestCompat(manifest);
+      assertManifestCompatible(manifest);
       await downloadToFile(snapshotFileUrl(), snapshotPath, {
         timeoutMs: 300_000,
         maxBytes: 128 * 1024 * 1024,
@@ -1342,114 +1329,25 @@ async function indexDeveloperKnowledge(
 /**
  * 마크다운 파일 재귀 수집 (이미지/git/github 제외)
  */
-async function collectMarkdownFiles(dir: string, basePath: string): Promise<string[]> {
-  const results: string[] = [];
-  const entries = await fs.readdir(dir, { withFileTypes: true });
-
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-
-    // 무시할 디렉토리
-    if (entry.isDirectory()) {
-      if (entry.name === '.git' || entry.name === '.github' || entry.name === 'images') {
-        continue;
-      }
-      const subResults = await collectMarkdownFiles(fullPath, basePath);
-      results.push(...subResults);
-    } else if (entry.name.endsWith('.md')) {
-      // 무시할 파일
-      if (entry.name === 'README.md' || entry.name === 'how-to-write-Frontmatter.md') {
-        continue;
-      }
-      results.push(fullPath);
-    }
-  }
-
-  return results;
-}
-
 /**
- * egovframe-docs 벡터화 (LanceDB)
+ * egovframe-docs 벡터화 (LanceDB) — 수집·청킹·임베딩은 kb/guideIndexer 공용 로직
  */
 async function indexEgovframeDocs(guideDir: string | null): Promise<GuideIndexStats | null> {
   console.error('\n📚 11/12 eGovFrame 가이드 벡터화 (LanceDB)...');
 
-  // 1. 소스 확보/태그 선택은 프리플라이트에서 완료
+  // 소스 확보/태그 선택은 프리플라이트에서 완료
   if (!guideDir) {
     console.error('  ⚠️ 가이드 소스 없음 — 스킵 (기존 인덱스 유지)');
     return null;
   }
 
-  // 2. GuideSearchManager 초기화 (스테이징 대상)
+  // GuideSearchManager 초기화 (스테이징 대상) 후 전량 재인덱싱
   const guideManager = new GuideSearchManager(STAGING_DIR);
   await guideManager.initialize();
-
-  // 기존 데이터 삭제 후 재인덱싱
   await guideManager.clearAll();
 
-  const embedder = getEmbedder();
-  await embedder.initialize();
-
-  // 3. 마크다운 파일 수집
-  const mdFiles = await collectMarkdownFiles(guideDir, guideDir);
-  console.error(`  📄 발견된 마크다운 파일: ${mdFiles.length}개`);
-
-  // 4. 파일별 청킹
-  const allChunks: Omit<import('../rag/guideManager.js').GuideChunk, 'id' | 'vector'>[] = [];
-  let skippedFiles = 0;
-
-  for (const filePath of mdFiles) {
-    const relativePath = path.relative(guideDir, filePath);
-    const content = await fs.readFile(filePath, 'utf-8');
-
-    // 프론트매터 파싱
-    const { frontmatter, body } = parseFrontMatter(content);
-
-    // 본문이 너무 짧은 파일 건너뛰기 (인덱스 파일 등)
-    const cleanBody = body.replace(/^#\s+.*\n?/, '').trim();
-    if (cleanBody.length < 50) {
-      skippedFiles++;
-      continue;
-    }
-
-    // 청킹
-    const chunks = chunkMarkdown(body, frontmatter, relativePath);
-    allChunks.push(...chunks);
-  }
-
-  console.error(`  📊 총 ${allChunks.length}개 청크 생성 (${skippedFiles}개 파일 건너뜀)`);
-
-  // 5. 배치 인덱싱 (100개씩)
-  const BATCH_SIZE = 100;
-  let totalIndexed = 0;
-
-  for (let i = 0; i < allChunks.length; i += BATCH_SIZE) {
-    const batch = allChunks.slice(i, Math.min(i + BATCH_SIZE, allChunks.length));
-    await guideManager.addGuideBatch(batch);
-    totalIndexed += batch.length;
-    console.error(`  진행률: ${totalIndexed}/${allChunks.length} (${Math.round((totalIndexed / allChunks.length) * 100)}%)`);
-  }
-
-  // 6. 인덱스 최적화
-  console.error('\n  🔨 가이드 벡터 인덱스 생성 중...');
-  await guideManager.createIndex();
-  await guideManager.optimize();
-
-  // 7. 통계 생성
-  const byLayer: Record<string, number> = {};
-  for (const chunk of allChunks) {
-    byLayer[chunk.layer] = (byLayer[chunk.layer] || 0) + 1;
-  }
-
-  const stats: GuideIndexStats = {
-    totalFiles: mdFiles.length - skippedFiles,
-    totalChunks: allChunks.length,
-    skippedFiles,
-    byLayer,
-  };
-
+  const stats = await indexGuideDirectory(guideManager, guideDir);
   console.error(`  ✓ egovframe-docs 벡터화 완료: ${stats.totalFiles}개 파일 → ${stats.totalChunks}개 청크`);
-
   return stats;
 }
 

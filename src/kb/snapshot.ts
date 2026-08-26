@@ -126,6 +126,23 @@ export function writeManifestFile(filePath: string, manifest: SnapshotManifest):
   fs.writeFileSync(filePath, JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
 }
 
+/**
+ * manifest 호환성 검사 — 스키마 버전·임베딩 모델이 현재 패키지와 일치해야
+ * 채택 가능하다 (불일치 시 이 소스는 거부, 기존 인덱스 유지).
+ */
+export function assertManifestCompatible(manifest: SnapshotManifest): void {
+  if (manifest.schema_version !== SCHEMA_VERSION) {
+    throw new Error(
+      `스냅샷 schema_version(${manifest.schema_version})이 지원 버전(${SCHEMA_VERSION})과 다릅니다. MCP 패키지를 업그레이드하세요.`,
+    );
+  }
+  if (manifest.embedding_model.id !== EMBEDDING_MODEL_ID) {
+    throw new Error(
+      `스냅샷 임베딩 모델(${manifest.embedding_model.id})이 동봉 모델(${EMBEDDING_MODEL_ID})과 다릅니다.`,
+    );
+  }
+}
+
 // ─── 버전 비교 ───────────────────────────────────────────
 
 /**

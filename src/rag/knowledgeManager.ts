@@ -435,6 +435,41 @@ export class DeveloperKnowledgeManager {
   }
 
   /**
+   * sourceType 기준 행 목록 조회 (증분 갱신의 삭제 스코핑용).
+   *
+   * LanceDB 의 중첩 struct 필드(metadata.originalId) 술어 지원이 버전에 따라
+   * 불안정하므로, 전체를 한 번 스캔해 메모리에서 거른 뒤 최상위 id 로
+   * 삭제하는 우회 경로를 제공한다 (README §11-1 스파이크의 안전한 해법).
+   */
+  async listSourceRows(
+    sourceTypes: string[],
+  ): Promise<Array<{ id: string; originalId: string }>> {
+    const wanted = new Set(sourceTypes);
+    let records: any[];
+    try {
+      records = await this.table.query().select(['id', 'metadata']).toArray();
+    } catch {
+      // select 미지원/실패 시 전체 컬럼 스캔 폴백
+      records = await this.table.query().toArray();
+    }
+    return records
+      .filter((r) => wanted.has(r.metadata?.sourceType))
+      .map((r) => ({ id: String(r.id), originalId: String(r.metadata?.originalId ?? '') }));
+  }
+
+  /**
+   * 최상위 id 목록으로 일괄 삭제 (IN 절 청크 분할)
+   */
+  async deleteByIds(ids: string[]): Promise<void> {
+    const CHUNK = 500;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const chunk = ids.slice(i, i + CHUNK);
+      const list = chunk.map((id) => `'${id.replace(/'/g, "''")}'`).join(', ');
+      await this.table.delete(`id IN (${list})`);
+    }
+  }
+
+  /**
    * 태그별 통계
    */
   async getTagStats(): Promise<Array<{ tag: string; count: number }>> {
