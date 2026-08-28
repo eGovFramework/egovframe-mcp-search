@@ -26,7 +26,7 @@ export const DOCS_REPO: RepoRef = { owner: 'egovframework', repo: 'egovframe-doc
 /** 공통컴포넌트 소스 */
 export const COMPONENTS_REPO: RepoRef = { owner: 'eGovFramework', repo: 'egovframe-common-components' };
 
-/** 개발자 지식 스냅샷 릴리스 저장소 */
+/** 지식베이스 릴리스 저장소 — 개발자 지식 스냅샷과 호환성 SW JSON 자산을 게시 */
 export const SNAPSHOT_REPO: RepoRef = { owner: 'eGovFramework', repo: 'egovframe-mcp-search-upload-data' };
 
 // ─── URL 조립 ────────────────────────────────────────────
@@ -55,6 +55,20 @@ export function snapshotFileUrl(): string {
 /** GitHub 이 태그마다 자동 생성하는 소스 tarball */
 export function sourceTarballUrl(ref: RepoRef, tag: string): string {
   return `https://github.com/${ref.owner}/${ref.repo}/archive/refs/tags/${encodeURIComponent(tag)}.tar.gz`;
+}
+
+/**
+ * 호환성 SW JSON 릴리스 자산 URL 후보 (순서대로 시도).
+ * 스냅샷과 동일한 릴리스 저장소에서 받는다. 운영 계획상의 경로 형식
+ * (compatibility/ 접두)을 우선 시도하고, GitHub 릴리스 자산명이 슬래시를
+ * 허용하지 않는 제약에 대비해 평탄화된 자산명 형식을 폴백으로 둔다.
+ */
+export function compatibilityJsonUrls(tag: string): string[] {
+  const base = `https://github.com/${SNAPSHOT_REPO.owner}/${SNAPSHOT_REPO.repo}/releases/download/${encodeURIComponent(tag)}`;
+  return [
+    `${base}/compatibility/compatibility-software.json`,
+    `${base}/compatibility-software.json`,
+  ];
 }
 
 export function tagsApiUrl(ref: RepoRef): string {

@@ -7,7 +7,9 @@ import { parseUpdateArgs, sanitizeVersionDirName } from '../../src/cli/update.js
 describe('parseUpdateArgs', () => {
   it('기본값 — 전체 리소스 대상', () => {
     const o = parseUpdateArgs([]);
-    expect(o.resources).toEqual(['developer_knowledge', 'guide', 'common_components']);
+    expect(o.resources).toEqual([
+      'developer_knowledge', 'guide', 'common_components', 'compatibility', 'custom_terms',
+    ]);
     expect(o.check).toBe(false);
     expect(o.rollback).toBe(false);
   });
@@ -15,6 +17,12 @@ describe('parseUpdateArgs', () => {
   it('--resource 별칭과 중복 제거', () => {
     const o = parseUpdateArgs(['--resource=knowledge,components,components']);
     expect(o.resources).toEqual(['developer_knowledge', 'common_components']);
+  });
+
+  it('SQLite 리소스 별칭 — compat/custom 도 인식한다', () => {
+    const o = parseUpdateArgs(['--resource=compat,custom', '--compatibility-tag=v4.3.0']);
+    expect(o.resources).toEqual(['compatibility', 'custom_terms']);
+    expect(o.compatibilityTag).toBe('v4.3.0');
   });
 
   it('`--flag=값` 과 `--flag 값` 둘 다 허용', () => {
