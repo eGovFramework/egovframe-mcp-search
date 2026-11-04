@@ -13,7 +13,7 @@ import {
  * 지식 검색 (통합)
  * - query + scope="knowledge" → 시맨틱 검색 (기본)
  * - query + sort="recent" → 최근 추가 순 조회
- * - query + scope="all" → 통합 검색 (지식 + 호환성 + 표준용어)
+ * - query + scope="all" → 통합 검색 (지식 + 호환성)
  * 
  * See: docs/TODO_TOOL_OPTIMIZATION.md Phase 3-C
  */
@@ -54,7 +54,6 @@ export async function searchKnowledge(args: {
     const results = await manager.smartSearch({
       query: args.query,
       includeCompatibility: true,
-      includeStandardTerms: true,
       includeKnowledge: true,
       limit: args.limit || 5,
     });
@@ -71,12 +70,6 @@ export async function searchKnowledge(args: {
         level: s.compatibility_level,
         vendor: s.vendor,
         description: s.description,
-      })),
-      standardTerms: results.standardTerms.map((t: any) => ({
-        korean: t.korean_name,
-        english: t.english_name,
-        domain: t.domain_name,
-        description: t.description,
       })),
       knowledge: results.knowledge.map((k: any) => ({
         title: k.title,
@@ -168,7 +161,6 @@ export async function getKnowledge(args: { id: string }) {
 export async function smartSearch(args: {
   query: string;
   includeCompatibility?: boolean;
-  includeStandardTerms?: boolean;
   includeKnowledge?: boolean;
   limit?: number;
 }) {
@@ -177,7 +169,6 @@ export async function smartSearch(args: {
   const results = await manager.smartSearch({
     query: args.query,
     includeCompatibility: args.includeCompatibility !== false,
-    includeStandardTerms: args.includeStandardTerms !== false,
     includeKnowledge: args.includeKnowledge !== false,
     limit: args.limit || 5,
   });
@@ -193,12 +184,6 @@ export async function smartSearch(args: {
       level: s.compatibility_level,
       vendor: s.vendor,
       description: s.description,
-    })),
-    standardTerms: results.standardTerms.map(t => ({
-      korean: t.korean_name,
-      english: t.english_name,
-      domain: t.domain_name,
-      description: t.description,
     })),
     knowledge: results.knowledge.map(k => ({
       title: k.title,

@@ -2,12 +2,12 @@
 
 /**
  * Initial Data Indexing Script
- * 초기 데이터베이스 인덱싱 (호환성 SW, 표준 용어/단어/도메인, 공통컴포넌트, 개발자 지식, eGovFrame 가이드)
+ * 초기 데이터베이스 인덱싱 (호환성 SW, 공통컴포넌트, 개발자 지식, eGovFrame 가이드)
  *
  * 파이프라인 (모든 질문은 프리플라이트에 모으고, 이후는 무인 실행):
  *   Phase 0-1  프리플라이트 — 소스 모드 선택 → 도달성 프로브 → 소스 확보·검증
  *              → 빌드 플랜 확인 (기존 인덱스 무손상)
- *   Phase 2    스테이징 빌드 — knowledge-base.staging/ 에 1/12~11/12 재구축
+ *   Phase 2    스테이징 빌드 — knowledge-base.staging/ 에 1/5~4/5 재구축
  *   Phase 3-5  검증 → 원자 교체 (직전본은 knowledge-base.prev/ 보존) → 통계
  *
  * 사용법:
@@ -49,16 +49,7 @@ import {
   MANIFEST_FILENAME,
 } from '../kb/snapshot.js';
 import { snapshotManifestUrl, snapshotFileUrl } from '../kb/sources.js';
-import {
-  readCsvRows,
-  normalizeCell,
-  isDeprecatedRevision,
-  loadCompatibilityFromJson,
-  loadCustomTerms,
-  loadCustomWords,
-  loadCustomDomains,
-  reportShadowingConflicts,
-} from '../kb/sqliteLoaders.js';
+import { loadCompatibilityFromJson } from '../kb/sqliteLoaders.js';
 import { indexGuideDirectory } from '../kb/guideIndexer.js';
 import { probeReachable, downloadToFile } from '../utils/download.js';
 import { SCHEMA_VERSION, EMBEDDING_MODEL_ID, readStateFile, type StateFile } from '../utils/dataPaths.js';
@@ -532,9 +523,6 @@ function normalizeVersionLabel(value: string | null | undefined): string | null 
 /** 스테이징에 state.json + 스냅샷 동봉 파일 기록 */
 interface SqliteResourceCounts {
   compat: number;
-  customTerms: number;
-  customWords: number;
-  customDomains: number;
 }
 
 async function writeStateAndArtifacts(
@@ -543,7 +531,7 @@ async function writeStateAndArtifacts(
   guideStats: GuideIndexStats | null,
   sqliteCounts: SqliteResourceCounts,
 ): Promise<void> {
-  console.error('\n📚 12/12 상태 기록·검증·원자 교체...');
+  console.error('\n📚 5/5 상태 기록·검증·원자 교체...');
 
   // 스냅샷 동봉 — 사용자 update 의 diff 부트스트랩 기반
   if (plan.knowledge) {
@@ -611,25 +599,13 @@ async function writeStateAndArtifacts(
     console.error('     목록·설명·FTS 검색은 메타(common-components.json) 기준입니다 — 메타 재생성을 검토하세요.');
   }
 
-  // SQLite 리소스 (호환성 SW · 기관 Custom 사전) — 사용자 update 의 현재 버전 기준값.
-  // 원본 JSON/CSV 에 버전 표기가 없어 파일 mtime 에서 날짜 버전을 합성한다.
+  // SQLite 리소스 (호환성 SW) — 사용자 update 의 현재 버전 기준값.
+  // 원본 JSON 에 버전 표기가 없어 파일 mtime 에서 날짜 버전을 합성한다.
   const compatFile = path.join(TEMPLATES_DIR, 'compatibility', 'compatibility-software.json');
   if (sqliteCounts.compat > 0 && await fs.pathExists(compatFile)) {
     state.resources.compatibility = {
       version: synthesizeDatasetVersion([compatFile]),
       row_count: sqliteCounts.compat,
-      origin: 'bundled',
-      applied_at: new Date().toISOString(),
-    };
-  }
-
-  const customCsvPaths = ['custom_standard_terms.csv', 'custom_standard_words.csv', 'custom_standard_domains.csv']
-    .map((name) => path.join(CUSTOM_TERMS_DIR, name))
-    .filter((p) => fs.existsSync(p));
-  if (customCsvPaths.length > 0) {
-    state.resources.custom_terms = {
-      version: synthesizeDatasetVersion(customCsvPaths),
-      row_count: sqliteCounts.customTerms + sqliteCounts.customWords + sqliteCounts.customDomains,
       origin: 'bundled',
       applied_at: new Date().toISOString(),
     };
@@ -654,38 +630,19 @@ async function buildIndex(options: BuildIndexOptions) {
     console.error('\n📦 스테이징 준비 중 (기존 인덱스는 교체 전까지 그대로 유지됩니다)...');
     await prepareStaging();
 
-    // 1/12~8/12 SQLite 기준 데이터 (스테이징 DB 대상)
+    // 1/5 SQLite 기준 데이터 (스테이징 DB 대상)
     console.error('📊 SQLite 데이터베이스 초기화 중...');
     const sqlite = new SQLiteManager(path.join(STAGING_DIR, 'egovframe.db'));
 
     const compatCount = await loadCompatibilitySoftware(sqlite);
 
-    // 표준 용어/단어/도메인은 CSV 기준 deterministic 재빌드 (옛 차수 잔존 방지)
-    sqlite.clearStandardReferenceData();
-    await loadStandardTerms(sqlite);
-    await loadStandardWords(sqlite);
-    await loadStandardDomains(sqlite);
-
-    // Custom 사전 (기관별 확장, 표준 다음에 우선순위 부여)
-    sqlite.clearCustomReferenceData();
-    console.error('\n📚 5/12 Custom 용어 인덱싱...');
-    await loadCustomTerms(sqlite, CUSTOM_TERMS_DIR);
-    console.error('\n📚 6/12 Custom 단어 인덱싱...');
-    await loadCustomWords(sqlite, CUSTOM_TERMS_DIR);
-    console.error('\n📚 7/12 Custom 도메인 인덱싱...');
-    await loadCustomDomains(sqlite, CUSTOM_TERMS_DIR);
-
-    // 충돌 감지: custom 이 standard 를 가리는 항목 출력
-    console.error('\n📚 8/12 Custom ↔ Standard 충돌 검사...');
-    reportShadowingConflicts(sqlite);
-
-    // 9/12 공통컴포넌트 (SQLite 메타 — 소스 확보는 프리플라이트에서 완료)
+    // 2/5 공통컴포넌트 (SQLite 메타 — 소스 확보는 프리플라이트에서 완료)
     await loadCommonComponents(sqlite, plan.componentsSrcReady);
 
-    // 10/12 개발자 지식 벡터화 (LanceDB)
+    // 3/5 개발자 지식 벡터화 (LanceDB)
     const knowledgeStats = await indexDeveloperKnowledge(plan.knowledge);
 
-    // 11/12 eGovFrame 가이드 벡터화 (LanceDB)
+    // 4/5 eGovFrame 가이드 벡터화 (LanceDB)
     const guideStats = await indexEgovframeDocs(plan.guideDir);
 
     // 통계 수집 (close 전에)
@@ -694,9 +651,6 @@ async function buildIndex(options: BuildIndexOptions) {
     // ── Phase 3-5: 상태 기록 → 검증 → 원자 교체 ──
     await writeStateAndArtifacts(plan, knowledgeStats, guideStats, {
       compat: compatCount,
-      customTerms: stats.customTerms.count,
-      customWords: stats.customWords.count,
-      customDomains: stats.customDomains.count,
     });
     sqlite.close();
     await verifyStaging(plan);
@@ -705,12 +659,6 @@ async function buildIndex(options: BuildIndexOptions) {
     // 통계 출력
     console.error('\n📊 인덱싱 완료 통계:');
     console.error(`  ✓ 호환성 SW: ${compatCount}개`);
-    console.error(`  ✓ 표준 용어: ${stats.terms.count}개`);
-    console.error(`  ✓ 표준 단어: ${stats.words.count}개`);
-    console.error(`  ✓ 표준 도메인: ${stats.domains.count}개`);
-    console.error(`  ✓ Custom 용어: ${stats.customTerms.count}개`);
-    console.error(`  ✓ Custom 단어: ${stats.customWords.count}개`);
-    console.error(`  ✓ Custom 도메인: ${stats.customDomains.count}개`);
     console.error(`  ✓ 컴포넌트 카테고리: ${stats.componentCategories.count}개`);
     console.error(`  ✓ 공통컴포넌트: ${stats.commonComponents.count}개`);
     if (knowledgeStats) {
@@ -747,7 +695,7 @@ async function buildIndex(options: BuildIndexOptions) {
  * 호환성 소프트웨어 로드 (JSON)
  */
 async function loadCompatibilitySoftware(sqlite: SQLiteManager): Promise<number> {
-  console.error('\n📚 1/12 호환성 소프트웨어 인덱싱...');
+  console.error('\n📚 1/5 호환성 소프트웨어 인덱싱...');
 
   const compatFile = path.join(TEMPLATES_DIR, 'compatibility', 'compatibility-software.json');
 
@@ -761,168 +709,6 @@ async function loadCompatibilitySoftware(sqlite: SQLiteManager): Promise<number>
   console.error(`  ✓ ${count}개의 호환성 소프트웨어 추가 완료`);
   return count;
 }
-
-/**
- * 표준 용어 로드 (data.go.kr CSV 직접 적재)
- *
- * 입력: templates/standard_terms/mois_standard_terms.csv
- * 헤더: 공통표준용어명, 공통표준용어설명, 공통표준용어영문약어명, 공통표준도메인명,
- *      허용값, 저장 형식, 표현 형식, 행정표준코드명, 소관기관명,
- *      용어 이음동의어 목록, 제정차수, 개정구분명(폐기 또는 변경), 개정항목, 개정사유
- */
-async function loadStandardTerms(sqlite: SQLiteManager) {
-  console.error('\n📚 2/12 표준 용어 인덱싱...');
-
-  const termsFile = path.join(TEMPLATES_DIR, 'standard_terms', 'mois_standard_terms.csv');
-
-  if (!await fs.pathExists(termsFile)) {
-    console.warn(`  ⚠️ 파일을 찾을 수 없습니다: ${termsFile}`);
-    console.warn('  💡 data.go.kr/data/15156379 에서 받아 위 경로에 두세요.');
-    return;
-  }
-
-  const rows = await readCsvRows(termsFile);
-
-  let droppedDeprecated = 0;
-  const terms = rows
-    .filter((r) => {
-      if (!r['공통표준용어명'] || !r['공통표준용어영문약어명']) return false;
-      if (isDeprecatedRevision(r['제정차수'])) {
-        droppedDeprecated++;
-        return false;
-      }
-      return true;
-    })
-    .map((r) => ({
-      korean_name: r['공통표준용어명'].trim(),
-      english_name: r['공통표준용어영문약어명'].trim(),
-      description: normalizeCell(r['공통표준용어설명']) ?? undefined,
-      domain_name: normalizeCell(r['공통표준도메인명']) ?? undefined,
-      allowed_values: normalizeCell(r['허용값']) ?? undefined,
-      storage_format: normalizeCell(r['저장 형식']) ?? undefined,
-      display_format: normalizeCell(r['표현 형식']) ?? undefined,
-      standard_code_name: normalizeCell(r['행정표준코드명']) ?? undefined,
-      authority: normalizeCell(r['소관기관명']) ?? undefined,
-      synonyms: normalizeCell(r['용어 이음동의어 목록']) ?? undefined,
-      revision_round: normalizeCell(r['제정차수']) ?? undefined,
-      revision_type: normalizeCell(r['개정구분명(폐기 또는 변경)']) ?? undefined,
-      revision_item: normalizeCell(r['개정항목']) ?? undefined,
-      revision_reason: normalizeCell(r['개정사유']) ?? undefined,
-    }));
-
-  sqlite.addStandardTermsBatch(terms);
-  console.error(`  ✓ ${terms.length}개의 표준 용어 추가 완료 (CSV: ${rows.length}행, 폐기 제외: ${droppedDeprecated}건)`);
-}
-
-/**
- * 표준 단어 로드 (data.go.kr CSV 직접 적재)
- *
- * 입력: templates/standard_terms/mois_standard_words.csv
- * 헤더: 공통표준단어명, 공통표준단어영문약어명, 공통표준단어 영문명, 공통표준단어 설명,
- *      형식단어여부, 공통표준도메인분류명, 이음동의어 목록, 금칙어 목록,
- *      제정차수, 개정구분명(폐기 또는 변경), 개정항목, 개정사유
- */
-async function loadStandardWords(sqlite: SQLiteManager) {
-  console.error('\n📚 3/12 표준 단어 인덱싱...');
-
-  const wordsFile = path.join(TEMPLATES_DIR, 'standard_terms', 'mois_standard_words.csv');
-
-  if (!await fs.pathExists(wordsFile)) {
-    console.warn(`  ⚠️ 파일을 찾을 수 없습니다: ${wordsFile}`);
-    console.warn('  💡 data.go.kr/data/15156439 에서 받아 위 경로에 두세요.');
-    return;
-  }
-
-  const rows = await readCsvRows(wordsFile);
-
-  let droppedDeprecated = 0;
-  const words = rows
-    .filter((r) => {
-      if (!r['공통표준단어명'] || !r['공통표준단어영문약어명']) return false;
-      if (isDeprecatedRevision(r['제정차수'])) {
-        droppedDeprecated++;
-        return false;
-      }
-      return true;
-    })
-    .map((r) => ({
-      korean_name: r['공통표준단어명'].trim(),
-      english_name: r['공통표준단어영문약어명'].trim(),
-      english_full_name: normalizeCell(r['공통표준단어 영문명']) ?? undefined,
-      description: normalizeCell(r['공통표준단어 설명']) ?? undefined,
-      is_format_word: normalizeCell(r['형식단어여부']) === 'Y',
-      domain_category: normalizeCell(r['공통표준도메인분류명']) ?? undefined,
-      synonyms: normalizeCell(r['이음동의어 목록']) ?? undefined,
-      forbidden_words: normalizeCell(r['금칙어 목록']) ?? undefined,
-      revision_round: normalizeCell(r['제정차수']) ?? undefined,
-      revision_type: normalizeCell(r['개정구분명(폐기 또는 변경)']) ?? undefined,
-      revision_item: normalizeCell(r['개정항목']) ?? undefined,
-      revision_reason: normalizeCell(r['개정사유']) ?? undefined,
-    }));
-
-  sqlite.addStandardWordsBatch(words);
-  console.error(`  ✓ ${words.length}개의 표준 단어 추가 완료 (CSV: ${rows.length}행, 폐기 제외: ${droppedDeprecated}건)`);
-}
-
-/**
- * 표준 도메인 로드 (data.go.kr CSV 직접 적재)
- *
- * 입력: templates/standard_terms/mois_standard_domains.csv
- * 헤더: 공통표준도메인그룹명, 공통표준도메인분류명, 공통표준도메인명, 공통표준도메인설명,
- *      데이터타입, 데이터길이, 데이터소수점길이, 저장형식, 표현형식, 단위, 허용값,
- *      제정차수, 개정구분명(폐기 또는 변경), 개정항목, 개정사유
- */
-async function loadStandardDomains(sqlite: SQLiteManager) {
-  console.error('\n📚 4/12 표준 도메인 인덱싱...');
-
-  const domainsFile = path.join(TEMPLATES_DIR, 'standard_terms', 'mois_standard_domains.csv');
-
-  if (!await fs.pathExists(domainsFile)) {
-    console.warn(`  ⚠️ 파일을 찾을 수 없습니다: ${domainsFile}`);
-    console.warn('  💡 data.go.kr/data/15156442 에서 받아 위 경로에 두세요.');
-    return;
-  }
-
-  const rows = await readCsvRows(domainsFile);
-
-  let droppedDeprecated = 0;
-  const domains = rows
-    .filter((r) => {
-      if (!r['공통표준도메인명'] || !r['데이터타입']) return false;
-      if (isDeprecatedRevision(r['제정차수'])) {
-        droppedDeprecated++;
-        return false;
-      }
-      return true;
-    })
-    .map((r) => ({
-      domain_name: r['공통표준도메인명'].trim(),
-      data_type: r['데이터타입'].trim(),
-      domain_group: normalizeCell(r['공통표준도메인그룹명']) ?? undefined,
-      domain_category: normalizeCell(r['공통표준도메인분류명']) ?? undefined,
-      description: normalizeCell(r['공통표준도메인설명']) ?? undefined,
-      data_length: normalizeCell(r['데이터길이']) ?? undefined,
-      decimal_length: normalizeCell(r['데이터소수점길이']) ?? undefined,
-      storage_format: normalizeCell(r['저장형식']) ?? undefined,
-      display_format: normalizeCell(r['표현형식']) ?? undefined,
-      unit: normalizeCell(r['단위']) ?? undefined,
-      allowed_values: normalizeCell(r['허용값']) ?? undefined,
-      revision_round: normalizeCell(r['제정차수']) ?? undefined,
-      revision_type: normalizeCell(r['개정구분명(폐기 또는 변경)']) ?? undefined,
-      revision_item: normalizeCell(r['개정항목']) ?? undefined,
-      revision_reason: normalizeCell(r['개정사유']) ?? undefined,
-    }));
-
-  sqlite.addStandardDomainsBatch(domains);
-  console.error(`  ✓ ${domains.length}개의 표준 도메인 추가 완료 (CSV: ${rows.length}행, 폐기 제외: ${droppedDeprecated}건)`);
-}
-
-// ==================== Custom 사전 로더 (기관별, 단일 기관) ====================
-//
-// CSV 포맷은 행안부 표준 CSV 와 동일하게 둔다 (행에서 행으로 복붙 가능, 파서 재사용).
-// 파일이 없으면 조용히 건너뛴다 (기관에서 아직 등록 안 한 상태도 정상).
-
-export const CUSTOM_TERMS_DIR = path.join(TEMPLATES_DIR, 'custom_terms');
 
 /**
  * 공통컴포넌트 데이터 로드
@@ -957,7 +743,7 @@ interface ComponentJSON {
 }
 
 async function loadCommonComponents(sqlite: SQLiteManager, srcReady: boolean) {
-  console.error('\n📚 9/12 공통컴포넌트 인덱싱...');
+  console.error('\n📚 2/5 공통컴포넌트 인덱싱...');
 
   // 소스 확보/태그 선택은 프리플라이트에서 완료 — 여기서는 결과만 반영
   if (!srcReady) {
@@ -1088,7 +874,7 @@ async function readPdfKnowledge(filePath: string): Promise<AddKnowledgeInput[]> 
 async function indexDeveloperKnowledge(
   source: KnowledgePlan | null,
 ): Promise<DeveloperKnowledgeIndexStats | null> {
-  console.error('\n📚 10/12 개발자 지식 벡터화 (LanceDB)...');
+  console.error('\n📚 3/5 개발자 지식 벡터화 (LanceDB)...');
 
   if (!source) {
     console.warn('  ⚠️ 개발자 지식 소스 없음 — 스킵 (기존 인덱스 유지)');
@@ -1146,7 +932,7 @@ async function indexDeveloperKnowledge(
  * egovframe-docs 벡터화 (LanceDB) — 수집·청킹·임베딩은 kb/guideIndexer 공용 로직
  */
 async function indexEgovframeDocs(guideDir: string | null): Promise<GuideIndexStats | null> {
-  console.error('\n📚 11/12 eGovFrame 가이드 벡터화 (LanceDB)...');
+  console.error('\n📚 4/5 eGovFrame 가이드 벡터화 (LanceDB)...');
 
   // 소스 확보/태그 선택은 프리플라이트에서 완료
   if (!guideDir) {

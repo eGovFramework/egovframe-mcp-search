@@ -9,7 +9,6 @@ import { SQLiteManager } from '../../src/database/sqliteManager.js';
 import {
   parseCompatibilityJson,
   loadCompatibilityFromJson,
-  reloadCustomDictionaries,
 } from '../../src/kb/sqliteLoaders.js';
 
 const COMPAT_ROW = {
@@ -65,37 +64,6 @@ describe('sqliteLoaders', () => {
       const jsonPath = path.join(tmpDir, 'bad-row.json');
       await fs.writeJSON(jsonPath, [COMPAT_ROW, { product_name: '' }]);
       await expect(parseCompatibilityJson(jsonPath)).rejects.toThrow(/2번째 항목/);
-    });
-  });
-
-  describe('기관 Custom 사전 (CSV)', () => {
-    it('3종 CSV 를 clear 후 재적재한다 (폐기 행 제외)', async () => {
-      const dir = path.join(tmpDir, 'custom_terms');
-      await fs.outputFile(
-        path.join(dir, 'custom_standard_terms.csv'),
-        '공통표준용어명,공통표준용어영문약어명,공통표준도메인명,제정차수\n' +
-        '기관용어,ORG_TERM,명V100,1차\n' +
-        '폐기용어,DEAD_TERM,명V100,2차(폐기)\n',
-      );
-      await fs.outputFile(
-        path.join(dir, 'custom_standard_words.csv'),
-        '공통표준단어명,공통표준단어영문약어명\n기관,ORG\n',
-      );
-      await fs.outputFile(
-        path.join(dir, 'custom_standard_domains.csv'),
-        '공통표준도메인명,데이터타입,데이터길이\n명V100,VARCHAR,100\n',
-      );
-
-      const counts = await reloadCustomDictionaries(sqlite, dir);
-      expect(counts).toEqual({ terms: 1, words: 1, domains: 1 });
-      expect(count('custom_terms')).toBe(1);
-
-      // 빈 디렉토리로 재적재 → 전부 비워짐 (clear 후 로드 없음)
-      const emptyDir = path.join(tmpDir, 'empty');
-      await fs.ensureDir(emptyDir);
-      const counts2 = await reloadCustomDictionaries(sqlite, emptyDir);
-      expect(counts2).toEqual({ terms: 0, words: 0, domains: 0 });
-      expect(count('custom_terms')).toBe(0);
     });
   });
 });

@@ -214,13 +214,10 @@ describe('SQLite 오버레이 해석 (번들이 이기는 규칙)', () => {
     expect(isOverlaySqliteValid(fakeRoot)).toBe(false);
   });
 
-  it('compatibility/custom_terms 의 번들 원본 위치는 templates 하위다', async () => {
+  it('compatibility 의 번들 원본 위치는 templates 하위다', async () => {
     await seedFakePackage('G1');
     expect(resolveResource('compatibility', fakeRoot).dir).toBe(
       path.join(fakeRoot, 'templates', 'compatibility'),
-    );
-    expect(resolveResource('custom_terms', fakeRoot).dir).toBe(
-      path.join(fakeRoot, 'templates', 'custom_terms'),
     );
   });
 });

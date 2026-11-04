@@ -83,15 +83,6 @@ function printCrossDomainResults(parsed) {
       console.log(`      │  [${k.type}] ${k.title} - ${content}`);
     }
   }
-  if (parsed.standardTerms?.length > 0) {
-    console.log(`      📖 표준용어 (${parsed.standardTerms.length}건):`);
-    for (const t of parsed.standardTerms.slice(0, 5)) {
-      console.log(`      │  ${t.korean} (${t.english}) - ${t.description?.substring(0, 60) || '-'}`);
-    }
-    if (parsed.standardTerms.length > 5) {
-      console.log(`      │  ... (${parsed.standardTerms.length - 5} more)`);
-    }
-  }
   if (parsed.compatibility?.length > 0) {
     console.log(`      🔗 호환성 (${parsed.compatibility.length}건):`);
     for (const c of parsed.compatibility.slice(0, 5)) {

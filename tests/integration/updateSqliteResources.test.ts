@@ -1,8 +1,8 @@
 /**
- * update CLI — SQLite 리소스(호환성 SW · Custom 사전) 통합 테스트
+ * update CLI — SQLite 리소스(호환성 SW) 통합 테스트
  *
  * 반입 파일(--from-file) 경로로 네트워크 없이 전체 흐름을 검증한다:
- * 오버레이 SQLite (재)베이스 → 적재 → 두 리소스의 공유 DB 공존 →
+ * 오버레이 SQLite (재)베이스 → 적재 →
  * 패키지 갱신(번들 state 변경) 시 무효화 + 재적용 치유 → 롤백.
  *
  * 번들 측은 저장소의 실제 knowledge-base/egovframe.db 를 (읽기 전용 복사로)
@@ -78,12 +78,9 @@ describe.skipIf(!fs.existsSync(BUNDLED_DB_PATH))('update CLI — SQLite 리소�
 
     bundledCompatCount = countRows(BUNDLED_DB_PATH, 'compatibility_software');
 
-    // 반입 디렉토리: Custom CSV 3종 중 1종 + 호환성 JSON
+    // 반입 디렉토리: 호환성 JSON (+ 치유 경로용 빈 반입 디렉토리)
     const importDir = path.join(tmpRoot, 'import');
-    await fs.outputFile(
-      path.join(importDir, 'custom_terms', 'custom_standard_terms.csv'),
-      '공통표준용어명,공통표준용어영문약어명,공통표준도메인명\n반입기관용어,IMPORT_TERM,명V100\n',
-    );
+    await fs.ensureDir(path.join(tmpRoot, 'import-empty'));
     await fs.outputJSON(path.join(importDir, 'compatibility', 'compatibility-software.json'), COMPAT_JSON);
   });
 
@@ -96,69 +93,49 @@ describe.skipIf(!fs.existsSync(BUNDLED_DB_PATH))('update CLI — SQLite 리소�
     await fs.remove(tmpRoot);
   });
 
-  it('Custom 사전 반입 적용 — 오버레이 SQLite 가 생성되고 적재된다', async () => {
-    const code = await runUpdate([
-      '--resource=custom_terms', '--from-file', path.join(tmpRoot, 'import'), '--yes',
-    ]);
-    expect(code).toBe(0);
-
-    expect(await fs.pathExists(getOverlaySqliteDbPath())).toBe(true);
-    expect(isOverlaySqliteValid(REPO_ROOT)).toBe(true);
-    expect(countRows(getOverlaySqliteDbPath(), 'custom_terms')).toBe(1);
-
-    const entry = readOverlayState()?.resources.custom_terms;
-    expect(entry?.dir).toBeTruthy();
-    expect(entry?.row_count).toBe(1);
-    // 적용 원본이 보관된다 (재베이스 치유·롤백의 기반)
-    expect(
-      await fs.pathExists(
-        path.join(process.env.EGOV_MCP_DATA_DIR!, entry!.dir!, 'custom_standard_terms.csv'),
-      ),
-    ).toBe(true);
-  }, 60_000);
-
-  it('호환성 SW 반입 적용 — 같은 오버레이 DB 에서 Custom 적용분과 공존한다', async () => {
+  it('호환성 SW 반입 적용 — 오버레이 SQLite 가 생성되고 적재된다', async () => {
     const code = await runUpdate([
       '--resource=compatibility', '--from-file', path.join(tmpRoot, 'import'), '--yes',
     ]);
     expect(code).toBe(0);
 
+    expect(await fs.pathExists(getOverlaySqliteDbPath())).toBe(true);
+    expect(isOverlaySqliteValid(REPO_ROOT)).toBe(true);
     // deterministic 재적재 — 번들 행은 사라지고 반입 1행만
     expect(countRows(getOverlaySqliteDbPath(), 'compatibility_software')).toBe(1);
-    // 기존 Custom 적용분은 그대로 (재베이스가 아니므로)
-    expect(countRows(getOverlaySqliteDbPath(), 'custom_terms')).toBe(1);
 
-    expect(readOverlayState()?.resources.compatibility?.row_count).toBe(1);
+    const entry = readOverlayState()?.resources.compatibility;
+    expect(entry?.dir).toBeTruthy();
+    expect(entry?.row_count).toBe(1);
+    // 적용 원본이 보관된다 (재베이스 치유·롤백의 기반)
+    expect(
+      await fs.pathExists(
+        path.join(process.env.EGOV_MCP_DATA_DIR!, entry!.dir!, 'compatibility-software.json'),
+      ),
+    ).toBe(true);
   }, 60_000);
 
   it('패키지 갱신(번들 state 변경) 시 무효화되고, update 실행이 재적용으로 치유한다', async () => {
     await setBundledGeneratedAt('it-base-2-신규번들');
     expect(isOverlaySqliteValid(REPO_ROOT)).toBe(false); // 번들이 이긴다 — 폴백 상태
 
-    // 원격 접근 없는 호출로 치유 경로만 태운다 (custom_terms 는 from-file 없이 스킵)
-    const code = await runUpdate(['--resource=custom_terms', '--yes']);
+    // 원격 접근 없는 호출로 치유 경로만 태운다 (빈 반입 디렉토리 → 갱신 자체는 스킵)
+    const code = await runUpdate([
+      '--resource=compatibility', '--from-file', path.join(tmpRoot, 'import-empty'), '--yes',
+    ]);
     expect(code).toBe(0);
 
     expect(isOverlaySqliteValid(REPO_ROOT)).toBe(true); // 새 번들 위에 재베이스됨
-    expect(countRows(getOverlaySqliteDbPath(), 'custom_terms')).toBe(1);
     expect(countRows(getOverlaySqliteDbPath(), 'compatibility_software')).toBe(1);
   }, 60_000);
 
-  it('--rollback 으로 호환성 적용분만 제거하면 번들 행이 복원되고 Custom 은 유지된다', async () => {
+  it('--rollback 으로 호환성 적용분을 제거하면 오버레이 SQLite 자체가 제거된다 (순수 번들 복귀)', async () => {
     const code = await runUpdate(['--rollback=compatibility']);
     expect(code).toBe(0);
 
     expect(readOverlayState()?.resources.compatibility).toBeUndefined();
-    // 재구성된 오버레이 DB: 호환성은 번들 원본대로, Custom 은 보관 원본 재적용
-    expect(countRows(getOverlaySqliteDbPath(), 'compatibility_software')).toBe(bundledCompatCount);
-    expect(countRows(getOverlaySqliteDbPath(), 'custom_terms')).toBe(1);
-  }, 60_000);
-
-  it('Custom 까지 롤백하면 오버레이 SQLite 자체가 제거된다 (순수 번들 복귀)', async () => {
-    const code = await runUpdate(['--rollback=custom_terms']);
-    expect(code).toBe(0);
-
-    expect(readOverlayState()?.resources.custom_terms).toBeUndefined();
     expect(await fs.pathExists(getOverlaySqliteDbPath())).toBe(false);
+    // 번들 DB 는 손대지 않았다
+    expect(countRows(BUNDLED_DB_PATH, 'compatibility_software')).toBe(bundledCompatCount);
   }, 60_000);
 });

@@ -12,7 +12,6 @@ import { resolveDeveloperKnowledgeDbDir, resolveSQLiteDbPath } from '../utils/da
 import {
   CompatibilitySoftware,
   CompatibilitySearchFilter,
-  StandardTerm,
 } from '../types/database.js';
 import {
   AddKnowledgeInput,
@@ -24,7 +23,6 @@ import path from 'path';
 export interface HybridSearchOptions {
   query: string;
   includeCompatibility?: boolean;  // 호환성 소프트웨어 검색
-  includeStandardTerms?: boolean;  // 표준 용어 검색
   includeKnowledge?: boolean;      // 개발자 지식 검색
   knowledgeOptions?: KnowledgeSearchOptions;
   compatibilityFilter?: CompatibilitySearchFilter;
@@ -33,7 +31,6 @@ export interface HybridSearchOptions {
 
 export interface HybridSearchResult {
   compatibility: CompatibilitySoftware[];
-  standardTerms: StandardTerm[];
   knowledge: KnowledgeSearchResult[];
   totalResults: number;
 }
@@ -53,7 +50,7 @@ export class HybridDatabaseManager {
     console.error(`🔍 process.cwd(): ${process.cwd()}`);
     
     // SQLite 초기화 (동기)
-    // basePath 미지정 시 SQLite 도 오버레이(compatibility/custom_terms 적용분) 우선
+    // basePath 미지정 시 SQLite 도 오버레이(compatibility 적용분) 우선
     this.sqlite = new SQLiteManager(basePath ? path.join(basePath, 'egovframe.db') : resolveSQLiteDbPath(currentFile));
     
     // LanceDB 초기화 (비동기 - initialize()에서 처리)
@@ -111,7 +108,6 @@ export class HybridDatabaseManager {
     const {
       query,
       includeCompatibility = true,
-      includeStandardTerms = true,
       includeKnowledge = true,
       knowledgeOptions = {},
       compatibilityFilter = {},
@@ -120,7 +116,6 @@ export class HybridDatabaseManager {
 
     const result: HybridSearchResult = {
       compatibility: [],
-      standardTerms: [],
       knowledge: [],
       totalResults: 0,
     };
@@ -153,16 +148,7 @@ export class HybridDatabaseManager {
       );
     }
 
-    // 2. 표준 용어 검색 (키워드 기반)
-    if (includeStandardTerms) {
-      searches.push(
-        (async () => {
-          result.standardTerms = this.sqlite.searchStandardTerm(query, limit);
-        })()
-      );
-    }
-
-    // 3. 개발자 지식 검색 (의미 기반)
+    // 2. 개발자 지식 검색 (의미 기반)
     if (includeKnowledge) {
       searches.push(
         (async () => {
@@ -179,7 +165,6 @@ export class HybridDatabaseManager {
 
     result.totalResults =
       result.compatibility.length +
-      result.standardTerms.length +
       result.knowledge.length;
 
     return result;
@@ -238,9 +223,6 @@ export class HybridDatabaseManager {
     return {
       sqlite: {
         compatibility: sqliteStats.compatibility.count,
-        terms: sqliteStats.terms.count,
-        words: sqliteStats.words.count,
-        domains: sqliteStats.domains.count,
       },
       knowledge: {
         total: knowledgeStats.total,

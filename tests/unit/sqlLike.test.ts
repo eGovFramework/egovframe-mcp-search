@@ -21,7 +21,7 @@ describe("escapeLikePattern", () => {
   });
 
   it("와일드카드가 없으면 입력 그대로 반환", () => {
-    expect(escapeLikePattern("사용자명")).toBe("사용자명");
+    expect(escapeLikePattern("게시판")).toBe("게시판");
     expect(escapeLikePattern("")).toBe("");
   });
 });
@@ -29,14 +29,22 @@ describe("escapeLikePattern", () => {
 describe("SQLiteManager LIKE 검색 — 와일드카드 리터럴 처리", () => {
   let db: SQLiteManager;
 
+  const sw = (product_name: string, vendor: string) => ({
+    product_name,
+    product_version: "1.0",
+    framework_version: "4.3",
+    category: "Framework Solution",
+    compatibility_level: 1 as const,
+    vendor,
+    verified_date: "2025-01-01",
+  });
+
   beforeAll(() => {
     db = new SQLiteManager(":memory:");
-    db.addStandardTermsBatch([
-      { korean_name: "할인율10%", english_name: "DSCNT_RT", description: "10% 할인율" },
-      { korean_name: "할인율10점", english_name: "DSCNT_RT_10", description: "10점 할인율" },
-      { korean_name: "사용자명", english_name: "USER_NM", description: "사용자 이름" },
-      { korean_name: "언더_스코어", english_name: "UNDER_SCORE", description: "언더스코어 용어" },
-      { korean_name: "언더X스코어", english_name: "UNDER_X", description: "한 글자 와일드카드 함정" },
+    db.addCompatibilitySoftwareBatch([
+      sw("제품10%", "벤더_A"),
+      sw("제품10점", "벤더XA"),
+      sw("일반제품", "일반벤더"),
     ]);
   });
 
@@ -44,36 +52,20 @@ describe("SQLiteManager LIKE 검색 — 와일드카드 리터럴 처리", () =>
     db.close();
   });
 
-  it("keyword 의 % 는 리터럴 매칭된다 (임의 문자열 와일드카드 아님)", () => {
-    const rows = db.searchStandardTerm("할인율10%");
-    // '%' 가 와일드카드였다면 '할인율10점' 도 매칭됐을 것.
-    expect(rows.map((r) => r.korean_name)).toEqual(["할인율10%"]);
+  it("productName 의 % 는 리터럴 매칭된다 (임의 문자열 와일드카드 아님)", () => {
+    const rows = db.searchCompatibleSoftware({ productName: "제품10%" });
+    // '%' 가 와일드카드였다면 '제품10점' 도 매칭됐을 것.
+    expect(rows.map((r) => r.product_name)).toEqual(["제품10%"]);
   });
 
-  it("keyword 의 _ 는 리터럴 매칭된다 (한 글자 와일드카드 아님)", () => {
-    const rows = db.searchStandardTerm("언더_스코어");
-    expect(rows.map((r) => r.korean_name)).toEqual(["언더_스코어"]);
+  it("vendor 의 _ 는 리터럴 매칭된다 (한 글자 와일드카드 아님)", () => {
+    const rows = db.searchCompatibleSoftware({ vendor: "벤더_A" });
+    expect(rows.map((r) => r.vendor)).toEqual(["벤더_A"]);
   });
 
   it("일반 키워드 부분 일치는 그대로 동작한다", () => {
-    const rows = db.searchStandardTerm("사용자");
-    expect(rows.map((r) => r.korean_name)).toContain("사용자명");
-  });
-
-  it("suggestTermsForConcept 도 와일드카드를 리터럴로 다루고 rank 를 유지한다", () => {
-    // '%' 가 와일드카드였다면 '할인율10점' 도 후보에 올랐을 것.
-    const rows = db.suggestTermsForConcept("할인율10%");
-    expect(rows.map((r) => r.korean_name)).toEqual(["할인율10%"]);
-    expect(rows[0].matchRank).toBe(1);
-
-    const exact = db.suggestTermsForConcept("사용자명");
-    expect(exact[0].korean_name).toBe("사용자명");
-    expect(exact[0].matchRank).toBe(1);
-  });
-
-  it("fullTextSearchTerms 의 prefix rank 도 이스케이프를 유지한다", () => {
-    const rows = db.fullTextSearchTerms("할인율10%");
-    expect(rows.map((r) => r.korean_name)).toEqual(["할인율10%"]);
+    const rows = db.searchCompatibleSoftware({ productName: "제품" });
+    expect(rows.map((r) => r.product_name).sort()).toEqual(["일반제품", "제품10%", "제품10점"].sort());
   });
 });
 

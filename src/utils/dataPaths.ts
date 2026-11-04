@@ -39,8 +39,7 @@ export type ResourceName =
   | 'developer_knowledge'
   | 'guide'
   | 'common_components'
-  | 'compatibility'
-  | 'custom_terms';
+  | 'compatibility';
 
 /** 리소스별 유효성 판정 마커 (오버레이 디렉토리 안에 있어야 하는 파일/디렉토리) */
 const RESOURCE_MARKERS: Record<ResourceName, string> = {
@@ -50,7 +49,6 @@ const RESOURCE_MARKERS: Record<ResourceName, string> = {
   // SQLite 리소스의 버전 디렉토리는 적용 원본(artifact)을 보관하고,
   // update CLI 가 적용 요약(applied.json)을 함께 기록한다
   compatibility: 'applied.json',
-  custom_terms: 'applied.json',
 };
 
 /** 벡터를 보유해 임베딩 모델과 결합되는 리소스 */
@@ -203,9 +201,6 @@ function bundledDirFor(name: ResourceName, startPath?: string): string {
   if (name === 'compatibility') {
     return path.join(findProjectRoot(startPath), 'templates', 'compatibility');
   }
-  if (name === 'custom_terms') {
-    return path.join(findProjectRoot(startPath), 'templates', 'custom_terms');
-  }
   // lance 리소스는 번들 knowledge-base 디렉토리에 연결 (테이블명으로 구분)
   return getKnowledgeBasePath(startPath);
 }
@@ -234,9 +229,9 @@ export function resolveResource(name: ResourceName, startPath?: string): Effecti
   };
 }
 
-// ─── SQLite 오버레이 (compatibility · custom_terms 공유) ─
+// ─── SQLite 오버레이 (compatibility) ────────────────────
 //
-// 두 SQLite 리소스는 하나의 물리 DB(egovframe.db 오버레이 사본)를 공유한다.
+// SQLite 리소스는 하나의 물리 DB(egovframe.db 오버레이 사본)에 적용된다.
 // 사본은 복사 시점의 번들 state.json generated_at 을 base.json 에 기록하며,
 // 번들이 갱신되면(패키지 업그레이드) base 불일치 → 오버레이 무효 → 번들 폴백.
 // 다음 update 실행이 새 번들을 재베이스하고 보관된 원본을 재적용해 치유한다.

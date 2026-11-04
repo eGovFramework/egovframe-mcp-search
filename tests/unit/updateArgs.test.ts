@@ -8,7 +8,7 @@ describe('parseUpdateArgs', () => {
   it('기본값 — 전체 리소스 대상', () => {
     const o = parseUpdateArgs([]);
     expect(o.resources).toEqual([
-      'developer_knowledge', 'guide', 'common_components', 'compatibility', 'custom_terms',
+      'developer_knowledge', 'guide', 'common_components', 'compatibility',
     ]);
     expect(o.check).toBe(false);
     expect(o.rollback).toBe(false);
@@ -19,10 +19,15 @@ describe('parseUpdateArgs', () => {
     expect(o.resources).toEqual(['developer_knowledge', 'common_components']);
   });
 
-  it('SQLite 리소스 별칭 — compat/custom 도 인식한다', () => {
-    const o = parseUpdateArgs(['--resource=compat,custom', '--compatibility-tag=v4.3.0']);
-    expect(o.resources).toEqual(['compatibility', 'custom_terms']);
+  it('SQLite 리소스 별칭 — compat 도 인식한다', () => {
+    const o = parseUpdateArgs(['--resource=compat', '--compatibility-tag=v4.3.0']);
+    expect(o.resources).toEqual(['compatibility']);
     expect(o.compatibilityTag).toBe('v4.3.0');
+  });
+
+  it('제거된 custom_terms 리소스는 알 수 없는 리소스로 거부한다', () => {
+    expect(() => parseUpdateArgs(['--resource=custom_terms'])).toThrow(/알 수 없는 리소스/);
+    expect(() => parseUpdateArgs(['--resource=custom'])).toThrow(/알 수 없는 리소스/);
   });
 
   it('`--flag=값` 과 `--flag 값` 둘 다 허용', () => {

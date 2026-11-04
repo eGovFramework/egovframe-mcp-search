@@ -1,16 +1,15 @@
 /**
  * `npx egovframe-mcp-search update` — 지식베이스 갱신 CLI
  *
- * 5개 리소스를 독립적으로 갱신한다 (부분 실패 = 부분 성공):
+ * 4개 리소스를 독립적으로 갱신한다 (부분 실패 = 부분 성공):
  *   developer_knowledge  릴리스 스냅샷 → 직전 적용 스냅샷과 id 대조 → 변경분만 임베딩
  *   guide                GitHub 태그 소스(md) → 전량 재인덱싱 (원본 ~수 MB)
  *   common_components    GitHub 태그 tarball → 트리 교체 (임베딩 0, SQLite 미변경)
  *   compatibility        릴리스 JSON → 오버레이 SQLite 에 deterministic 재적재
- *   custom_terms         사용자 반입 CSV(--from-file 전용) → 오버레이 SQLite 재적재
  *
- * SQLite 두 리소스는 하나의 오버레이 DB 사본을 공유하며(utils/dataPaths 의
- * base 추적 — 번들이 이기는 규칙), 패키지 갱신으로 사본이 무효화되면 보관된
- * 적용 원본으로 새 번들 위에 재적용해 치유한다.
+ * SQLite 리소스는 오버레이 DB 사본에 적용되며(utils/dataPaths 의 base 추적 —
+ * 번들이 이기는 규칙), 패키지 갱신으로 사본이 무효화되면 보관된 적용 원본으로
+ * 새 번들 위에 재적용해 치유한다.
  *
  * 갱신분은 패키지 디렉토리가 아니라 사용자 데이터 디렉토리(오버레이)에 쓴다 —
  * npm 재설치/업그레이드/npx 캐시 정리에 소실되지 않는다 (utils/dataPaths 참조).
@@ -72,11 +71,6 @@ import { SQLiteManager } from '../database/sqliteManager.js';
 import {
   loadCompatibilityFromJson,
   parseCompatibilityJson,
-  reloadCustomDictionaries,
-  reportShadowingConflicts,
-  CUSTOM_TERMS_CSV,
-  CUSTOM_WORDS_CSV,
-  CUSTOM_DOMAINS_CSV,
 } from '../kb/sqliteLoaders.js';
 import { GuideSearchManager } from '../rag/guideManager.js';
 import { indexGuideDirectory } from '../kb/guideIndexer.js';
@@ -96,9 +90,6 @@ const RESOURCE_ALIASES: Record<string, ResourceName> = {
   components: 'common_components',
   compatibility: 'compatibility',
   compat: 'compatibility',
-  custom_terms: 'custom_terms',
-  'custom-terms': 'custom_terms',
-  custom: 'custom_terms',
 };
 
 interface UpdateOptions {
@@ -125,7 +116,7 @@ export function parseUpdateArgs(argv: string[]): UpdateOptions {
     keepPrevious: false,
     rollback: false,
     rollbackTargets: null,
-    resources: ['developer_knowledge', 'guide', 'common_components', 'compatibility', 'custom_terms'],
+    resources: ['developer_knowledge', 'guide', 'common_components', 'compatibility'],
     fromFileDir: null,
     guideTag: null,
     componentsTag: null,
@@ -185,7 +176,7 @@ function resolveResourceName(name: string): ResourceName {
   const canonical = RESOURCE_ALIASES[name.trim()];
   if (!canonical) {
     throw new Error(
-      `알 수 없는 리소스입니다: ${name} (developer_knowledge | guide | components | compatibility | custom_terms 중 선택)`,
+      `알 수 없는 리소스입니다: ${name} (developer_knowledge | guide | components | compatibility 중 선택)`,
     );
   }
   return canonical;
@@ -300,12 +291,11 @@ const RESOURCE_LABELS: Record<ResourceName, string> = {
   guide: '가이드',
   common_components: '공통컴포넌트',
   compatibility: '호환성 SW',
-  custom_terms: 'Custom 사전',
 };
 
-// ─── SQLite 오버레이 공용 (compatibility · custom_terms) ─
+// ─── SQLite 오버레이 공용 (compatibility) ───────────────
 
-const SQLITE_RESOURCES: ReadonlyArray<ResourceName> = ['compatibility', 'custom_terms'];
+const SQLITE_RESOURCES: ReadonlyArray<ResourceName> = ['compatibility'];
 
 /**
  * 오버레이 SQLite 사본을 확보한다. base 가 현재 번들과 일치하면 재사용,
@@ -348,9 +338,6 @@ async function reapplySqliteResource(
       const count = await loadCompatibilityFromJson(sqlite, jsonPath);
       console.error(`  ↻ 호환성 SW 재적용: ${count}행`);
     }
-  } else if (resource === 'custom_terms') {
-    const counts = await reloadCustomDictionaries(sqlite, artifactDir);
-    console.error(`  ↻ Custom 사전 재적용: 용어 ${counts.terms} · 단어 ${counts.words} · 도메인 ${counts.domains}`);
   }
 }
 
@@ -913,87 +900,6 @@ async function updateCompatibility(options: UpdateOptions): Promise<Compatibilit
   }
 }
 
-// ─── 기관 Custom 사전 갱신 (반입 파일 전용) ──────────────
-
-interface CustomTermsUpdateResult {
-  version: string;
-  terms: number;
-  words: number;
-  domains: number;
-}
-
-async function updateCustomTerms(options: UpdateOptions): Promise<CustomTermsUpdateResult | 'skip'> {
-  const label = RESOURCE_LABELS.custom_terms;
-  console.error(`\n▶ ${label} 갱신...`);
-
-  // 원격 채널이 없다 — 기관이 직접 준비한 CSV 를 --from-file 로만 받는다
-  if (!options.fromFileDir) {
-    console.error('  ℹ️ Custom 사전은 반입 파일로만 갱신합니다 — --from-file <디렉토리> 를 지정하세요.');
-    console.error(`     (디렉토리의 custom_terms/ 하위 또는 바로 아래에 ${CUSTOM_TERMS_CSV} 등 3종 CSV)`);
-    return 'skip';
-  }
-
-  const nested = path.join(options.fromFileDir, 'custom_terms');
-  const srcDir = fs.existsSync(nested) ? nested : options.fromFileDir;
-  const csvNames = [CUSTOM_TERMS_CSV, CUSTOM_WORDS_CSV, CUSTOM_DOMAINS_CSV];
-  const presentCsvs = csvNames
-    .map((name) => path.join(srcDir, name))
-    .filter((p) => fs.existsSync(p));
-  if (presentCsvs.length === 0) {
-    console.error('  ⚠️ 반입 디렉토리에 custom_standard_*.csv 가 없어 스킵합니다.');
-    return 'skip';
-  }
-
-  const targetVersion = synthesizeDatasetVersion(presentCsvs);
-
-  // 적용 원본 보관
-  const { abs: versionDir, rel: versionRel } = overlayResourceDir('custom_terms', targetVersion);
-  await fs.remove(versionDir);
-  for (const csvPath of presentCsvs) {
-    await fs.copy(csvPath, path.join(versionDir, path.basename(csvPath)));
-  }
-
-  // 오버레이 SQLite 에 재적재 (CSV 기준 deterministic — 빠진 파일의 사전은 비워짐)
-  const { dbPath, rebased } = await ensureOverlaySqlite();
-  const sqlite = new SQLiteManager(dbPath);
-  let counts: { terms: number; words: number; domains: number };
-  try {
-    counts = await reloadCustomDictionaries(sqlite, versionDir);
-    if (rebased) {
-      await reapplyStoredSqliteResources(sqlite, 'custom_terms');
-    }
-    // 표준을 가리는 항목 안내 (custom > standard 우선순위는 의도된 동작)
-    reportShadowingConflicts(sqlite);
-  } finally {
-    sqlite.close();
-  }
-
-  await fs.writeJSON(
-    path.join(versionDir, 'applied.json'),
-    {
-      resource: 'custom_terms',
-      version: targetVersion,
-      counts,
-      files: presentCsvs.map((p) => path.basename(p)),
-      applied_at: new Date().toISOString(),
-    },
-    { spaces: 2 },
-  );
-
-  const effective = resolveResource('custom_terms', CLI_FILE);
-  const previousDir = effective.source === 'overlay' ? effective.state?.dir : undefined;
-  await commitSqliteResource('custom_terms', versionRel, {
-    version: targetVersion,
-    dir: versionRel,
-    previous_dir: previousDir,
-    row_count: counts.terms + counts.words + counts.domains,
-    origin: 'from-file',
-    applied_at: new Date().toISOString(),
-  });
-
-  return { version: targetVersion, ...counts };
-}
-
 // ─── 롤백 ────────────────────────────────────────────────
 
 async function rollbackResources(targets: ResourceName[]): Promise<number> {
@@ -1058,10 +964,7 @@ async function gatherStatus(options: UpdateOptions): Promise<ResourceStatus[]> {
     let candidate: string | null = null;
     let note = '';
 
-    if (resource === 'custom_terms' && !options.fromFileDir) {
-      // 원격 채널 없음 — 반입 파일로만 갱신
-      note = '반입 파일로만 갱신 (--from-file)';
-    } else if (options.fromFileDir) {
+    if (options.fromFileDir) {
       note = '반입 파일 기준';
     } else {
       try {
@@ -1121,7 +1024,7 @@ function printStatus(statuses: ResourceStatus[]): void {
   const overlayState = readOverlayState();
   const hasSqliteApplied = SQLITE_RESOURCES.some((r) => overlayState?.resources[r]?.dir);
   if (hasSqliteApplied && !isOverlaySqliteValid(CLI_FILE)) {
-    console.error('⚠️ 패키지 갱신으로 SQLite 적용분(호환성/Custom)이 번들로 폴백 중입니다 — update 를 실행하면 새 번들 위에 재적용됩니다.');
+    console.error('⚠️ 패키지 갱신으로 SQLite 적용분(호환성)이 번들로 폴백 중입니다 — update 를 실행하면 새 번들 위에 재적용됩니다.');
   }
 }
 
@@ -1192,7 +1095,7 @@ export async function runUpdate(argv: string[]): Promise<number> {
 
     // 패키지 갱신으로 무효화된 SQLite 적용분 치유 (보관 원본을 새 번들 위에 재적용)
     if (overlayStale) {
-      console.error('\n↻ 패키지 갱신 감지 — SQLite 적용분(호환성/Custom)을 새 번들 위에 재적용합니다...');
+      console.error('\n↻ 패키지 갱신 감지 — SQLite 적용분(호환성)을 새 번들 위에 재적용합니다...');
       try {
         await rebuildOverlaySqliteFromState();
       } catch (error) {
@@ -1221,10 +1124,6 @@ export async function runUpdate(argv: string[]): Promise<number> {
           const result = await updateCompatibility(options);
           if (result === 'skip') summary.push(`  ${label}: 변경 없음`);
           else summary.push(`  ${label}: → ${result.version} (${result.rows}행 재적재)`);
-        } else if (resource === 'custom_terms') {
-          const result = await updateCustomTerms(options);
-          if (result === 'skip') summary.push(`  ${label}: 변경 없음`);
-          else summary.push(`  ${label}: → ${result.version} (용어 ${result.terms} · 단어 ${result.words} · 도메인 ${result.domains})`);
         } else {
           const result = await updateComponents(options);
           if (result === 'skip') summary.push(`  ${label}: 변경 없음`);
@@ -1256,11 +1155,11 @@ function printUsage(): void {
   console.error('');
   console.error('사용법: egovframe-mcp-search update [옵션]');
   console.error('  --check                    갱신 가능 여부만 조회');
-  console.error('  --resource=<이름,...>      대상 한정 (developer_knowledge|guide|components|compatibility|custom_terms)');
+  console.error('  --resource=<이름,...>      대상 한정 (developer_knowledge|guide|components|compatibility)');
   console.error('  --guide-tag=<태그>         가이드 버전 지정');
   console.error('  --components-tag=<태그>    공통컴포넌트 버전 지정');
   console.error('  --compatibility-tag=<태그>  호환성 SW 릴리스 버전 지정');
-  console.error('  --from-file=<디렉토리>     반입 파일로 갱신 (Custom 사전은 이 경로 전용)');
+  console.error('  --from-file=<디렉토리>     반입 파일로 갱신 (폐쇄망 반입)');
   console.error('  --rollback[=<이름,...>]    직전 버전 복귀');
   console.error('  --full                     개발자 지식 전량 재임베딩');
   console.error('  --force                    다운그레이드/동일 버전 강제 적용');
