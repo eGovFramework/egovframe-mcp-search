@@ -6,7 +6,6 @@
 
 | 영역 | 저장소 | 용도 |
 |------|--------|------|
-| 표준용어/단어/도메인 | SQLite | 정확 조회, 필터링, 페이지네이션 |
 | 호환 소프트웨어 | SQLite | 버전, 벤더, 제품명 기반 조회 |
 | 공통컴포넌트 메타데이터 | SQLite | 컴포넌트 목록, 상세, 의존성, DDL/DML 참조 |
 | eGovFrame 가이드 문서 | LanceDB | 자연어 기반 의미 검색 |
@@ -30,9 +29,8 @@
 | Tool | 사용하는 데이터 |
 |------|----------------|
 | `egov_search_knowledge` | SQLite와 LanceDB의 지식/참조 데이터 통합 검색 |
-| `egov_ddl_assist` | SQLite의 표준용어/단어/도메인(+ 기관 custom) 사전 lookup |
 
-본 서버에서 노출되는 도구는 `egov_search_knowledge` 와 `egov_ddl_assist` 둘이며, 그 외 옛 도구(`egov_check_compliance`, `egov_scaffold_project` 등)는 모두 제거되었습니다.
+본 서버에서 노출되는 도구는 `egov_search_knowledge` 하나이며, 그 외 옛 도구(`egov_check_compliance`, `egov_scaffold_project`, `egov_ddl_assist` 등)는 모두 제거되었습니다.
 
 ## 초기화
 
@@ -41,7 +39,7 @@ npm run build
 npm run build-index
 ```
 
-`build-index`는 표준용어, 호환성, 공통컴포넌트, 가이드 문서, 개인 지식 인덱스를 현재 데이터 소스로부터 재생성합니다.
+`build-index`는 호환성, 공통컴포넌트, 가이드 문서, 개인 지식 인덱스를 현재 데이터 소스로부터 재생성합니다.
 
 ## 로컬 실행 특성
 

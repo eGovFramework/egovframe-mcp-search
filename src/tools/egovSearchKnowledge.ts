@@ -2,14 +2,13 @@
  * Unified knowledge/reference search gateway.
  *
  * This tool keeps the external MCP surface small while reusing the existing
- * guide, knowledge base, standard terms, compatibility, and common component
+ * guide, knowledge base, compatibility, and common component
  * capabilities internally.
  */
 
 import { getInitializedGuideManager } from "../rag/guideManager.js";
 import { searchKnowledge } from "./knowledge.js";
 import { searchCompatibleSoftware } from "./compatibility.js";
-import { searchStandardTerms, getStandardTerm } from "./standardTerms.js";
 import {
   listComponentCategories,
   listCommonComponents,
@@ -31,7 +30,7 @@ import {
   formatComponentDML,
 } from "./commonComponents.js";
 
-type SearchScope = "auto" | "guide" | "knowledge" | "terms" | "components" | "compatibility" | "all";
+type SearchScope = "auto" | "guide" | "knowledge" | "components" | "compatibility" | "all";
 
 export interface EgovSearchKnowledgeArgs {
   query?: string;
@@ -138,25 +137,6 @@ async function searchPersonalKnowledge(args: EgovSearchKnowledgeArgs): Promise<s
   });
 
   return formatJson("개인 지식 검색 결과", result);
-}
-
-async function searchTerms(args: EgovSearchKnowledgeArgs): Promise<string> {
-  const filters = getFilters(args);
-  const koreanName = asString(filters.koreanName);
-
-  if (args.action === "get" || koreanName) {
-    const result = await getStandardTerm({ koreanName: koreanName || requireQuery(args.query, "standard term detail") });
-    return formatJson("표준용어 상세 조회 결과", result);
-  }
-
-  const result = await searchStandardTerms({
-    query: args.query,
-    fulltext: asBoolean(filters.fulltext),
-    limit: getLimit(args, args.query ? 20 : 50),
-    offset: asNumber(filters.offset),
-  });
-
-  return formatJson("표준용어 검색 결과", result);
 }
 
 function formatComponentDetail(componentId: string): string {
@@ -288,7 +268,6 @@ async function searchAll(args: EgovSearchKnowledgeArgs): Promise<string> {
     [
       ["공식 문서", () => searchGuide(args)],
       ["개인 지식", () => searchPersonalKnowledge({ ...args, filters: { ...getFilters(args), knowledgeScope: "all" } })],
-      ["표준용어", () => searchTerms(args)],
       ["공통컴포넌트", () => Promise.resolve(searchComponentsGateway(args))],
       ["호환 소프트웨어", () => searchCompatibility(args)],
     ].map(async ([title, run]) => {
@@ -309,7 +288,6 @@ function shouldExpandToAll(args: EgovSearchKnowledgeArgs, scope: SearchScope): b
     asString(filters.componentId) ||
     asStringArray(filters.componentIds) ||
     asString(filters.filePath) ||
-    asString(filters.koreanName) ||
     asString(filters.frameworkVersion) ||
     asString(filters.vendor) ||
     asString(filters.productName)
@@ -330,9 +308,6 @@ function inferScope(args: EgovSearchKnowledgeArgs): SearchScope {
   if (asString(filters.componentId) || asStringArray(filters.componentIds) || asString(filters.filePath)) {
     return "components";
   }
-  if (asString(filters.koreanName) || asBoolean(filters.fulltext) !== undefined) {
-    return "terms";
-  }
   if (asString(filters.frameworkVersion) || asString(filters.vendor) || asString(filters.productName)) {
     return "compatibility";
   }
@@ -351,8 +326,6 @@ export async function egovSearchKnowledge(args: EgovSearchKnowledgeArgs): Promis
       return searchGuide(args);
     case "knowledge":
       return searchPersonalKnowledge(args);
-    case "terms":
-      return searchTerms(args);
     case "components":
       return searchComponentsGateway(args);
     case "compatibility":

@@ -6,7 +6,7 @@
  */
 
 import { SQLiteManager } from '../database/sqliteManager.js';
-import { getSQLiteDBPath, findProjectRoot } from '../utils/projectPath.js';
+import { resolveComponentsSrcRoot, resolveSQLiteDbPath } from '../utils/dataPaths.js';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import fs from 'fs';
@@ -23,15 +23,14 @@ let dbInstance: SQLiteManager | null = null;
 
 function getDB(): SQLiteManager {
   if (!dbInstance) {
-    dbInstance = new SQLiteManager(getSQLiteDBPath(currentFile));
+    dbInstance = new SQLiteManager(resolveSQLiteDbPath(currentFile));
   }
   return dbInstance;
 }
 
-/** 공통컴포넌트 소스 루트 디렉토리 */
+/** 공통컴포넌트 소스 루트 디렉토리 (오버레이 우선 → 번들 폴백) */
 function getComponentSrcRoot(): string {
-  const projectRoot = findProjectRoot(currentFile);
-  return path.join(projectRoot, 'templates', 'common-components-src');
+  return resolveComponentsSrcRoot(currentFile);
 }
 
 /** 지원 DB 종류 */

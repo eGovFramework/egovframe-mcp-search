@@ -64,7 +64,7 @@ Windows에서는 `%APPDATA%\\Claude\\claude_desktop_config.json`에 같은 구�
 
 | Tool | 설명 |
 |------|------|
-| `egov_search_knowledge` | 공식 가이드, 개인 지식, 표준용어, 공통컴포넌트, 호환성 통합 검색(읽기 전용) |
+| `egov_search_knowledge` | 공식 가이드, 개인 지식, 공통컴포넌트, 호환성 통합 검색(읽기 전용) |
 
 ## 자동 승인 권장값
 
@@ -95,14 +95,6 @@ eGovFrame에서 MyBatis 설정 방법을 공식 가이드와 기존 지식까지
 ```
 
 `egov_search_knowledge`의 `scope: "components"`와 `action`/`filters`를 사용합니다.
-
-### 표준용어 조회
-
-```text
-'민원'이라는 표준용어와 관련 컬럼 표준을 알려줘.
-```
-
-`egov_search_knowledge`의 `scope: "terms"`로 라우팅됩니다.
 
 ### 호환 소프트웨어 확인
 

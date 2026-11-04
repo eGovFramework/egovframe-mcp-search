@@ -55,6 +55,10 @@ Thumbs.db
 *.db-shm
 *.db-wal
 
+# build-index 스테이징/직전본 (원자 교체 작업 디렉토리 — 커밋 금지)
+knowledge-base.staging/
+knowledge-base.prev/
+
 # 플랫폼별 번들 tgz 산출물
 dist/
 

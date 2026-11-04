@@ -1,6 +1,6 @@
 /**
  * SQLite Database Manager
- * 정형 데이터 관리 (호환성 정보, 표준 용어, 단어, 도메인)
+ * 정형 데이터 관리 (호환성 정보, 공통컴포넌트)
  */
 
 import Database from 'better-sqlite3';
@@ -12,12 +12,6 @@ import { sanitizeFts5MatchQuery } from '../utils/fts5Query.js';
 import { escapeLikePattern } from '../utils/sqlLike.js';
 import {
   CompatibilitySoftware,
-  StandardTerm,
-  StandardWord,
-  StandardDomain,
-  CustomTerm,
-  CustomWord,
-  CustomDomain,
   CompatibilitySearchFilter,
   CompatibilitySummary,
   ComponentCategory,
@@ -49,10 +43,15 @@ export class SQLiteManager {
     console.error(`📂 SQLite DB 경로: ${this.dbPath}`);
     
     this.db = new Database(this.dbPath);
-    
+
     // WAL 모드로 설정 (동시성 향상)
     this.db.pragma('journal_mode = WAL');
-    
+
+    // INSERT OR REPLACE 의 암묵적 DELETE 에서도 삭제 트리거가 발화하도록 설정.
+    // OFF(기본값)이면 components_ad 트리거가 건너뛰어져 external-content FTS5
+    // (components_fts) 인덱스에 옛 토큰이 남는 드리프트가 누적된다.
+    this.db.pragma('recursive_triggers = ON');
+
     this.initializeTables();
   }
 
@@ -74,125 +73,6 @@ export class SQLiteManager {
         UNIQUE(product_name, product_version, framework_version)
       );
 
-      -- 표준 용어 테이블
-      CREATE TABLE IF NOT EXISTS standard_terms (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        korean_name TEXT NOT NULL UNIQUE,
-        english_name TEXT NOT NULL,
-        description TEXT,
-        domain_name TEXT,
-        allowed_values TEXT,
-        storage_format TEXT,
-        display_format TEXT,
-        standard_code_name TEXT,
-        authority TEXT,
-        synonyms TEXT,
-        revision_round TEXT,
-        revision_type TEXT,
-        revision_item TEXT,
-        revision_reason TEXT
-      );
-
-      -- 표준 단어 테이블
-      CREATE TABLE IF NOT EXISTS standard_words (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        korean_name TEXT NOT NULL UNIQUE,
-        english_name TEXT NOT NULL,
-        english_full_name TEXT,
-        description TEXT,
-        is_format_word INTEGER DEFAULT 0,
-        domain_category TEXT,
-        synonyms TEXT,
-        forbidden_words TEXT,
-        revision_round TEXT,
-        revision_type TEXT,
-        revision_item TEXT,
-        revision_reason TEXT
-      );
-
-      -- 표준 도메인 테이블
-      CREATE TABLE IF NOT EXISTS standard_domains (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        domain_name TEXT NOT NULL UNIQUE,
-        domain_group TEXT,
-        domain_category TEXT,
-        description TEXT,
-        data_type TEXT NOT NULL,
-        data_length TEXT,
-        decimal_length TEXT,
-        storage_format TEXT,
-        display_format TEXT,
-        unit TEXT,
-        allowed_values TEXT,
-        standard_code_name TEXT,
-        revision_round TEXT,
-        revision_type TEXT,
-        revision_item TEXT,
-        revision_reason TEXT
-      );
-
-      -- ==================== Custom 사전 (기관별 확장, 단일 기관) ====================
-      -- standard_* 와 동일한 컬럼. 우선순위: custom > standard.
-
-      CREATE TABLE IF NOT EXISTS custom_terms (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        korean_name TEXT NOT NULL UNIQUE,
-        english_name TEXT NOT NULL,
-        description TEXT,
-        domain_name TEXT,
-        allowed_values TEXT,
-        storage_format TEXT,
-        display_format TEXT,
-        standard_code_name TEXT,
-        authority TEXT,
-        synonyms TEXT,
-        revision_round TEXT,
-        revision_type TEXT,
-        revision_item TEXT,
-        revision_reason TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS custom_words (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        korean_name TEXT NOT NULL UNIQUE,
-        english_name TEXT NOT NULL,
-        english_full_name TEXT,
-        description TEXT,
-        is_format_word INTEGER DEFAULT 0,
-        domain_category TEXT,
-        synonyms TEXT,
-        forbidden_words TEXT,
-        revision_round TEXT,
-        revision_type TEXT,
-        revision_item TEXT,
-        revision_reason TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS custom_domains (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        domain_name TEXT NOT NULL UNIQUE,
-        domain_group TEXT,
-        domain_category TEXT,
-        description TEXT,
-        data_type TEXT NOT NULL,
-        data_length TEXT,
-        decimal_length TEXT,
-        storage_format TEXT,
-        display_format TEXT,
-        unit TEXT,
-        allowed_values TEXT,
-        standard_code_name TEXT,
-        revision_round TEXT,
-        revision_type TEXT,
-        revision_item TEXT,
-        revision_reason TEXT
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_custom_term_english
-        ON custom_terms(english_name);
-      CREATE INDEX IF NOT EXISTS idx_custom_word_english
-        ON custom_words(english_name);
-
       -- 인덱스 생성
       CREATE INDEX IF NOT EXISTS idx_compat_framework 
         ON compatibility_software(framework_version);
@@ -202,10 +82,6 @@ export class SQLiteManager {
         ON compatibility_software(compatibility_level);
       CREATE INDEX IF NOT EXISTS idx_compat_verified_date 
         ON compatibility_software(verified_date DESC);
-      CREATE INDEX IF NOT EXISTS idx_term_english 
-        ON standard_terms(english_name);
-      CREATE INDEX IF NOT EXISTS idx_word_english 
-        ON standard_words(english_name);
 
       -- FTS5 전체 텍스트 검색 테이블 (호환성 소프트웨어)
       CREATE VIRTUAL TABLE IF NOT EXISTS compatibility_fts USING fts5(
@@ -215,17 +91,26 @@ export class SQLiteManager {
       );
 
       -- FTS5 트리거 (데이터 동기화)
-      CREATE TRIGGER IF NOT EXISTS compatibility_ai AFTER INSERT ON compatibility_software BEGIN
+      -- components_fts 와 동일한 external-content 규칙: 일반 DELETE 문 대신
+      -- old 값을 동봉하는 'delete' 특수 커맨드를 사용해야 하며, 과거의 잘못된
+      -- 트리거를 교정하기 위해 매 연결마다 DROP 후 재생성한다.
+      DROP TRIGGER IF EXISTS compatibility_ai;
+      DROP TRIGGER IF EXISTS compatibility_ad;
+      DROP TRIGGER IF EXISTS compatibility_au;
+
+      CREATE TRIGGER compatibility_ai AFTER INSERT ON compatibility_software BEGIN
         INSERT INTO compatibility_fts(rowid, product_name, vendor, category, description)
         VALUES (new.id, new.product_name, new.vendor, new.category, new.description);
       END;
 
-      CREATE TRIGGER IF NOT EXISTS compatibility_ad AFTER DELETE ON compatibility_software BEGIN
-        DELETE FROM compatibility_fts WHERE rowid = old.id;
+      CREATE TRIGGER compatibility_ad AFTER DELETE ON compatibility_software BEGIN
+        INSERT INTO compatibility_fts(compatibility_fts, rowid, product_name, vendor, category, description)
+        VALUES ('delete', old.id, old.product_name, old.vendor, old.category, old.description);
       END;
 
-      CREATE TRIGGER IF NOT EXISTS compatibility_au AFTER UPDATE ON compatibility_software BEGIN
-        DELETE FROM compatibility_fts WHERE rowid = old.id;
+      CREATE TRIGGER compatibility_au AFTER UPDATE ON compatibility_software BEGIN
+        INSERT INTO compatibility_fts(compatibility_fts, rowid, product_name, vendor, category, description)
+        VALUES ('delete', old.id, old.product_name, old.vendor, old.category, old.description);
         INSERT INTO compatibility_fts(rowid, product_name, vendor, category, description)
         VALUES (new.id, new.product_name, new.vendor, new.category, new.description);
       END;
@@ -286,63 +171,34 @@ export class SQLiteManager {
       );
 
       -- 컴포넌트 FTS 트리거
-      CREATE TRIGGER IF NOT EXISTS components_ai AFTER INSERT ON common_components BEGIN
+      -- external-content FTS5 는 일반 DELETE 문으로 인덱스 토큰을 제거할 수 없다
+      -- (AFTER DELETE 시점엔 content 행이 이미 없어 원본 토큰을 알 수 없음).
+      -- 반드시 old 값을 실어 보내는 'delete' 특수 커맨드를 사용해야 하며,
+      -- 과거의 잘못된 트리거(DELETE FROM ... WHERE rowid=)를 교정하기 위해
+      -- 매 연결마다 DROP 후 올바른 형태로 재생성한다 (비용 무시 가능).
+      DROP TRIGGER IF EXISTS components_ai;
+      DROP TRIGGER IF EXISTS components_ad;
+      DROP TRIGGER IF EXISTS components_au;
+
+      CREATE TRIGGER components_ai AFTER INSERT ON common_components BEGIN
         INSERT INTO components_fts(rowid, name, name_en, description, description_en, package_name)
         VALUES (new.id, new.name, new.name_en, new.description, new.description_en, new.package_name);
       END;
 
-      CREATE TRIGGER IF NOT EXISTS components_ad AFTER DELETE ON common_components BEGIN
-        DELETE FROM components_fts WHERE rowid = old.id;
+      CREATE TRIGGER components_ad AFTER DELETE ON common_components BEGIN
+        INSERT INTO components_fts(components_fts, rowid, name, name_en, description, description_en, package_name)
+        VALUES ('delete', old.id, old.name, old.name_en, old.description, old.description_en, old.package_name);
       END;
 
-      CREATE TRIGGER IF NOT EXISTS components_au AFTER UPDATE ON common_components BEGIN
-        DELETE FROM components_fts WHERE rowid = old.id;
+      CREATE TRIGGER components_au AFTER UPDATE ON common_components BEGIN
+        INSERT INTO components_fts(components_fts, rowid, name, name_en, description, description_en, package_name)
+        VALUES ('delete', old.id, old.name, old.name_en, old.description, old.description_en, old.package_name);
         INSERT INTO components_fts(rowid, name, name_en, description, description_en, package_name)
         VALUES (new.id, new.name, new.name_en, new.description, new.description_en, new.package_name);
       END;
     `);
 
-    this.runMigrations();
-
     console.error('✅ SQLite 데이터베이스 초기화 완료');
-  }
-
-  /**
-   * 기존 DB 스키마에 누락된 컬럼을 ALTER TABLE 로 보충.
-   * CREATE TABLE IF NOT EXISTS 는 기존 테이블을 건드리지 않으므로,
-   * 새 컬럼은 여기서 명시적으로 추가해야 한다.
-   */
-  private runMigrations() {
-    this.ensureColumns('standard_terms', [
-      ['synonyms', 'TEXT'],
-      ['revision_round', 'TEXT'],
-      ['revision_type', 'TEXT'],
-      ['revision_item', 'TEXT'],
-      ['revision_reason', 'TEXT'],
-    ]);
-    this.ensureColumns('standard_words', [
-      ['revision_round', 'TEXT'],
-      ['revision_type', 'TEXT'],
-      ['revision_item', 'TEXT'],
-      ['revision_reason', 'TEXT'],
-    ]);
-    this.ensureColumns('standard_domains', [
-      ['revision_round', 'TEXT'],
-      ['revision_type', 'TEXT'],
-      ['revision_item', 'TEXT'],
-      ['revision_reason', 'TEXT'],
-    ]);
-  }
-
-  private ensureColumns(table: string, columns: Array<[string, string]>) {
-    const existing = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-    const have = new Set(existing.map((c) => c.name));
-    for (const [name, type] of columns) {
-      if (!have.has(name)) {
-        this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
-        console.error(`🛠  마이그레이션: ${table}.${name} 추가`);
-      }
-    }
   }
 
   // ==================== 호환성 소프트웨어 관리 ====================
@@ -553,512 +409,12 @@ export class SQLiteManager {
     return results.map(r => r.framework_version);
   }
 
-  // ==================== 표준 용어 관리 ====================
-
-  /**
-   * 표준 용어/단어/도메인 테이블을 모두 비운다.
-   * CSV 가 진실 공급원이므로 build-index 매 회 호출하여 deterministic 재빌드 보장.
-   * 옛 차수에만 존재하고 8차 CSV 에서 빠진 행이 잔존하지 않도록 막는 목적.
-   */
-  clearStandardReferenceData(): void {
-    this.db.exec(`
-      DELETE FROM standard_terms;
-      DELETE FROM standard_words;
-      DELETE FROM standard_domains;
-    `);
-    console.error('🧹 표준 용어/단어/도메인 테이블 비움');
-  }
-
-  /**
-   * 표준 용어 추가
-   */
-  addStandardTerm(term: Omit<StandardTerm, 'id'>): number {
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO standard_terms
-      (korean_name, english_name, description, domain_name,
-       allowed_values, storage_format, display_format, standard_code_name, authority,
-       synonyms, revision_round, revision_type, revision_item, revision_reason)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const info = stmt.run(
-      term.korean_name,
-      term.english_name,
-      term.description || null,
-      term.domain_name || null,
-      term.allowed_values || null,
-      term.storage_format || null,
-      term.display_format || null,
-      term.standard_code_name || null,
-      term.authority || null,
-      term.synonyms || null,
-      term.revision_round || null,
-      term.revision_type || null,
-      term.revision_item || null,
-      term.revision_reason || null
-    );
-
-    return info.lastInsertRowid as number;
-  }
-
-  /**
-   * 표준 용어 배치 추가
-   */
-  addStandardTermsBatch(terms: Omit<StandardTerm, 'id'>[]): void {
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO standard_terms
-      (korean_name, english_name, description, domain_name,
-       allowed_values, storage_format, display_format, standard_code_name, authority,
-       synonyms, revision_round, revision_type, revision_item, revision_reason)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const transaction = this.db.transaction((list: typeof terms) => {
-      for (const term of list) {
-        stmt.run(
-          term.korean_name,
-          term.english_name,
-          term.description || null,
-          term.domain_name || null,
-          term.allowed_values || null,
-          term.storage_format || null,
-          term.display_format || null,
-          term.standard_code_name || null,
-          term.authority || null,
-          term.synonyms || null,
-          term.revision_round || null,
-          term.revision_type || null,
-          term.revision_item || null,
-          term.revision_reason || null
-        );
-      }
-    });
-
-    transaction(terms);
-    console.error(`✅ ${terms.length}개의 표준 용어 추가 완료`);
-  }
-
-  /**
-   * 표준 용어 검색
-   */
-  searchStandardTerm(keyword: string, limit: number = 20, offset: number = 0): StandardTerm[] {
-    if (!keyword) {
-      // 키워드가 없으면 전체 목록 반환 (페이징 지원)
-      return this.db.prepare(`
-        SELECT * FROM standard_terms
-        ORDER BY korean_name
-        LIMIT ? OFFSET ?
-      `).all(limit, offset) as StandardTerm[];
-    }
-    const kw = `%${escapeLikePattern(keyword)}%`;
-    return this.db.prepare(`
-      SELECT * FROM standard_terms
-      WHERE korean_name LIKE ? ESCAPE '\\' OR english_name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\'
-      ORDER BY korean_name
-      LIMIT ? OFFSET ?
-    `).all(kw, kw, kw, limit, offset) as StandardTerm[];
-  }
-
-  /**
-   * 한글명으로 표준 용어 조회
-   */
-  getStandardTermByName(koreanName: string): StandardTerm | undefined {
-    return this.db.prepare(`
-      SELECT * FROM standard_terms
-      WHERE korean_name = ?
-    `).get(koreanName) as StandardTerm | undefined;
-  }
-
-  /**
-   * 표준 용어 전체 텍스트 검색 (FTS5 사용)
-   */
-  fullTextSearchTerms(query: string, limit: number = 20): StandardTerm[] {
-    // FTS5 테이블이 없을 수 있으므로 일반 LIKE 검색 사용
-    const contains = `%${escapeLikePattern(query)}%`;
-    const prefix = `${escapeLikePattern(query)}%`;
-    return this.db.prepare(`
-      SELECT * FROM standard_terms
-      WHERE korean_name LIKE ? ESCAPE '\\'
-         OR english_name LIKE ? ESCAPE '\\'
-         OR description LIKE ? ESCAPE '\\'
-         OR domain_name LIKE ? ESCAPE '\\'
-         OR standard_code_name LIKE ? ESCAPE '\\'
-      ORDER BY
-        CASE
-          WHEN korean_name = ? THEN 1
-          WHEN english_name = ? THEN 2
-          WHEN korean_name LIKE ? ESCAPE '\\' THEN 3
-          WHEN english_name LIKE ? ESCAPE '\\' THEN 4
-          ELSE 5
-        END,
-        korean_name
-      LIMIT ?
-    `).all(
-      contains, contains, contains, contains, contains,
-      query, query, prefix, prefix,
-      limit
-    ) as StandardTerm[];
-  }
-
-  /**
-   * 영문 약어로 표준 용어 조회 (DDL validate_column 용).
-   * english_name 은 UNIQUE 가 아니므로 여러 건이 반환될 수 있음.
-   */
-  getStandardTermsByEnglishName(englishName: string): StandardTerm[] {
-    return this.db.prepare(`
-      SELECT * FROM standard_terms
-      WHERE english_name = ?
-      ORDER BY korean_name
-    `).all(englishName) as StandardTerm[];
-  }
-
-  /**
-   * 한글 개념 키워드로 관련 표준 용어 후보 ranked 리스트 반환 (suggest_table_columns 용).
-   * 매칭 우선순위:
-   *   1. korean_name 정확 일치
-   *   2. korean_name 이 키워드로 시작 (prefix)
-   *   3. korean_name 안에 키워드 포함 (contains)
-   *   4. description 안에 키워드 포함 (description)
-   */
-  suggestTermsForConcept(
-    keyword: string,
-    limit: number = 30,
-  ): Array<StandardTerm & { matchRank: number }> {
-    const prefix = `${escapeLikePattern(keyword)}%`;
-    const contains = `%${escapeLikePattern(keyword)}%`;
-    return this.db
-      .prepare(
-        `
-      SELECT *,
-        CASE
-          WHEN korean_name = ? THEN 1
-          WHEN korean_name LIKE ? ESCAPE '\\' THEN 2
-          WHEN korean_name LIKE ? ESCAPE '\\' THEN 3
-          WHEN description LIKE ? ESCAPE '\\' THEN 4
-          ELSE 5
-        END AS matchRank
-      FROM standard_terms
-      WHERE korean_name LIKE ? ESCAPE '\\'
-         OR description LIKE ? ESCAPE '\\'
-      ORDER BY matchRank, LENGTH(korean_name), korean_name
-      LIMIT ?
-    `,
-      )
-      .all(keyword, prefix, contains, contains, contains, contains, limit) as Array<
-      StandardTerm & { matchRank: number }
-    >;
-  }
-
-  /**
-   * 동의어 컬럼에서 정확한 한글명 매칭으로 표준 용어를 역추적한다.
-   *
-   * synonyms 컬럼은 콤마 구분 문자열 (예: "사용자이름, 사용인명, 사용인이름").
-   * LIKE 로 1차 후보를 좁힌 뒤 JS 에서 split-and-trim 으로 정확 매칭 검증.
-   * "사용자명" 검색 시 "회사사용자명" 같은 부분 일치를 걸러내기 위한 단계.
-   */
-  lookupTermsBySynonym(korean: string): StandardTerm[] {
-    const candidates = this.db.prepare(`
-      SELECT * FROM standard_terms
-      WHERE synonyms LIKE ? ESCAPE '\\'
-    `).all(`%${escapeLikePattern(korean)}%`) as StandardTerm[];
-
-    return candidates.filter((t) => {
-      if (!t.synonyms) return false;
-      const tokens = t.synonyms.split(',').map((s) => s.trim());
-      return tokens.includes(korean);
-    });
-  }
-
-  // ==================== 표준 단어 관리 ====================
-
-  /**
-   * 한글 단어명으로 표준 단어 단일 조회 (DDL 보조 longest-prefix 분해용).
-   */
-  getStandardWordByName(koreanName: string): StandardWord | undefined {
-    return this.db.prepare(`
-      SELECT * FROM standard_words
-      WHERE korean_name = ?
-    `).get(koreanName) as StandardWord | undefined;
-  }
-
-  /**
-   * 표준 단어 배치 추가
-   */
-  addStandardWordsBatch(words: Omit<StandardWord, 'id'>[]): void {
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO standard_words
-      (korean_name, english_name, english_full_name, description, is_format_word,
-       domain_category, synonyms, forbidden_words,
-       revision_round, revision_type, revision_item, revision_reason)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const transaction = this.db.transaction((list: typeof words) => {
-      for (const word of list) {
-        stmt.run(
-          word.korean_name,
-          word.english_name,
-          word.english_full_name || null,
-          word.description || null,
-          word.is_format_word ? 1 : 0,
-          word.domain_category || null,
-          word.synonyms || null,
-          word.forbidden_words || null,
-          word.revision_round || null,
-          word.revision_type || null,
-          word.revision_item || null,
-          word.revision_reason || null
-        );
-      }
-    });
-
-    transaction(words);
-    console.error(`✅ ${words.length}개의 표준 단어 추가 완료`);
-  }
-
-  // ==================== 표준 도메인 관리 ====================
-
-  /**
-   * 도메인명으로 단일 조회 (DDL 보조 SQL 타입 변환용).
-   */
-  getStandardDomainByName(domainName: string): StandardDomain | undefined {
-    return this.db.prepare(`
-      SELECT * FROM standard_domains
-      WHERE domain_name = ?
-    `).get(domainName) as StandardDomain | undefined;
-  }
-
-  /**
-   * 표준 도메인 배치 추가
-   */
-  addStandardDomainsBatch(domains: Omit<StandardDomain, 'id'>[]): void {
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO standard_domains
-      (domain_name, domain_group, domain_category, description, data_type,
-       data_length, decimal_length, storage_format, display_format, unit, allowed_values, standard_code_name,
-       revision_round, revision_type, revision_item, revision_reason)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const transaction = this.db.transaction((list: typeof domains) => {
-      for (const domain of list) {
-        stmt.run(
-          domain.domain_name,
-          domain.domain_group || null,
-          domain.domain_category || null,
-          domain.description || null,
-          domain.data_type,
-          domain.data_length || null,
-          domain.decimal_length || null,
-          domain.storage_format || null,
-          domain.display_format || null,
-          domain.unit || null,
-          domain.allowed_values || null,
-          domain.standard_code_name || null,
-          domain.revision_round || null,
-          domain.revision_type || null,
-          domain.revision_item || null,
-          domain.revision_reason || null
-        );
-      }
-    });
-
-    transaction(domains);
-    console.error(`✅ ${domains.length}개의 표준 도메인 추가 완료`);
-  }
-
-  // ==================== Custom 사전 관리 (기관별) ====================
-
-  /**
-   * Custom 용어/단어/도메인 테이블을 모두 비운다.
-   * build-index 매 회 호출하여 templates/custom_terms/*.csv 기준으로 재빌드.
-   */
-  clearCustomReferenceData(): void {
-    this.db.exec(`
-      DELETE FROM custom_terms;
-      DELETE FROM custom_words;
-      DELETE FROM custom_domains;
-    `);
-    console.error('🧹 Custom 용어/단어/도메인 테이블 비움');
-  }
-
-  // -------- Custom 용어 --------
-
-  addCustomTermsBatch(terms: Omit<CustomTerm, 'id'>[]): void {
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO custom_terms
-      (korean_name, english_name, description, domain_name,
-       allowed_values, storage_format, display_format, standard_code_name, authority,
-       synonyms, revision_round, revision_type, revision_item, revision_reason)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const tx = this.db.transaction((list: typeof terms) => {
-      for (const t of list) {
-        stmt.run(
-          t.korean_name,
-          t.english_name,
-          t.description || null,
-          t.domain_name || null,
-          t.allowed_values || null,
-          t.storage_format || null,
-          t.display_format || null,
-          t.standard_code_name || null,
-          t.authority || null,
-          t.synonyms || null,
-          t.revision_round || null,
-          t.revision_type || null,
-          t.revision_item || null,
-          t.revision_reason || null,
-        );
-      }
-    });
-    tx(terms);
-    console.error(`✅ ${terms.length}개의 Custom 용어 추가 완료`);
-  }
-
-  getCustomTermByName(koreanName: string): CustomTerm | undefined {
-    return this.db
-      .prepare(`SELECT * FROM custom_terms WHERE korean_name = ?`)
-      .get(koreanName) as CustomTerm | undefined;
-  }
-
-  getCustomTermsByEnglishName(englishName: string): CustomTerm[] {
-    return this.db
-      .prepare(`SELECT * FROM custom_terms WHERE english_name = ? ORDER BY korean_name`)
-      .all(englishName) as CustomTerm[];
-  }
-
-  lookupCustomTermsBySynonym(korean: string): CustomTerm[] {
-    const candidates = this.db
-      .prepare(`SELECT * FROM custom_terms WHERE synonyms LIKE ? ESCAPE '\\'`)
-      .all(`%${escapeLikePattern(korean)}%`) as CustomTerm[];
-    return candidates.filter((t) => {
-      if (!t.synonyms) return false;
-      return t.synonyms.split(',').map((s) => s.trim()).includes(korean);
-    });
-  }
-
-  suggestCustomTermsForConcept(
-    keyword: string,
-    limit: number = 30,
-  ): Array<CustomTerm & { matchRank: number }> {
-    const prefix = `${escapeLikePattern(keyword)}%`;
-    const contains = `%${escapeLikePattern(keyword)}%`;
-    return this.db
-      .prepare(
-        `
-      SELECT *,
-        CASE
-          WHEN korean_name = ? THEN 1
-          WHEN korean_name LIKE ? ESCAPE '\\' THEN 2
-          WHEN korean_name LIKE ? ESCAPE '\\' THEN 3
-          WHEN description LIKE ? ESCAPE '\\' THEN 4
-          ELSE 5
-        END AS matchRank
-      FROM custom_terms
-      WHERE korean_name LIKE ? ESCAPE '\\'
-         OR description LIKE ? ESCAPE '\\'
-      ORDER BY matchRank, LENGTH(korean_name), korean_name
-      LIMIT ?
-    `,
-      )
-      .all(keyword, prefix, contains, contains, contains, contains, limit) as Array<
-      CustomTerm & { matchRank: number }
-    >;
-  }
-
-  // -------- Custom 단어 --------
-
-  addCustomWordsBatch(words: Omit<CustomWord, 'id'>[]): void {
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO custom_words
-      (korean_name, english_name, english_full_name, description, is_format_word,
-       domain_category, synonyms, forbidden_words,
-       revision_round, revision_type, revision_item, revision_reason)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const tx = this.db.transaction((list: typeof words) => {
-      for (const w of list) {
-        stmt.run(
-          w.korean_name,
-          w.english_name,
-          w.english_full_name || null,
-          w.description || null,
-          w.is_format_word ? 1 : 0,
-          w.domain_category || null,
-          w.synonyms || null,
-          w.forbidden_words || null,
-          w.revision_round || null,
-          w.revision_type || null,
-          w.revision_item || null,
-          w.revision_reason || null,
-        );
-      }
-    });
-    tx(words);
-    console.error(`✅ ${words.length}개의 Custom 단어 추가 완료`);
-  }
-
-  getCustomWordByName(koreanName: string): CustomWord | undefined {
-    return this.db
-      .prepare(`SELECT * FROM custom_words WHERE korean_name = ?`)
-      .get(koreanName) as CustomWord | undefined;
-  }
-
-  // -------- Custom 도메인 --------
-
-  addCustomDomainsBatch(domains: Omit<CustomDomain, 'id'>[]): void {
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO custom_domains
-      (domain_name, domain_group, domain_category, description, data_type,
-       data_length, decimal_length, storage_format, display_format, unit, allowed_values, standard_code_name,
-       revision_round, revision_type, revision_item, revision_reason)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const tx = this.db.transaction((list: typeof domains) => {
-      for (const d of list) {
-        stmt.run(
-          d.domain_name,
-          d.domain_group || null,
-          d.domain_category || null,
-          d.description || null,
-          d.data_type,
-          d.data_length || null,
-          d.decimal_length || null,
-          d.storage_format || null,
-          d.display_format || null,
-          d.unit || null,
-          d.allowed_values || null,
-          d.standard_code_name || null,
-          d.revision_round || null,
-          d.revision_type || null,
-          d.revision_item || null,
-          d.revision_reason || null,
-        );
-      }
-    });
-    tx(domains);
-    console.error(`✅ ${domains.length}개의 Custom 도메인 추가 완료`);
-  }
-
-  getCustomDomainByName(domainName: string): CustomDomain | undefined {
-    return this.db
-      .prepare(`SELECT * FROM custom_domains WHERE domain_name = ?`)
-      .get(domainName) as CustomDomain | undefined;
-  }
-
   /**
    * 전체 통계
    */
   getOverallStats() {
     return {
       compatibility: this.db.prepare('SELECT COUNT(*) as count FROM compatibility_software').get() as { count: number },
-      terms: this.db.prepare('SELECT COUNT(*) as count FROM standard_terms').get() as { count: number },
-      words: this.db.prepare('SELECT COUNT(*) as count FROM standard_words').get() as { count: number },
-      domains: this.db.prepare('SELECT COUNT(*) as count FROM standard_domains').get() as { count: number },
-      customTerms: this.db.prepare('SELECT COUNT(*) as count FROM custom_terms').get() as { count: number },
-      customWords: this.db.prepare('SELECT COUNT(*) as count FROM custom_words').get() as { count: number },
-      customDomains: this.db.prepare('SELECT COUNT(*) as count FROM custom_domains').get() as { count: number },
       componentCategories: this.db.prepare('SELECT COUNT(*) as count FROM component_categories').get() as { count: number },
       commonComponents: this.db.prepare('SELECT COUNT(*) as count FROM common_components').get() as { count: number },
     };
@@ -1192,6 +548,36 @@ export class SQLiteManager {
 
     transaction(dependencies);
     console.error(`✅ ${dependencies.length}개의 컴포넌트 의존성 추가 완료`);
+  }
+
+  /**
+   * components_fts 인덱스를 content 테이블(common_components) 기준으로 전체 재구축.
+   *
+   * recursive_triggers 가 OFF 였던 과거 연결에서 INSERT OR REPLACE 가 남긴
+   * 드리프트(옛 토큰 잔존)를 치유한다. 수백 건 규모라 비용은 무시 가능 —
+   * 컴포넌트 메타를 재적재하는 경로(build-index)에서 항상 호출한다.
+   */
+  rebuildComponentsFts(): void {
+    this.db.prepare(`INSERT INTO components_fts(components_fts) VALUES('rebuild')`).run();
+    console.error('✅ components_fts 인덱스 재구축 완료');
+  }
+
+  /**
+   * compatibility_fts 인덱스 전체 재구축 — rebuildComponentsFts 와 동일한
+   * 사유의 드리프트 치유. 호환성 데이터를 재적재하는 경로에서 항상 호출한다.
+   */
+  rebuildCompatibilityFts(): void {
+    this.db.prepare(`INSERT INTO compatibility_fts(compatibility_fts) VALUES('rebuild')`).run();
+    console.error('✅ compatibility_fts 인덱스 재구축 완료');
+  }
+
+  /**
+   * 호환성 SW 테이블 비움 — JSON 기준 deterministic 재적재용.
+   * (REPLACE 만으로는 원본에서 삭제된 행이 남는다)
+   */
+  clearCompatibilitySoftware(): void {
+    this.db.exec('DELETE FROM compatibility_software;');
+    console.error('🧹 호환성 SW 테이블 비움');
   }
 
   /**
