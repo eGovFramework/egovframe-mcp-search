@@ -2,7 +2,7 @@
 
 `egov_search_knowledge`는 eGovFrame 개발에 필요한 지식 조회 기능을 하나의 관문으로 묶은 통합 검색 tool입니다.
 
-기존에 외부로 각각 노출되던 공식 문서 검색, 개인 지식 검색, 표준용어 조회, 공통컴포넌트 조회, 호환 소프트웨어 검색 tools는 더 이상 직접 노출하지 않고, 이 tool의 `scope`와 `action`으로 호출합니다.
+기존에 외부로 각각 노출되던 공식 문서 검색, 개인 지식 검색, 공통컴포넌트 조회, 호환 소프트웨어 검색 tools는 더 이상 직접 노출하지 않고, 이 tool의 `scope`와 `action`으로 호출합니다.
 
 > 구현 파일: `src/tools/egovSearchKnowledge.ts`  
 > 등록 위치: `src/index.ts`  
@@ -18,7 +18,6 @@
 
 - eGovFrame 공식 Developer Guide 검색
 - 개인 지식 베이스 검색
-- 표준용어 검색 및 상세 조회
 - 공통컴포넌트 목록/상세/의존성 조회
 - 공통컴포넌트 소스 파일, DDL, DML 조회
 - eGovFrame 버전별 호환 소프트웨어 검색
@@ -31,8 +30,8 @@
 | 파라미터 | 타입 | 필수 | 설명 |
 |----------|------|------|------|
 | `query` | string | - | 검색 질문 또는 키워드. `guide`, `knowledge`, `all` 검색에서는 필수 |
-| `scope` | string | - | 검색 범위. `auto`, `guide`, `knowledge`, `terms`, `components`, `compatibility`, `all` |
-| `action` | string | - | 세부 조회 동작. 주로 `terms`, `components` 범위에서 사용 |
+| `scope` | string | - | 검색 범위. `auto`, `guide`, `knowledge`, `components`, `compatibility`, `all` |
+| `action` | string | - | 세부 조회 동작. 주로 `components` 범위에서 사용 |
 | `filters` | object | - | 범위별 필터 |
 | `limit` | number | - | 최대 결과 수. `filters.limit`보다 우선 적용 |
 | `strictScope` | boolean | - | `true`면 지정한 `scope`만 검색. 기본값은 `false` |
@@ -53,7 +52,6 @@
 | `auto` | 입력값 기반 자동 라우팅 | `inferScope()` |
 | `guide` | 공식 Developer Guide 검색 | `searchGuide()` |
 | `knowledge` | 개인 지식 베이스 검색 | `searchPersonalKnowledge()` |
-| `terms` | 표준용어 검색/상세 조회 | `searchTerms()` |
 | `components` | 공통컴포넌트 조회 | `searchComponentsGateway()` |
 | `compatibility` | 호환 소프트웨어 검색 | `searchCompatibility()` |
 | `all` | 주요 지식 소스 통합 검색 | `searchAll()` |
@@ -67,7 +65,6 @@
 | 조건 | 추론 scope |
 |------|------------|
 | `filters.componentId`, `filters.componentIds`, `filters.filePath` 중 하나가 있음 | `components` |
-| `filters.koreanName`이 있거나 `filters.fulltext`가 boolean | `terms` |
 | `filters.frameworkVersion`, `filters.vendor`, `filters.productName` 중 하나가 있음 | `compatibility` |
 | 위 조건이 없고 `query`가 있음 | `all` |
 | 위 조건이 없고 `query`도 없음 | `components` |
@@ -86,7 +83,7 @@
 }
 ```
 
-이 호출은 `strictScope`가 없으므로 `all` 검색으로 확장됩니다. 이렇게 하는 이유는 LLM이나 사용자가 `guide`, `knowledge`, `terms` 같은 범위를 잘못 선택해도 검색 결과를 놓치지 않기 위해서입니다.
+이 호출은 `strictScope`가 없으므로 `all` 검색으로 확장됩니다. 이렇게 하는 이유는 LLM이나 사용자가 `guide`, `knowledge`, `components` 같은 범위를 잘못 선택해도 검색 결과를 놓치지 않기 위해서입니다.
 
 정확히 특정 소스만 검색해야 할 때는 `strictScope: true`를 지정합니다.
 
@@ -102,7 +99,7 @@
 예외:
 
 - `action`이 있는 조회는 명시적 요청으로 보고 해당 scope만 사용합니다.
-- `componentId`, `koreanName`, `frameworkVersion`처럼 특정 소스를 가리키는 필터가 있으면 자동 추론이 우선합니다.
+- `componentId`, `frameworkVersion`처럼 특정 소스를 가리키는 필터가 있으면 자동 추론이 우선합니다.
 
 ---
 
@@ -184,45 +181,6 @@ Spring Boot 기반 eGovFrame에서 Transaction 설정은 어떻게 하는지 관
     "verifiedOnly": true
   },
   "limit": 5
-}
-```
-
-### 표준용어 확인
-
-표준용어 상세 조회는 `action: "get"`과 `filters.koreanName`을 명시하는 것이 좋습니다.
-
-```text
-표준용어 '게시판ID'의 영문명, 도메인, 설명을 조회해줘.
-```
-
-권장 tool 호출:
-
-```json
-{
-  "scope": "terms",
-  "action": "get",
-  "filters": {
-    "koreanName": "게시판ID"
-  }
-}
-```
-
-표준용어 후보를 넓게 찾고 싶을 때:
-
-```text
-'게시판'과 관련된 표준용어를 설명까지 포함해서 검색해줘.
-```
-
-권장 tool 호출:
-
-```json
-{
-  "query": "게시판",
-  "scope": "terms",
-  "filters": {
-    "fulltext": true
-  },
-  "limit": 20
 }
 ```
 
@@ -352,7 +310,7 @@ knowledge에서만 MyBatis 설정 방법을 찾아줘.
 더 나은 프롬프트:
 
 ```text
-MyBatis 설정 방법을 찾아줘. 공식 가이드, 저장된 지식, 관련 표준용어나 공통컴포넌트가 있으면 함께 알려줘.
+MyBatis 설정 방법을 찾아줘. 공식 가이드, 저장된 지식, 관련 공통컴포넌트가 있으면 함께 알려줘.
 ```
 
 아래처럼 tool 이름을 직접 지정하는 방식도 권장하지 않습니다.
@@ -418,7 +376,7 @@ eGovFrame 공식 Developer Guide를 의미 기반으로 검색합니다.
 
 | 필터 | 타입 | 설명 |
 |------|------|------|
-| `knowledgeScope` | string | 내부 지식 검색 범위. `all`이면 지식+호환성+표준용어 통합 검색 |
+| `knowledgeScope` | string | 내부 지식 검색 범위. `all`이면 지식+호환성 통합 검색 |
 | `sort` | string | `relevance`, `recent` |
 | `type` | string | `solution`, `tip`, `pattern`, `error-fix`, `best-practice`, `gotcha` |
 | `tags` | string[] | 태그 필터 |
@@ -427,47 +385,7 @@ eGovFrame 공식 Developer Guide를 의미 기반으로 검색합니다.
 
 ---
 
-### 3. 표준용어 검색: `terms`
-
-표준용어를 검색하거나 한글 용어명 기준으로 상세 조회합니다.
-
-검색:
-
-```json
-{
-  "scope": "terms",
-  "query": "게시판",
-  "filters": {
-    "fulltext": true
-  },
-  "limit": 20
-}
-```
-
-상세 조회:
-
-```json
-{
-  "scope": "terms",
-  "action": "get",
-  "filters": {
-    "koreanName": "게시판ID"
-  }
-}
-```
-
-지원 필터:
-
-| 필터 | 타입 | 설명 |
-|------|------|------|
-| `koreanName` | string | 상세 조회할 한글 표준용어명 |
-| `fulltext` | boolean | 설명을 포함한 전체 필드 전문 검색 여부 |
-| `offset` | number | 페이지네이션 오프셋 |
-| `limit` | number | 최대 결과 수 |
-
----
-
-### 4. 공통컴포넌트 조회: `components`
+### 3. 공통컴포넌트 조회: `components`
 
 공통컴포넌트 목록, 상세 정보, 의존성, 소스, DDL, DML을 조회합니다.
 
@@ -604,7 +522,7 @@ DML 조회:
 
 ---
 
-### 5. 호환 소프트웨어 검색: `compatibility`
+### 4. 호환 소프트웨어 검색: `compatibility`
 
 eGovFrame 버전별 호환 소프트웨어/솔루션을 검색합니다.
 
@@ -633,9 +551,9 @@ eGovFrame 버전별 호환 소프트웨어/솔루션을 검색합니다.
 
 ---
 
-### 6. 통합 검색: `all`
+### 5. 통합 검색: `all`
 
-공식 문서, 개인 지식, 표준용어, 공통컴포넌트, 호환 소프트웨어를 함께 검색합니다.
+공식 문서, 개인 지식, 공통컴포넌트, 호환 소프트웨어를 함께 검색합니다.
 
 ```json
 {
@@ -661,8 +579,6 @@ eGovFrame 버전별 호환 소프트웨어/솔루션을 검색합니다.
 |-----------|-----------|
 | `search_guide` | `egov_search_knowledge(scope: "guide")` |
 | `search_knowledge` | `egov_search_knowledge(scope: "knowledge")` |
-| `search_standard_terms` | `egov_search_knowledge(scope: "terms")` |
-| `get_standard_term` | `egov_search_knowledge(scope: "terms", action: "get")` |
 | `search_compatible_software` | `egov_search_knowledge(scope: "compatibility")` |
 | `list_common_components` | `egov_search_knowledge(scope: "components")` |
 | `get_component_info` | `egov_search_knowledge(scope: "components", action: "get")` |
@@ -672,6 +588,8 @@ eGovFrame 버전별 호환 소프트웨어/솔루션을 검색합니다.
 | `read_component_source` | `egov_search_knowledge(scope: "components", action: "readSource")` |
 | `get_component_ddl` | `egov_search_knowledge(scope: "components", action: "ddl")` |
 | `get_component_dml` | `egov_search_knowledge(scope: "components", action: "dml")` |
+
+> 표준용어 관련 옛 도구(`search_standard_terms`, `get_standard_term`)와 `scope: "terms"` 는 대체 경로 없이 기능 자체가 제거되었습니다.
 
 ---
 

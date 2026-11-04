@@ -51,9 +51,8 @@ npm run build-index
 
 | 확인 항목 | 기대 결과 |
 |-----------|-----------|
-| Tool list | `egov_search_knowledge`, `egov_ddl_assist` 2개 노출 |
-| 통합 검색 | 가이드/지식/표준용어/공통컴포넌트/호환성 검색 가능 |
-| DDL 보조 | 한글 용어 → 표준 영문 컬럼명/SQL 타입 변환·검증 가능 |
+| Tool list | `egov_search_knowledge` 1개 노출 |
+| 통합 검색 | 가이드/지식/공통컴포넌트/호환성 검색 가능 |
 
 ## 운영 메모
 
