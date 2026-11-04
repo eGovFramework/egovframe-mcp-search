@@ -59,7 +59,10 @@ async function setBundledGeneratedAt(value: string): Promise<void> {
   );
 }
 
-describe.skipIf(!fs.existsSync(BUNDLED_DB_PATH))('update CLI — SQLite 리소스 (from-file)', () => {
+// [SQLite 갱신 비활성화] src/cli/update.ts 에서 SQLite 리소스 갱신 호출이 주석 처리되어
+// 있는 동안 이 통합 테스트는 건너뛴다 — 재활성화할 때 아래 skipIf 줄로 되돌린다.
+// describe.skipIf(!fs.existsSync(BUNDLED_DB_PATH))('update CLI — SQLite 리소스 (from-file)', () => {
+describe.skip('update CLI — SQLite 리소스 (from-file)', () => {
   let tmpRoot: string;
   let savedEnv: string | undefined;
   let createdBundledState = false;

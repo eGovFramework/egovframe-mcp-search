@@ -6,6 +6,7 @@
  *   guide                GitHub 태그 소스(md) → 전량 재인덱싱 (원본 ~수 MB)
  *   common_components    GitHub 태그 tarball → 트리 교체 (임베딩 0, SQLite 미변경)
  *   compatibility        릴리스 JSON → 오버레이 SQLite 에 deterministic 재적재
+ *                        ※ 현재 비활성화 — 이 파일의 [SQLite 갱신 비활성화] 표식 참조
  *
  * 모듈 구성:
  *   update.ts           옵션 파싱·잠금·상태 조회·롤백·리소스별 디스패치 (이 파일)
@@ -56,12 +57,14 @@ import { CLI_FILE, RESOURCE_LABELS, type UpdateOptions } from './shared.js';
 import { updateDeveloperKnowledge } from './lancedb/developerKnowledge.js';
 import { updateGuide } from './lancedb/guide.js';
 import { updateComponents } from './common-components/commonComponents.js';
-import {
-  SQLITE_RESOURCES,
-  isOverlaySqliteStale,
-  rebuildOverlaySqliteFromState,
-} from './sqlite/overlay.js';
-import { updateCompatibility } from './sqlite/compatibility.js';
+// [SQLite 갱신 비활성화] sqlite/ 모듈 호출을 막아 둔다. 재활성화할 때는 이 import 와
+// 같은 표식이 붙은 주석 블록들을 함께 되살린다.
+// import {
+//   SQLITE_RESOURCES,
+//   isOverlaySqliteStale,
+//   rebuildOverlaySqliteFromState,
+// } from './sqlite/overlay.js';
+// import { updateCompatibility } from './sqlite/compatibility.js';
 
 // ─── 옵션 ────────────────────────────────────────────────
 
@@ -212,7 +215,8 @@ async function rollbackResources(targets: ResourceName[]): Promise<number> {
   }
 
   let failures = 0;
-  let sqliteTouched = false;
+  // [SQLite 갱신 비활성화]
+  // let sqliteTouched = false;
   for (const resource of targets) {
     const entry = state.resources[resource];
     const label = RESOURCE_LABELS[resource];
@@ -221,7 +225,13 @@ async function rollbackResources(targets: ResourceName[]): Promise<number> {
       continue;
     }
 
-    if (SQLITE_RESOURCES.includes(resource)) sqliteTouched = true;
+    // [SQLite 갱신 비활성화] SQLite 리소스는 DB 재구성 없이 포인터만 바꾸면
+    // state 와 DB 가 어긋나므로 롤백도 함께 막는다.
+    if (resource === 'compatibility') {
+      console.error(`  - ${label}: SQLite 리소스 갱신·롤백 비활성화 — 건너뜀`);
+      continue;
+    }
+    // if (SQLITE_RESOURCES.includes(resource)) sqliteTouched = true;
 
     if (entry.previous_dir && await fs.pathExists(path.join(getOverlayRoot(), entry.previous_dir))) {
       // 직전 버전으로 포인터 교체
@@ -242,12 +252,13 @@ async function rollbackResources(targets: ResourceName[]): Promise<number> {
 
   writeOverlayStateAtomic(state);
 
+  // [SQLite 갱신 비활성화]
   // SQLite 리소스는 공유 DB 안에 살아서 디렉토리 스왑만으로 복귀되지 않는다 —
   // 번들 재베이스 + 남은 보관 원본 재적용으로 DB 를 재구성한다
-  if (sqliteTouched) {
-    console.error('  ↻ SQLite 오버레이 재구성 중 (번들 재베이스 + 보관 원본 재적용)...');
-    await rebuildOverlaySqliteFromState();
-  }
+  // if (sqliteTouched) {
+  //   console.error('  ↻ SQLite 오버레이 재구성 중 (번들 재베이스 + 보관 원본 재적용)...');
+  //   await rebuildOverlaySqliteFromState();
+  // }
   return failures;
 }
 
@@ -331,10 +342,11 @@ function printStatus(statuses: ResourceStatus[]): void {
   }
   console.error(`\n임베딩 모델: ${EMBEDDING_MODEL_ID} (로컬, 오프라인 임베딩)`);
 
+  // [SQLite 갱신 비활성화]
   // 패키지 갱신으로 오버레이 SQLite 가 무효화된 상태 안내
-  if (isOverlaySqliteStale()) {
-    console.error('⚠️ 패키지 갱신으로 SQLite 적용분(호환성)이 번들로 폴백 중입니다 — update 를 실행하면 새 번들 위에 재적용됩니다.');
-  }
+  // if (isOverlaySqliteStale()) {
+  //   console.error('⚠️ 패키지 갱신으로 SQLite 적용분(호환성)이 번들로 폴백 중입니다 — update 를 실행하면 새 번들 위에 재적용됩니다.');
+  // }
 }
 
 // ─── 엔트리 ──────────────────────────────────────────────
@@ -370,10 +382,12 @@ export async function runUpdate(argv: string[]): Promise<number> {
     }
 
     // 갱신할 것이 있는지 판정 (from-file 은 각 리소스 갱신 루틴이 판정)
+    // [SQLite 갱신 비활성화]
     // 패키지 갱신으로 무효화된 SQLite 적용분이 있으면 치유 자체가 갱신 사유다
-    const overlayStale = isOverlaySqliteStale();
+    // const overlayStale = isOverlaySqliteStale();
 
-    if (!options.fromFileDir && !options.force && !options.full && !overlayStale) {
+    // if (!options.fromFileDir && !options.force && !options.full && !overlayStale) {
+    if (!options.fromFileDir && !options.force && !options.full) {
       const anyNew = statuses.some((s) => {
         if (!s.candidate) return false;
         if (s.resource === 'developer_knowledge' && s.currentVersion) {
@@ -401,16 +415,17 @@ export async function runUpdate(argv: string[]): Promise<number> {
       }
     }
 
+    // [SQLite 갱신 비활성화]
     // 패키지 갱신으로 무효화된 SQLite 적용분 치유 (보관 원본을 새 번들 위에 재적용)
-    if (overlayStale) {
-      console.error('\n↻ 패키지 갱신 감지 — SQLite 적용분(호환성)을 새 번들 위에 재적용합니다...');
-      try {
-        await rebuildOverlaySqliteFromState();
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`  ⚠️ 재적용 실패 (${message}) — 해당 적용분은 번들 폴백 상태로 유지됩니다.`);
-      }
-    }
+    // if (overlayStale) {
+    //   console.error('\n↻ 패키지 갱신 감지 — SQLite 적용분(호환성)을 새 번들 위에 재적용합니다...');
+    //   try {
+    //     await rebuildOverlaySqliteFromState();
+    //   } catch (error) {
+    //     const message = error instanceof Error ? error.message : String(error);
+    //     console.error(`  ⚠️ 재적용 실패 (${message}) — 해당 적용분은 번들 폴백 상태로 유지됩니다.`);
+    //   }
+    // }
 
     // 리소스별 독립 갱신 — 부분 실패는 부분 성공으로
     const summary: string[] = [];
@@ -429,9 +444,12 @@ export async function runUpdate(argv: string[]): Promise<number> {
           if (result === 'skip') summary.push(`  ${label}: 변경 없음`);
           else summary.push(`  ${label}: → ${result.version} (${result.chunks}청크 재인덱싱)`);
         } else if (resource === 'compatibility') {
-          const result = await updateCompatibility(options);
-          if (result === 'skip') summary.push(`  ${label}: 변경 없음`);
-          else summary.push(`  ${label}: → ${result.version} (${result.rows}행 재적재)`);
+          // [SQLite 갱신 비활성화] 아래 세 줄을 되살리고 건너뜀 처리를 지우면 갱신이 재개된다.
+          // const result = await updateCompatibility(options);
+          // if (result === 'skip') summary.push(`  ${label}: 변경 없음`);
+          // else summary.push(`  ${label}: → ${result.version} (${result.rows}행 재적재)`);
+          console.error(`\n▶ ${label} 갱신... SQLite 리소스 갱신은 현재 비활성화되어 있어 건너뜁니다.`);
+          summary.push(`  ${label}: SQLite 리소스 갱신 비활성화 — 건너뜀`);
         } else {
           const result = await updateComponents(options);
           if (result === 'skip') summary.push(`  ${label}: 변경 없음`);
