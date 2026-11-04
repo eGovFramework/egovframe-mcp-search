@@ -113,7 +113,6 @@ npm run build-index -- --source=local \
 npx egovframe-mcp-search update                # 전체 리소스 갱신 (TTY 면 확인 1회)
 npx egovframe-mcp-search update --check        # 현재/최신 버전 조회만
 npx egovframe-mcp-search update --resource=guide
-npx egovframe-mcp-search update --resource=compatibility --compatibility-tag=v4.3.0
 npx egovframe-mcp-search update --from-file /media/usb/kb   # 폐쇄망 반입 (동일 코드 경로)
 npx egovframe-mcp-search update --rollback     # 직전 버전 복귀
 ```
@@ -123,14 +122,14 @@ npx egovframe-mcp-search update --rollback     # 직전 버전 복귀
 | `developer_knowledge` (Q&A/FAQ) | **행 증분** — 직전 적용 스냅샷과 id 대조 | 릴리스 스냅샷 (`manifest.json` + `snapshot.jsonl.gz`) | 변경분만 로컬 임베딩 (수십 건 ≈ 수십 초) |
 | `guide` | **전량 재인덱싱** | GitHub 태그 (sparse checkout, 이미지 제외) | md 전체 재임베딩 (수 분) |
 | `components` | **트리 교체** | GitHub 태그 소스 tarball (~37MB) | 임베딩 0 — 압축 해제만. SQLite 메타(목록·설명·FTS)는 동봉본 유지 |
-| `compatibility` (호환성 SW) | **SQLite 재적재** — JSON 기준 deterministic | `egovframe-mcp-search-upload-data` 릴리스 자산 (스냅샷과 동일 저장소) | 임베딩 0 — 오버레이 SQLite 에 적재 |
+| `compatibility` (호환성 SW) | **비활성화** (2026-11) — "건너뜀" 안내만 출력 | — | 호환성 SW 목록은 MCP 패키지(tgz) 업그레이드로 반영 |
 
 - 오버레이 위치: macOS `~/Library/Application Support/egovframe-mcp-search`, Linux `~/.local/share/egovframe-mcp-search`, Windows `%LOCALAPPDATA%\egovframe-mcp-search` (`EGOV_MCP_DATA_DIR` 로 override)
 - 리소스별 **독립 갱신** — 하나가 실패해도 나머지는 적용되고, 실패한 리소스는 이전 상태를 유지합니다
 - 임베딩 모델이 패키지에 동봉되어 갱신의 임베딩도 **완전 오프라인**으로 동작합니다
-- 폐쇄망: 반입 담당자가 준비한 디렉토리(`manifest.json`/`snapshot.jsonl.gz`, `guide-md.tar.gz`, `components-src.tar.gz`, `compatibility/compatibility-software.json`)를 `--from-file` 로 지정 — 온라인 경로와 100% 동일한 코드로 검증·적용됩니다
+- 폐쇄망: 반입 담당자가 준비한 디렉토리(`manifest.json`/`snapshot.jsonl.gz`, `guide-md.tar.gz`, `components-src.tar.gz`)를 `--from-file` 로 지정 — 온라인 경로와 100% 동일한 코드로 검증·적용됩니다
 
-**SQLite 리소스의 특별 규칙 (번들이 이긴다)**: `compatibility` 는 오버레이 SQLite 사본에 적용됩니다. 사본은 복사 시점의 번들 식별자(base)를 기록하며, **MCP 패키지를 업그레이드하면 사본이 무효화되어 새 번들이 우선**합니다 (신규 컴포넌트 메타가 가려지지 않도록). 적용했던 원본(JSON)은 오버레이에 보관되므로, 업그레이드 후 `update` 를 한 번 실행하면 새 번들 위에 자동 재적용됩니다 (`--check` 가 폴백 상태를 안내).
+**호환성 SW(SQLite) 갱신은 현재 비활성화**: 표준·Custom 용어사전 제거 후 SQLite 로 갱신되는 리소스가 호환성 SW 하나만 남아, 오버레이 SQLite 사본을 유지할 실익이 적다고 판단해 update 경로를 막았습니다. `--resource=compatibility` 와 `--rollback=compatibility` 는 "비활성화 — 건너뜀" 안내만 출력하며, 호환성 SW 목록은 MCP 패키지(tgz) 업그레이드로 반영됩니다. (구현은 `src/cli/sqlite/` 에 남아 있어 되살릴 수 있습니다.)
 
 ## 🔧 MCP 클라이언트 설정 (Configuration)
 
@@ -286,12 +285,16 @@ egovframe-mcp-search/
 │   ├── index.ts                            # 진입점 디스패처 (인자 없음 → 서버 / update → CLI)
 │   ├── server.ts                           # MCP 서버 (egov_search_knowledge 노출)
 │   ├── cli/
-│   │   └── update.ts                       # 지식베이스 갱신 CLI (npx egovframe-mcp-search update)
+│   │   ├── update.ts                       # 지식베이스 갱신 CLI 뼈대 (옵션·잠금·상태·롤백·디스패치)
+│   │   ├── shared.ts                       # CLI 공통 기반 (옵션 타입·라벨·오버레이 버전 디렉토리 헬퍼)
+│   │   ├── lancedb/                        # LanceDB 리소스 갱신 — developerKnowledge.ts, guide.ts
+│   │   ├── sqlite/                         # SQLite 리소스 갱신 — overlay.ts, compatibility.ts (현재 비활성화)
+│   │   └── common-components/              # 공통컴포넌트 소스 트리 갱신 — commonComponents.ts
 │   ├── kb/
 │   │   ├── snapshot.ts                     # 개발자 지식 스냅샷 형식 (manifest/jsonl.gz, diff)
 │   │   ├── sources.ts                      # 원격 소스 채널 정의 (URL 상수·태그 조회)
 │   │   ├── guideIndexer.ts                 # 가이드 md 인덱싱 공용 로직 (build-index/update 공유)
-│   │   └── sqliteLoaders.ts                # SQLite 적재 공용 로직 — 호환성 SW (build-index/update 공유)
+│   │   └── sqliteLoaders.ts                # SQLite 적재 공용 로직 — 호환성 SW (build-index; update 경로는 비활성화)
 │   ├── database/
 │   │   ├── sqliteManager.ts                # SQLite 접근 계층
 │   │   └── hybridManager.ts                # SQLite + LanceDB 통합
