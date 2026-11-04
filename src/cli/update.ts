@@ -1,11 +1,18 @@
 /**
- * `npx egovframe-mcp-search update` — 지식베이스 갱신 CLI
+ * `npx egovframe-mcp-search update` — 지식베이스 갱신 CLI (뼈대)
  *
  * 4개 리소스를 독립적으로 갱신한다 (부분 실패 = 부분 성공):
  *   developer_knowledge  릴리스 스냅샷 → 직전 적용 스냅샷과 id 대조 → 변경분만 임베딩
  *   guide                GitHub 태그 소스(md) → 전량 재인덱싱 (원본 ~수 MB)
  *   common_components    GitHub 태그 tarball → 트리 교체 (임베딩 0, SQLite 미변경)
  *   compatibility        릴리스 JSON → 오버레이 SQLite 에 deterministic 재적재
+ *
+ * 모듈 구성:
+ *   update.ts           옵션 파싱·잠금·상태 조회·롤백·리소스별 디스패치 (이 파일)
+ *   shared.ts           옵션 타입·리소스 라벨·오버레이 버전 디렉토리 헬퍼 (공통 기반)
+ *   lancedb/            LanceDB 리소스 상세 — developer_knowledge, guide
+ *   sqlite/             SQLite 리소스 상세 — 오버레이 사본 공용(overlay), compatibility
+ *   common-components/  소스 트리 리소스 상세 — common_components
  *
  * SQLite 리소스는 오버레이 DB 사본에 적용되며(utils/dataPaths 의 base 추적 —
  * 번들이 이기는 규칙), 패키지 갱신으로 사본이 무효화되면 보관된 적용 원본으로
@@ -22,63 +29,39 @@
 import fs from 'fs-extra';
 import path from 'node:path';
 import os from 'node:os';
-import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input } from 'node:process';
 import {
-  SCHEMA_VERSION,
   EMBEDDING_MODEL_ID,
   getOverlayRoot,
   readOverlayState,
-  readBundledState,
   writeOverlayStateAtomic,
   resolveResource,
-  getOverlaySqliteDir,
-  getOverlaySqliteDbPath,
-  writeOverlaySqliteBase,
-  isOverlaySqliteValid,
   type ResourceName,
-  type ResourceState,
-  type StateFile,
 } from '../utils/dataPaths.js';
-import { getKnowledgeBasePath } from '../utils/projectPath.js';
 import {
   MANIFEST_FILENAME,
-  SNAPSHOT_FILENAME,
-  assertManifestCompatible,
   parseManifestFile,
-  parseSnapshotFile,
   compareDatasetVersion,
-  diffSnapshots,
-  snapshotRowToKnowledgeInput,
-  synthesizeDatasetVersion,
-  type SnapshotRow,
 } from '../kb/snapshot.js';
 import {
   DOCS_REPO,
   COMPONENTS_REPO,
   SNAPSHOT_REPO,
   listRemoteVersionTags,
-  sourceTarballUrl,
   snapshotManifestUrl,
-  snapshotFileUrl,
-  compatibilityJsonUrls,
 } from '../kb/sources.js';
 import { downloadToFile } from '../utils/download.js';
-import { extractTarGz } from '../utils/tarSafe.js';
-import { DeveloperKnowledgeManager } from '../rag/knowledgeManager.js';
-import { SQLiteManager } from '../database/sqliteManager.js';
+import { CLI_FILE, RESOURCE_LABELS, type UpdateOptions } from './shared.js';
+import { updateDeveloperKnowledge } from './lancedb/developerKnowledge.js';
+import { updateGuide } from './lancedb/guide.js';
+import { updateComponents } from './common-components/commonComponents.js';
 import {
-  loadCompatibilityFromJson,
-  parseCompatibilityJson,
-} from '../kb/sqliteLoaders.js';
-import { GuideSearchManager } from '../rag/guideManager.js';
-import { indexGuideDirectory } from '../kb/guideIndexer.js';
-import { runGit, EGOVDOCS_REPO } from '../scripts/templateSources.js';
-
-// 번들(패키지) 경로 해석 기준 — cwd 가 아니라 이 모듈의 설치 위치.
-// npx 를 임의 디렉토리에서 실행해도 번들 knowledge-base 를 정확히 찾는다.
-const CLI_FILE = fileURLToPath(import.meta.url);
+  SQLITE_RESOURCES,
+  isOverlaySqliteStale,
+  rebuildOverlaySqliteFromState,
+} from './sqlite/overlay.js';
+import { updateCompatibility } from './sqlite/compatibility.js';
 
 // ─── 옵션 ────────────────────────────────────────────────
 
@@ -91,21 +74,6 @@ const RESOURCE_ALIASES: Record<string, ResourceName> = {
   compatibility: 'compatibility',
   compat: 'compatibility',
 };
-
-interface UpdateOptions {
-  check: boolean;
-  yes: boolean;
-  full: boolean;
-  force: boolean;
-  keepPrevious: boolean;
-  rollback: boolean;
-  rollbackTargets: ResourceName[] | null; // null = 전체
-  resources: ResourceName[]; // 갱신 대상 (기본 전체)
-  fromFileDir: string | null;
-  guideTag: string | null;
-  componentsTag: string | null;
-  compatibilityTag: string | null;
-}
 
 export function parseUpdateArgs(argv: string[]): UpdateOptions {
   const options: UpdateOptions = {
@@ -234,672 +202,6 @@ function acquireLock(): () => void {
   };
 }
 
-// ─── 오버레이 버전 디렉토리 헬퍼 ─────────────────────────
-
-export function sanitizeVersionDirName(version: string): string {
-  return `v-${version.replace(/[^A-Za-z0-9._-]+/g, '-')}`;
-}
-
-function overlayResourceDir(resource: ResourceName, version: string): {
-  abs: string;
-  rel: string;
-} {
-  const rel = path.join('resources', resource, sanitizeVersionDirName(version));
-  return { abs: path.join(getOverlayRoot(), rel), rel };
-}
-
-/** 오버레이 state 에 리소스 항목을 반영하고 원자 교체로 기록 */
-function commitResourceState(resource: ResourceName, entry: ResourceState): void {
-  const state: StateFile = readOverlayState() ?? {
-    schema_version: SCHEMA_VERSION,
-    resources: {},
-  };
-  state.schema_version = SCHEMA_VERSION;
-  state.embedding_model = { id: EMBEDDING_MODEL_ID };
-  state.generated_at = new Date().toISOString();
-  state.resources[resource] = entry;
-  writeOverlayStateAtomic(state);
-}
-
-/** active/previous 를 제외한 옛 버전 디렉토리 정리 (실패해도 다음 실행에서 재시도) */
-async function pruneOldVersions(resource: ResourceName, keepRel: Array<string | undefined>): Promise<void> {
-  const base = path.join(getOverlayRoot(), 'resources', resource);
-  if (!await fs.pathExists(base)) return;
-  const keepNames = new Set(
-    keepRel.filter((rel): rel is string => !!rel).map((rel) => path.basename(rel)),
-  );
-  for (const entry of await fs.readdir(base)) {
-    if (keepNames.has(entry)) continue;
-    // Windows 파일 잠금 관용: 삭제 실패는 무시하고 다음 실행에서 재시도
-    await fs.remove(path.join(base, entry)).catch(() => {});
-  }
-}
-
-// ─── 리소스별 현재/최신 상태 ─────────────────────────────
-
-interface ResourceStatus {
-  resource: ResourceName;
-  currentVersion: string | null;
-  origin: 'overlay' | 'bundled';
-  /** 원격에서 확인한 갱신 후보 (null = 확인 불가/대상 아님) */
-  candidate: string | null;
-  note: string;
-}
-
-const RESOURCE_LABELS: Record<ResourceName, string> = {
-  developer_knowledge: '개발자 지식(Q&A/FAQ)',
-  guide: '가이드',
-  common_components: '공통컴포넌트',
-  compatibility: '호환성 SW',
-};
-
-// ─── SQLite 오버레이 공용 (compatibility) ───────────────
-
-const SQLITE_RESOURCES: ReadonlyArray<ResourceName> = ['compatibility'];
-
-/**
- * 오버레이 SQLite 사본을 확보한다. base 가 현재 번들과 일치하면 재사용,
- * 아니면 번들 DB 를 새로 복사(재베이스)한다 — 재베이스 시 호출자는
- * 반드시 reapplyStoredSqliteResources 로 다른 리소스 적용분을 복원해야 한다.
- */
-async function ensureOverlaySqlite(): Promise<{ dbPath: string; rebased: boolean }> {
-  const bundled = readBundledState(CLI_FILE);
-  if (!bundled?.generated_at) {
-    throw new Error(
-      '번들 state.json 이 없습니다 — 이 패키지 버전에서는 SQLite 리소스 갱신을 지원하지 않습니다.',
-    );
-  }
-
-  const dbPath = getOverlaySqliteDbPath();
-  if (isOverlaySqliteValid(CLI_FILE)) {
-    return { dbPath, rebased: false };
-  }
-
-  const bundledDb = path.join(getKnowledgeBasePath(CLI_FILE), 'egovframe.db');
-  if (!await fs.pathExists(bundledDb)) {
-    throw new Error('번들 egovframe.db 를 찾을 수 없습니다 — 패키지 설치가 손상되었을 수 있습니다.');
-  }
-  await fs.remove(getOverlaySqliteDir());
-  await fs.copy(bundledDb, dbPath);
-  writeOverlaySqliteBase({ bundled_generated_at: bundled.generated_at });
-  console.error('  ↻ 번들 SQLite 를 오버레이로 (재)베이스했습니다.');
-  return { dbPath, rebased: true };
-}
-
-/** 보관된 적용 원본(artifact)으로 SQLite 리소스 하나를 재적용한다 */
-async function reapplySqliteResource(
-  sqlite: SQLiteManager,
-  resource: ResourceName,
-  artifactDir: string,
-): Promise<void> {
-  if (resource === 'compatibility') {
-    const jsonPath = path.join(artifactDir, 'compatibility-software.json');
-    if (await fs.pathExists(jsonPath)) {
-      const count = await loadCompatibilityFromJson(sqlite, jsonPath);
-      console.error(`  ↻ 호환성 SW 재적용: ${count}행`);
-    }
-  }
-}
-
-/** 재베이스 후 정합성 복원 — exclude 를 제외한 보관 적용분을 전부 재적용 */
-async function reapplyStoredSqliteResources(
-  sqlite: SQLiteManager,
-  exclude?: ResourceName,
-): Promise<void> {
-  const state = readOverlayState();
-  if (!state) return;
-  for (const resource of SQLITE_RESOURCES) {
-    if (resource === exclude) continue;
-    const entry = state.resources[resource];
-    if (!entry?.dir) continue;
-    const artifactDir = path.join(getOverlayRoot(), entry.dir);
-    if (!await fs.pathExists(artifactDir)) continue;
-    await reapplySqliteResource(sqlite, resource, artifactDir);
-  }
-}
-
-/**
- * state 기준으로 오버레이 SQLite 전체 재구성 (롤백·패키지 갱신 치유용).
- * SQLite 리소스 적용분이 하나도 없으면 사본 자체를 제거해 순수 번들로 돌아간다.
- */
-async function rebuildOverlaySqliteFromState(): Promise<void> {
-  const state = readOverlayState();
-  const hasAny = SQLITE_RESOURCES.some((r) => state?.resources[r]?.dir);
-  await fs.remove(getOverlaySqliteDir());
-  if (!hasAny) return;
-
-  const { dbPath } = await ensureOverlaySqlite();
-  const sqlite = new SQLiteManager(dbPath);
-  try {
-    await reapplyStoredSqliteResources(sqlite);
-  } finally {
-    sqlite.close();
-  }
-}
-
-/** SQLite 리소스 공통 마무리 — 원본 보관(applied.json 포함) + 상태 커밋 + 정리 */
-async function commitSqliteResource(
-  resource: ResourceName,
-  versionDirRel: string,
-  entry: ResourceState,
-): Promise<void> {
-  commitResourceState(resource, entry);
-  await pruneOldVersions(resource, [versionDirRel, entry.previous_dir]);
-}
-
-// ─── 개발자 지식 갱신 ────────────────────────────────────
-
-interface KnowledgeUpdateResult {
-  version: string;
-  added: number;
-  changed: number;
-  removed: number;
-  fullRebuild: boolean;
-}
-
-async function updateDeveloperKnowledge(options: UpdateOptions): Promise<KnowledgeUpdateResult | 'skip'> {
-  const label = RESOURCE_LABELS.developer_knowledge;
-  console.error(`\n▶ ${label} 갱신...`);
-
-  // 1. 소스 확보 (릴리스 다운로드 또는 반입 디렉토리)
-  let manifestPath: string;
-  let snapshotPath: string;
-  let origin: ResourceState['origin'];
-  let tmpDir: string | null = null;
-
-  if (options.fromFileDir) {
-    manifestPath = path.join(options.fromFileDir, MANIFEST_FILENAME);
-    snapshotPath = path.join(options.fromFileDir, SNAPSHOT_FILENAME);
-    origin = 'from-file';
-    if (!await fs.pathExists(manifestPath) || !await fs.pathExists(snapshotPath)) {
-      console.error(`  ⚠️ 반입 디렉토리에 ${MANIFEST_FILENAME}/${SNAPSHOT_FILENAME} 이 없어 스킵합니다.`);
-      return 'skip';
-    }
-  } else {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'egov-update-kb-'));
-    manifestPath = path.join(tmpDir, MANIFEST_FILENAME);
-    snapshotPath = path.join(tmpDir, SNAPSHOT_FILENAME);
-    origin = 'release';
-    console.error('  ⬇ manifest 다운로드...');
-    await downloadToFile(snapshotManifestUrl(), manifestPath, { timeoutMs: 30_000, maxBytes: 10 * 1024 * 1024 });
-  }
-
-  try {
-    // 2. 검증 — 스키마·모델 호환성
-    const manifest = parseManifestFile(manifestPath);
-    assertManifestCompatible(manifest);
-
-    // 3. 단조성 — 다운그레이드 기본 거부
-    const effective = resolveResource('developer_knowledge', CLI_FILE);
-    const currentVersion = effective.state?.version ?? null;
-    if (currentVersion) {
-      const cmp = compareDatasetVersion(manifest.dataset_version, currentVersion);
-      if (cmp === 0 && !options.full) {
-        console.error(`  ✓ 이미 최신입니다 (${currentVersion})`);
-        return 'skip';
-      }
-      if (cmp < 0 && !options.force) {
-        console.error(
-          `  ⚠️ 대상 버전(${manifest.dataset_version})이 현재(${currentVersion})보다 오래되어 거부합니다 (--force 로 강제 가능).`,
-        );
-        return 'skip';
-      }
-    }
-
-    // 4. 스냅샷 확보 + 파싱
-    if (origin === 'release') {
-      console.error('  ⬇ snapshot 다운로드...');
-      await downloadToFile(snapshotFileUrl(), snapshotPath, { timeoutMs: 300_000, maxBytes: 128 * 1024 * 1024 });
-    }
-    const newRows = parseSnapshotFile(snapshotPath);
-    if (newRows.length !== manifest.row_count) {
-      throw new Error(`스냅샷 행 수(${newRows.length})가 manifest(${manifest.row_count})와 다릅니다.`);
-    }
-
-    // 5. 직전 적용 스냅샷 (diff 기준본) — 오버레이 우선, 없으면 번들 동봉본
-    let prevRows: SnapshotRow[] | null = null;
-    const appliedPath = effective.source === 'overlay'
-      ? path.join(effective.dir, 'snapshot.applied.jsonl.gz')
-      : path.join(getKnowledgeBasePath(CLI_FILE), SNAPSHOT_FILENAME);
-    if (!options.full && await fs.pathExists(appliedPath)) {
-      try {
-        prevRows = parseSnapshotFile(appliedPath);
-      } catch {
-        console.error('  ⚠️ 직전 스냅샷을 읽을 수 없어 전량 재구축으로 진행합니다.');
-      }
-    }
-
-    // 6. 부트스트랩 — 실효 lance 테이블을 새 버전 디렉토리로 복사
-    const sourceTable = path.join(effective.dir, 'developer_knowledge.lance');
-    if (!await fs.pathExists(sourceTable)) {
-      throw new Error('developer_knowledge.lance 를 찾을 수 없습니다 — 패키지 설치가 손상되었을 수 있습니다.');
-    }
-    const { abs: versionDir, rel: versionRel } = overlayResourceDir('developer_knowledge', manifest.dataset_version);
-    await fs.remove(versionDir);
-    await fs.copy(sourceTable, path.join(versionDir, 'developer_knowledge.lance'));
-
-    const manager = new DeveloperKnowledgeManager(versionDir);
-    await manager.initialize();
-
-    // 7. qa/faq 스코프 행 목록 (삭제 스코핑 — PDF 청크 보호)
-    const qaFaqRows = await manager.listSourceRows(['qa', 'faq']);
-    const statsBefore = await manager.getStats();
-    const pdfCount = statsBefore.total - qaFaqRows.length;
-
-    // 8. 작업 결정 — 증분 diff 또는 전량
-    const fullRebuild = options.full || prevRows === null;
-    let toAdd: SnapshotRow[];
-    let removeLanceIds: string[];
-    let addedCount: number;
-    let changedCount: number;
-    let removedCount: number;
-
-    if (fullRebuild) {
-      toAdd = newRows;
-      removeLanceIds = qaFaqRows.map((r) => r.id);
-      addedCount = newRows.length;
-      changedCount = 0;
-      removedCount = qaFaqRows.length;
-      console.error(`  ↻ 전량 재구축: 기존 Q&A/FAQ ${removedCount}행 제거 후 ${addedCount}행 임베딩 (PDF ${pdfCount}청크 보존)`);
-    } else {
-      const diff = diffSnapshots(prevRows!, newRows);
-      addedCount = diff.added.length;
-      changedCount = diff.changed.length;
-      removedCount = diff.removedIds.length;
-      toAdd = [...diff.added, ...diff.changed];
-
-      // 삭제 대상: removed + changed — (sourceType, originalId) → lance id 매핑
-      const byKey = new Map<string, string[]>();
-      for (const row of qaFaqRows) {
-        const key = row.originalId;
-        const list = byKey.get(key);
-        if (list) list.push(row.id);
-        else byKey.set(key, [row.id]);
-      }
-      const targetIds = [...diff.removedIds, ...diff.changed.map((r) => r.id)];
-      removeLanceIds = targetIds.flatMap((snapshotId) => {
-        const originalId = snapshotId.replace(/^(qa|faq):/, '');
-        return byKey.get(originalId) ?? [];
-      });
-      console.error(`  Δ 신규 ${addedCount} · 변경 ${changedCount} · 삭제 ${removedCount} (PDF ${pdfCount}청크 보존)`);
-
-      if (addedCount + changedCount + removedCount === 0) {
-        console.error('  ✓ 내용 변경 없음 — 버전 표기만 갱신합니다.');
-      }
-    }
-
-    // 9. 적용 — 삭제 후 변경분 임베딩
-    if (removeLanceIds.length > 0) {
-      await manager.deleteByIds(removeLanceIds);
-    }
-    if (toAdd.length > 0) {
-      await manager.addKnowledgeBatch(toAdd.map(snapshotRowToKnowledgeInput));
-    }
-    await manager.optimize();
-
-    // 10. 검증 프로브 — 행 수 대조
-    const statsAfter = await manager.getStats();
-    const expected = pdfCount + newRows.length;
-    if (statsAfter.total !== expected) {
-      throw new Error(`검증 실패: 행 수 ${statsAfter.total} ≠ 기대값 ${expected}. 이 버전은 적용하지 않습니다.`);
-    }
-
-    // 11. 다음 diff 기준본 보관 + 상태 원자 교체
-    await fs.copy(snapshotPath, path.join(versionDir, 'snapshot.applied.jsonl.gz'));
-    const previousDir = effective.source === 'overlay' ? effective.state?.dir : undefined;
-    commitResourceState('developer_knowledge', {
-      version: manifest.dataset_version,
-      dir: versionRel,
-      previous_dir: previousDir,
-      row_count: newRows.length,
-      origin,
-      embedding_model: EMBEDDING_MODEL_ID,
-      applied_at: new Date().toISOString(),
-    });
-    await pruneOldVersions('developer_knowledge', [versionRel, previousDir]);
-
-    return {
-      version: manifest.dataset_version,
-      added: addedCount,
-      changed: changedCount,
-      removed: removedCount,
-      fullRebuild,
-    };
-  } finally {
-    if (tmpDir) await fs.remove(tmpDir).catch(() => {});
-  }
-}
-
-// ─── 가이드 갱신 ─────────────────────────────────────────
-
-interface GuideUpdateResult {
-  version: string;
-  chunks: number;
-}
-
-/** md 소스 확보 — sparse checkout 우선, 실패 시 tarball 폴백 */
-async function acquireGuideMarkdown(tag: string, tmpDir: string): Promise<string> {
-  const checkoutDir = path.join(tmpDir, 'docs');
-
-  // 1순위: partial clone + sparse checkout (이미지 blob 을 아예 받지 않음)
-  try {
-    runGit([
-      'clone', '--depth', '1', '--filter=blob:none', '--sparse',
-      '--branch', tag, EGOVDOCS_REPO, checkoutDir,
-    ]);
-    runGit(['sparse-checkout', 'set', '--no-cone', '/*', '!**/images/**'], checkoutDir);
-    if (await fs.pathExists(path.join(checkoutDir, '_index.md'))) {
-      console.error('  ✓ sparse checkout 완료 (이미지 제외)');
-      return checkoutDir;
-    }
-  } catch {
-    console.error('  ⚠️ git sparse checkout 실패 — 소스 tarball 로 폴백합니다.');
-  }
-
-  // 폴백: 전체 tarball 에서 md 만 추출
-  const tarPath = path.join(tmpDir, 'guide-src.tar.gz');
-  console.error('  ⬇ 소스 tarball 다운로드 (전송량이 클 수 있습니다)...');
-  await downloadToFile(sourceTarballUrl(DOCS_REPO, tag), tarPath, {
-    timeoutMs: 600_000,
-    maxBytes: 512 * 1024 * 1024,
-  });
-  await fs.remove(checkoutDir);
-  extractTarGz(tarPath, checkoutDir, {
-    stripComponents: 1,
-    filter: (rel) => rel.endsWith('.md'),
-  });
-  await fs.remove(tarPath);
-  return checkoutDir;
-}
-
-async function updateGuide(options: UpdateOptions): Promise<GuideUpdateResult | 'skip'> {
-  const label = RESOURCE_LABELS.guide;
-  console.error(`\n▶ ${label} 갱신...`);
-
-  const effective = resolveResource('guide', CLI_FILE);
-  const currentVersion = effective.state?.version ?? null;
-
-  // 대상 버전/소스 결정
-  let targetVersion: string;
-  let mdRoot: string;
-  let origin: ResourceState['origin'];
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'egov-update-guide-'));
-
-  try {
-    if (options.fromFileDir) {
-      origin = 'from-file';
-      targetVersion = options.guideTag ?? 'from-file';
-      const treeDir = path.join(options.fromFileDir, 'egovframe_guide');
-      const tarFile = path.join(options.fromFileDir, 'guide-md.tar.gz');
-      if (await fs.pathExists(path.join(treeDir, '_index.md'))) {
-        mdRoot = treeDir;
-      } else if (await fs.pathExists(tarFile)) {
-        mdRoot = path.join(tmpDir, 'docs');
-        extractTarGz(tarFile, mdRoot, { filter: (rel) => rel.endsWith('.md') });
-      } else {
-        console.error('  ⚠️ 반입 디렉토리에 egovframe_guide/ 또는 guide-md.tar.gz 가 없어 스킵합니다.');
-        return 'skip';
-      }
-    } else {
-      origin = 'release';
-      targetVersion =
-        options.guideTag ?? (await listRemoteVersionTags(DOCS_REPO))[0];
-      if (!targetVersion) {
-        console.error('  ⚠️ 원격에서 버전 태그를 찾지 못해 스킵합니다.');
-        return 'skip';
-      }
-      if (targetVersion === currentVersion && !options.force) {
-        console.error(`  ✓ 이미 최신입니다 (${currentVersion})`);
-        return 'skip';
-      }
-      mdRoot = await acquireGuideMarkdown(targetVersion, tmpDir);
-    }
-
-    if (targetVersion === currentVersion && !options.force) {
-      console.error(`  ✓ 이미 최신입니다 (${currentVersion})`);
-      return 'skip';
-    }
-
-    // 전량 재인덱싱 — 새 버전 디렉토리에 새 테이블 구축
-    const { abs: versionDir, rel: versionRel } = overlayResourceDir('guide', targetVersion);
-    await fs.remove(versionDir);
-    await fs.ensureDir(versionDir);
-
-    const manager = new GuideSearchManager(versionDir);
-    await manager.initialize(); // 빈 디렉토리 → 새 테이블 생성
-    const stats = await indexGuideDirectory(manager, mdRoot);
-
-    // 검증 프로브
-    if (stats.totalChunks === 0) {
-      throw new Error('가이드 청크가 0개입니다 — 소스가 비었거나 형식이 다릅니다. 이 버전은 적용하지 않습니다.');
-    }
-
-    const previousDir = effective.source === 'overlay' ? effective.state?.dir : undefined;
-    commitResourceState('guide', {
-      version: targetVersion,
-      dir: versionRel,
-      previous_dir: previousDir,
-      chunk_count: stats.totalChunks,
-      origin,
-      embedding_model: EMBEDDING_MODEL_ID,
-      applied_at: new Date().toISOString(),
-    });
-    await pruneOldVersions('guide', [versionRel, previousDir]);
-
-    return { version: targetVersion, chunks: stats.totalChunks };
-  } finally {
-    await fs.remove(tmpDir).catch(() => {});
-  }
-}
-
-// ─── 공통컴포넌트 갱신 ───────────────────────────────────
-
-interface ComponentsUpdateResult {
-  version: string;
-  files: number;
-  metadataVersion: string | null;
-}
-
-async function updateComponents(options: UpdateOptions): Promise<ComponentsUpdateResult | 'skip'> {
-  const label = RESOURCE_LABELS.common_components;
-  console.error(`\n▶ ${label} 갱신...`);
-
-  const effective = resolveResource('common_components', CLI_FILE);
-  const currentVersion = effective.state?.source_version ?? effective.state?.version ?? null;
-  const metadataVersion = effective.state?.metadata_version ?? null;
-
-  let targetVersion: string;
-  let origin: ResourceState['origin'];
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'egov-update-comp-'));
-
-  try {
-    let tarPath: string;
-    if (options.fromFileDir) {
-      origin = 'from-file';
-      targetVersion = options.componentsTag ?? 'from-file';
-      tarPath = path.join(options.fromFileDir, 'components-src.tar.gz');
-      if (!await fs.pathExists(tarPath)) {
-        console.error('  ⚠️ 반입 디렉토리에 components-src.tar.gz 가 없어 스킵합니다.');
-        return 'skip';
-      }
-      if (targetVersion === currentVersion && !options.force) {
-        console.error(`  ✓ 이미 최신입니다 (${currentVersion})`);
-        return 'skip';
-      }
-    } else {
-      origin = 'release';
-      targetVersion =
-        options.componentsTag ?? (await listRemoteVersionTags(COMPONENTS_REPO))[0];
-      if (!targetVersion) {
-        console.error('  ⚠️ 원격에서 버전 태그를 찾지 못해 스킵합니다.');
-        return 'skip';
-      }
-      if (targetVersion === currentVersion && !options.force) {
-        console.error(`  ✓ 이미 최신입니다 (${currentVersion})`);
-        return 'skip';
-      }
-      tarPath = path.join(tmpDir, 'components-src.tar.gz');
-      console.error(`  ⬇ 소스 tarball 다운로드 (${targetVersion})...`);
-      await downloadToFile(sourceTarballUrl(COMPONENTS_REPO, targetVersion), tarPath, {
-        timeoutMs: 600_000,
-        maxBytes: 512 * 1024 * 1024,
-      });
-    }
-
-    // 트리 교체 — 임베딩 0, SQLite 미변경
-    const { abs: versionDir, rel: versionRel } = overlayResourceDir('common_components', targetVersion);
-    await fs.remove(versionDir);
-    const stats = extractTarGz(tarPath, versionDir, { stripComponents: 1 });
-
-    // 검증 프로브
-    if (!await fs.pathExists(path.join(versionDir, 'pom.xml'))) {
-      throw new Error('해제 결과에 pom.xml 이 없습니다 — 아카이브 구성이 예상과 다릅니다. 이 버전은 적용하지 않습니다.');
-    }
-    console.error(`  ✓ 트리 해제 완료: ${stats.files}개 파일`);
-
-    // 직전 버전은 기본 미보존 (해제본 ~300MB — 롤백은 재다운로드로)
-    const previousDir =
-      options.keepPrevious && effective.source === 'overlay' ? effective.state?.dir : undefined;
-    commitResourceState('common_components', {
-      source_version: targetVersion,
-      metadata_version: metadataVersion ?? undefined,
-      dir: versionRel,
-      previous_dir: previousDir,
-      file_count: stats.files,
-      origin,
-      applied_at: new Date().toISOString(),
-    });
-    await pruneOldVersions('common_components', [versionRel, previousDir]);
-
-    // 메타 버전 불일치 경고 — 목록·설명·FTS 는 동봉 메타 기준
-    if (metadataVersion && normalizeVersion(targetVersion) !== normalizeVersion(metadataVersion)) {
-      console.error(`  ⚠️ 소스 ${targetVersion} / 메타 ${metadataVersion} — 컴포넌트 목록·설명은 메타 기준입니다.`);
-      console.error('     메타 갱신은 MCP 패키지(tgz) 업그레이드로만 반영됩니다.');
-    }
-
-    return { version: targetVersion, files: stats.files, metadataVersion };
-  } finally {
-    await fs.remove(tmpDir).catch(() => {});
-  }
-}
-
-function normalizeVersion(value: string): string {
-  return value.replace(/^v/, '');
-}
-
-// ─── 호환성 SW 갱신 ──────────────────────────────────────
-
-interface CompatibilityUpdateResult {
-  version: string;
-  rows: number;
-}
-
-async function updateCompatibility(options: UpdateOptions): Promise<CompatibilityUpdateResult | 'skip'> {
-  const label = RESOURCE_LABELS.compatibility;
-  console.error(`\n▶ ${label} 갱신...`);
-
-  const effective = resolveResource('compatibility', CLI_FILE);
-  const currentVersion = effective.state?.version ?? null;
-
-  let targetVersion: string;
-  let origin: ResourceState['origin'];
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'egov-update-compat-'));
-
-  try {
-    let jsonPath: string;
-    if (options.fromFileDir) {
-      origin = 'from-file';
-      const candidates = [
-        path.join(options.fromFileDir, 'compatibility', 'compatibility-software.json'),
-        path.join(options.fromFileDir, 'compatibility-software.json'),
-      ];
-      const found = candidates.find((p) => fs.existsSync(p));
-      if (!found) {
-        console.error('  ⚠️ 반입 디렉토리에 compatibility-software.json 이 없어 스킵합니다.');
-        return 'skip';
-      }
-      jsonPath = found;
-      targetVersion = options.compatibilityTag ?? synthesizeDatasetVersion([jsonPath]);
-    } else {
-      origin = 'release';
-      targetVersion =
-        options.compatibilityTag ?? (await listRemoteVersionTags(SNAPSHOT_REPO))[0];
-      if (!targetVersion) {
-        console.error('  ⚠️ 원격에서 버전 태그를 찾지 못해 스킵합니다.');
-        return 'skip';
-      }
-      if (targetVersion === currentVersion && !options.force) {
-        console.error(`  ✓ 이미 최신입니다 (${currentVersion})`);
-        return 'skip';
-      }
-      // 릴리스 자산 URL 후보를 순서대로 시도
-      jsonPath = path.join(tmpDir, 'compatibility-software.json');
-      let downloaded = false;
-      let lastError = '';
-      for (const url of compatibilityJsonUrls(targetVersion)) {
-        try {
-          await downloadToFile(url, jsonPath, { timeoutMs: 60_000, maxBytes: 32 * 1024 * 1024 });
-          downloaded = true;
-          break;
-        } catch (error) {
-          lastError = error instanceof Error ? error.message : String(error);
-        }
-      }
-      if (!downloaded) {
-        throw new Error(`호환성 JSON 다운로드 실패 (${lastError})`);
-      }
-    }
-
-    if (targetVersion === currentVersion && !options.force) {
-      console.error(`  ✓ 이미 최신입니다 (${currentVersion})`);
-      return 'skip';
-    }
-
-    // 검증 — 파싱·스키마·0행 가드 (오버레이 SQLite 를 건드리기 전에)
-    const rows = await parseCompatibilityJson(jsonPath);
-    if (rows.length === 0) {
-      throw new Error('호환성 JSON 이 비어 있습니다 — 이 버전은 적용하지 않습니다.');
-    }
-
-    // 적용 원본 보관 (재베이스 치유·롤백의 기반)
-    const { abs: versionDir, rel: versionRel } = overlayResourceDir('compatibility', targetVersion);
-    await fs.remove(versionDir);
-    await fs.copy(jsonPath, path.join(versionDir, 'compatibility-software.json'));
-    await fs.writeJSON(
-      path.join(versionDir, 'applied.json'),
-      { resource: 'compatibility', version: targetVersion, row_count: rows.length, applied_at: new Date().toISOString() },
-      { spaces: 2 },
-    );
-
-    // 오버레이 SQLite 에 적재 (재베이스 시 다른 SQLite 리소스 재적용)
-    const { dbPath, rebased } = await ensureOverlaySqlite();
-    const sqlite = new SQLiteManager(dbPath);
-    try {
-      const count = await loadCompatibilityFromJson(sqlite, jsonPath);
-      if (rebased) {
-        await reapplyStoredSqliteResources(sqlite, 'compatibility');
-      }
-      console.error(`  ✓ 호환성 SW ${count}행 적재 완료`);
-    } finally {
-      sqlite.close();
-    }
-
-    const previousDir = effective.source === 'overlay' ? effective.state?.dir : undefined;
-    await commitSqliteResource('compatibility', versionRel, {
-      version: targetVersion,
-      dir: versionRel,
-      previous_dir: previousDir,
-      row_count: rows.length,
-      origin,
-      applied_at: new Date().toISOString(),
-    });
-
-    return { version: targetVersion, rows: rows.length };
-  } finally {
-    await fs.remove(tmpDir).catch(() => {});
-  }
-}
-
 // ─── 롤백 ────────────────────────────────────────────────
 
 async function rollbackResources(targets: ResourceName[]): Promise<number> {
@@ -950,6 +252,15 @@ async function rollbackResources(targets: ResourceName[]): Promise<number> {
 }
 
 // ─── 상태 조회/출력 ──────────────────────────────────────
+
+interface ResourceStatus {
+  resource: ResourceName;
+  currentVersion: string | null;
+  origin: 'overlay' | 'bundled';
+  /** 원격에서 확인한 갱신 후보 (null = 확인 불가/대상 아님) */
+  candidate: string | null;
+  note: string;
+}
 
 async function gatherStatus(options: UpdateOptions): Promise<ResourceStatus[]> {
   const statuses: ResourceStatus[] = [];
@@ -1021,9 +332,7 @@ function printStatus(statuses: ResourceStatus[]): void {
   console.error(`\n임베딩 모델: ${EMBEDDING_MODEL_ID} (로컬, 오프라인 임베딩)`);
 
   // 패키지 갱신으로 오버레이 SQLite 가 무효화된 상태 안내
-  const overlayState = readOverlayState();
-  const hasSqliteApplied = SQLITE_RESOURCES.some((r) => overlayState?.resources[r]?.dir);
-  if (hasSqliteApplied && !isOverlaySqliteValid(CLI_FILE)) {
+  if (isOverlaySqliteStale()) {
     console.error('⚠️ 패키지 갱신으로 SQLite 적용분(호환성)이 번들로 폴백 중입니다 — update 를 실행하면 새 번들 위에 재적용됩니다.');
   }
 }
@@ -1062,8 +371,7 @@ export async function runUpdate(argv: string[]): Promise<number> {
 
     // 갱신할 것이 있는지 판정 (from-file 은 각 리소스 갱신 루틴이 판정)
     // 패키지 갱신으로 무효화된 SQLite 적용분이 있으면 치유 자체가 갱신 사유다
-    const overlayStale =
-      SQLITE_RESOURCES.some((r) => readOverlayState()?.resources[r]?.dir) && !isOverlaySqliteValid(CLI_FILE);
+    const overlayStale = isOverlaySqliteStale();
 
     if (!options.fromFileDir && !options.force && !options.full && !overlayStale) {
       const anyNew = statuses.some((s) => {

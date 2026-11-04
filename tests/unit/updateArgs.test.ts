@@ -2,7 +2,8 @@
  * update CLI 인자 파서 단위 테스트
  */
 import { describe, it, expect } from 'vitest';
-import { parseUpdateArgs, sanitizeVersionDirName } from '../../src/cli/update.js';
+import { parseUpdateArgs } from '../../src/cli/update.js';
+import { sanitizeVersionDirName } from '../../src/cli/shared.js';
 
 describe('parseUpdateArgs', () => {
   it('기본값 — 전체 리소스 대상', () => {
