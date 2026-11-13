@@ -165,7 +165,7 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
       expect(found).toMatchObject({ query: "게시판 템플릿", total: 1, matchMode: "all-terms" });
     });
 
-    it("일부 검색어만 일치하는 컴포넌트로 대체했으면 any-term 을 알린다", () => {
+    it("모든 검색어가 든 컴포넌트가 없어 대체 검색으로 찾았으면 any-term 을 알린다", () => {
       // 게시판: 2행 / 컴포넌트·DDL·보여줘: 0행(세지 않는다) → 게시판이 일치하는 행을 찾는다
       const found = searchComponents("게시판 컴포넌트 DDL 보여줘");
       expect(idsOf(found.results)).toEqual(["bbs", "tpl"]);
@@ -179,6 +179,31 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
       const nothing = searchComponents("컴포넌트 DDL 보여줘");
       expect(nothing.results).toEqual([]);
       expect(nothing).toMatchObject({ total: 0, matchMode: "any-term" });
+    });
+
+    it("낱말의 가운데나 뒤쪽에 든 검색어로 찾은 결과는 all-terms 다", () => {
+      const found = searchComponents("증서");
+      expect(idsOf(found.results)).toEqual(["sec"]);
+      expect(found).toMatchObject({ total: 1, matchMode: "all-terms" });
+    });
+
+    it("일치하는 컴포넌트가 없어 쓰지 않은 검색어를 ignoredTerms 로 알린다", () => {
+      expect(searchComponents("게시판 컴포넌트 DDL 보여줘").ignoredTerms).toEqual(["컴포넌트", "DDL", "보여줘"]);
+      // 결과가 0건이어도 알린다
+      const nothing = searchComponents("컴포넌트 DDL 보여줘");
+      expect(nothing.total).toBe(0);
+      expect(nothing.ignoredTerms).toEqual(["컴포넌트", "DDL", "보여줘"]);
+      // 필터를 적용한 대상 안에서 일치하는 컴포넌트가 없는 검색어도 알린다
+      expect(searchComponents("증서 게시판", 20, { categoryId: "로그인" }).ignoredTerms).toEqual(["게시판"]);
+    });
+
+    it("모든 검색어를 썼으면 ignoredTerms 를 싣지 않는다", () => {
+      for (const query of ["게시판 템플릿", "증서 시판", "게시판을"]) {
+        const found = searchComponents(query);
+        expect(found.results.length, `query=${query}`).toBeGreaterThan(0);
+        expect(found, `query=${query}`).not.toHaveProperty("ignoredTerms");
+      }
+      expect(searchComponents("?!")).not.toHaveProperty("ignoredTerms");
     });
 
     it("예상하지 못한 오류는 다른 검색으로 바꾸지 않고 그대로 던진다", () => {
@@ -453,29 +478,80 @@ describe("공통컴포넌트 도구 — 결과 포맷", () => {
       expect(formatComponentList([uia, sec], false)).toContain("## 공통컴포넌트 목록 (2개)");
     });
 
-    it("부분 일치 대체 검색으로 찾은 결과(any-term)이면 그 사실을 제목 아래에 적는다", () => {
-      // any-term 은 '접두 일치로는 찾지 못했다' 는 뜻일 뿐이다. 검색어가 하나뿐이거나 모든 검색어가
-      // 부분 문자열로 일치한 결과도 any-term 이므로, 일부 검색어만 일치했다고 단정하지 않는다
+    const ANY_TERM_NOTE = "> 모든 검색어가 들어 있는 항목이 없어, 검색어의 절반 이상이 들어 있는 항목을 표시합니다.";
+
+    it("대체 검색으로 찾은 결과(any-term)이면 그 사실을 제목 아래에 적는다", () => {
       for (const groupByCategory of [true, false]) {
         const lines = formatComponentList([uia, sec], groupByCategory, { matchMode: "any-term" }).split("\n");
         expect(lines.slice(0, 4), `groupByCategory=${groupByCategory}`).toEqual([
           "## 공통컴포넌트 목록 (2개)",
           "",
-          "> 낱말 접두 일치로는 찾지 못해 부분 일치로 찾은 결과입니다 (일부 검색어만 일치하는 항목이 포함될 수 있습니다).",
+          ANY_TERM_NOTE,
           "",
         ]);
       }
     });
 
-    it("모든 검색어가 접두 일치했거나 matchMode 를 주지 않으면 적지 않는다", () => {
+    it("모든 검색어가 일치했거나 matchMode 를 주지 않으면 적지 않는다", () => {
       for (const text of [
         formatComponentList([uia, sec], false, { matchMode: "all-terms" }),
         formatComponentList([uia, sec], false),
         formatComponentList([uia, sec]),
       ]) {
-        expect(text).not.toContain("부분 일치");
-        expect(text).not.toContain("일부 검색어만");
+        expect(text).not.toContain("모든 검색어가 들어 있는 항목이 없어");
+        expect(text).not.toContain("검색에 쓰지 않은 낱말");
       }
+    });
+
+    it("검색에 쓰지 않은 낱말(ignoredTerms)이 있으면 any-term 안내 다음 줄에 적는다", () => {
+      for (const groupByCategory of [true, false]) {
+        const lines = formatComponentList([uia, sec], groupByCategory, {
+          matchMode: "any-term",
+          ignoredTerms: ["컴포넌트", "보여줘"],
+        }).split("\n");
+        expect(lines.slice(0, 6), `groupByCategory=${groupByCategory}`).toEqual([
+          "## 공통컴포넌트 목록 (2개)",
+          "",
+          ANY_TERM_NOTE,
+          "",
+          "> 일치하는 항목이 없어 검색에 쓰지 않은 낱말: 컴포넌트, 보여줘.",
+          "",
+        ]);
+        // 안내 다음에 표가 이어진다
+        expect(lines[6].startsWith(groupByCategory ? "### " : "| 컴포넌트 ID |")).toBe(true);
+      }
+    });
+
+    it("쓰지 않은 낱말이 하나뿐이어도, any-term 안내가 없어도 적는다", () => {
+      const lines = formatComponentList([uia], false, { ignoredTerms: ["DDL"] }).split("\n");
+      expect(lines.slice(0, 4)).toEqual([
+        "## 공통컴포넌트 목록 (1개)",
+        "",
+        "> 일치하는 항목이 없어 검색에 쓰지 않은 낱말: DDL.",
+        "",
+      ]);
+    });
+
+    it("ignoredTerms 가 비어 있으면 적지 않는다", () => {
+      expect(formatComponentList([uia, sec], false, { matchMode: "any-term", ignoredTerms: [] })).not.toContain(
+        "검색에 쓰지 않은 낱말",
+      );
+    });
+
+    it("결과가 없으면 쓰지 않은 낱말만 적고, 항목을 표시한다는 any-term 안내는 적지 않는다", () => {
+      const text = formatComponentList([], false, {
+        total: 0,
+        matchMode: "any-term",
+        ignoredTerms: ["컴포넌트", "DDL", "보여줘"],
+      });
+      expect(text.split("\n")).toEqual([
+        "## 공통컴포넌트 목록 (0개)",
+        "",
+        "> 일치하는 항목이 없어 검색에 쓰지 않은 낱말: 컴포넌트, DDL, 보여줘.",
+        "",
+        "검색 결과가 없습니다.",
+        "",
+      ]);
     });
   });
 });

@@ -128,6 +128,7 @@ export function getComponentInfo(componentId: string): {
  * - total: 일치하는 전체 건수 (results 는 그 가운데 앞에서부터 limit 건)
  * - matchMode: 결과를 찾은 방식 (all-terms: 모든 검색어가 일치하는 컴포넌트, any-term: 그런 컴포넌트가 없어
  *   대체 검색으로 찾은 컴포넌트. 일부 검색어만 일치한다). 검색어가 하나도 추출되지 않으면 없다.
+ * - ignoredTerms: 일치하는 컴포넌트가 없어 검색에 쓰지 않은 검색어 (query 에 적힌 꼴). 그런 검색어가 없으면 없다.
  */
 export function searchComponents(
   query: string,
@@ -138,6 +139,7 @@ export function searchComponents(
   query: string;
   total: number;
   matchMode?: KeywordMatchMode;
+  ignoredTerms?: string[];
 } {
   // 검색어가 하나도 없으면 찾을 것이 없다 (필터만으로 목록을 보려면 listCommonComponents 를 쓴다)
   if (extractSearchTerms(query).length === 0) {
@@ -145,7 +147,7 @@ export function searchComponents(
   }
 
   // 조회 중 예상하지 못한 오류는 다른 검색으로 바꾸지 않고 그대로 던진다.
-  // (부분 일치 결과로 대체하는 일은 queryComponents 가 matchMode 와 함께 처리한다.)
+  // (대체 검색으로 넘어가는 일은 queryComponents 가 matchMode 와 함께 처리한다.)
   const found = getDB().queryComponents({ query, filters, limit });
 
   return {
@@ -153,6 +155,7 @@ export function searchComponents(
     query,
     total: found.total,
     ...(found.matchMode ? { matchMode: found.matchMode } : {}),
+    ...(found.terms && found.terms.ignored.length > 0 ? { ignoredTerms: found.terms.ignored } : {}),
   };
 }
 
@@ -213,28 +216,31 @@ export function formatCategoryList(
  * 두 표 형식 모두 첫 열에 컴포넌트 ID 를 싣는다. 상세 조회·의존성·소스·DDL/DML 조회에 넣는 값이다.
  * 결과가 없으면 제목 아래에 '검색 결과가 없습니다.' 를 적는다.
  * - options.total: 조건에 맞는 전체 건수. 표시하는 건수보다 크면 제목에 'N개 중 M개 표시' 를 적는다.
- * - options.matchMode: 'any-term' 이면 부분 일치 대체 검색으로 찾은 결과임을 제목 아래에 적는다.
+ * - options.matchMode: 'any-term' 이면 대체 검색으로 찾은 결과임을 제목 아래에 적는다 (결과가 있을 때만).
+ * - options.ignoredTerms: 일치하는 항목이 없어 검색에 쓰지 않은 낱말. 비어 있지 않으면 any-term 안내 다음에 적는다.
  */
 export function formatComponentList(
   components: CommonComponent[],
   groupByCategory: boolean = true,
-  options: { total?: number; matchMode?: KeywordMatchMode } = {}
+  options: { total?: number; matchMode?: KeywordMatchMode; ignoredTerms?: string[] } = {}
 ): string {
   const shown = components.length;
   const countLabel =
     options.total !== undefined && options.total > shown ? `${options.total}개 중 ${shown}개 표시` : `${shown}개`;
   let output = `## 공통컴포넌트 목록 (${countLabel})\n\n`;
 
+  // any-term 은 모든 검색어가 든 항목이 없어, 남은 검색어의 절반 이상이 든 항목을 찾았다는 뜻이다.
+  // 표시할 항목이 없으면 이 안내는 적지 않는다.
+  if (options.matchMode === 'any-term' && shown > 0) {
+    output += '> 모든 검색어가 들어 있는 항목이 없어, 검색어의 절반 이상이 들어 있는 항목을 표시합니다.\n\n';
+  }
+  if (options.ignoredTerms && options.ignoredTerms.length > 0) {
+    output += `> 일치하는 항목이 없어 검색에 쓰지 않은 낱말: ${options.ignoredTerms.join(', ')}.\n\n`;
+  }
+
   // 결과가 없어도 제목은 출력한다 (통합 검색 결과에서 어느 섹션인지 알 수 있어야 한다)
   if (shown === 0) {
     return `${output}검색 결과가 없습니다.\n`;
-  }
-
-  // any-term 은 접두 일치로 찾지 못했다는 뜻일 뿐이다. 검색어가 하나뿐이거나 모든 검색어가 부분 문자열로
-  // 일치한 결과도 여기에 들므로, 일부 검색어만 일치했다고 단정하지 않는다.
-  if (options.matchMode === 'any-term') {
-    output +=
-      '> 낱말 접두 일치로는 찾지 못해 부분 일치로 찾은 결과입니다 (일부 검색어만 일치하는 항목이 포함될 수 있습니다).\n\n';
   }
 
   if (groupByCategory) {
