@@ -521,8 +521,12 @@ export class GuideSearchManager {
    * sectionBase 는 조각 번호를 뗀 section 이다 (parseSectionPart 의 base). 긴 절은 여러 조각으로 나뉘어
    * section 끝에 " (k/n)" 이 붙고, 그런 절의 sectionBase 는 한 문서 안에서 겹치지 않는다 (청킹이 보장한다).
    *
+   * 번호가 붙은 행들은 번호가 1부터 n까지 하나씩 빠짐없이 있고 n 이 모두 같을 때만 조각으로 다룬다. 나뉘지 않은 절의
+   * 제목이 " (k/n)" 으로 끝날 수도 있기 때문이다 (예: "## 단계 (3/3)"). 그런 행은 번호 없는 절로 다루고, section 전체가
+   * 그 절의 이름이다.
+   *
    * 조각 번호가 없는 절(나뉘지 않은 절, 이전 청킹으로 만든 인덱스의 행)은 조각 하나(1/1)로 돌려준다.
-   * 제목 경로가 같은 절이 둘이면 둘 다 나온다. 번호가 붙은 조각이 있으면 그것만 돌려준다.
+   * 제목 경로가 같은 절이 둘이면 둘 다 나온다. 조각으로 나뉜 절이 있으면 그 조각만 돌려준다.
    * 해당하는 행이 없으면 빈 배열이다.
    */
   async getSectionParts(
@@ -537,24 +541,41 @@ export class GuideSearchManager {
       .select(['id', 'section'])
       .toArray();
 
-    const numbered: Array<{ id: string; part: number; count: number }> = [];
-    const unnumbered: Array<{ id: string; part: number; count: number }> = [];
+    // 번호를 뗀 이름별로 번호 붙은 행을 모은다
+    const numbered = new Map<string, Array<{ id: string; part: number; count: number }>>();
+    const sections: Array<{ id: string; section: string; base: string | null }> = [];
     for (const row of rows) {
+      const id = String(row.id);
       const section = String(row.section ?? '');
       const parsed = parseSectionPart(section);
+      sections.push({ id, section, base: parsed ? parsed.base : null });
       if (parsed) {
-        if (parsed.base === sectionBase) {
-          numbered.push({ id: String(row.id), part: parsed.part, count: parsed.count });
-        }
-      } else if (section === sectionBase) {
-        unnumbered.push({ id: String(row.id), part: 1, count: 1 });
+        const group = numbered.get(parsed.base) ?? [];
+        group.push({ id, part: parsed.part, count: parsed.count });
+        numbered.set(parsed.base, group);
       }
     }
+    /** 한 절의 조각인지: 번호가 1부터 n까지 하나씩 빠짐없이 있고 n 이 모두 같다 */
+    const isPieces = (base: string): boolean => {
+      const group = numbered.get(base);
+      if (!group) return false;
+      const count = group[0].count;
+      return (
+        group.length === count &&
+        group.every((entry) => entry.count === count) &&
+        new Set(group.map((entry) => entry.part)).size === count
+      );
+    };
+    const byId = (a: { id: string }, b: { id: string }) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
-    const parts = numbered.length > 0 ? numbered : unnumbered;
-    return parts.sort(
-      (a, b) => a.part - b.part || a.count - b.count || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
-    );
+    if (isPieces(sectionBase)) {
+      return (numbered.get(sectionBase) ?? []).sort((a, b) => a.part - b.part);
+    }
+    // 번호 없는 절: section 전체가 이름과 같은 행. 번호 모양으로 끝나지만 조각이 아닌 행도 여기에 든다
+    return sections
+      .filter((entry) => entry.section === sectionBase && (entry.base === null || !isPieces(entry.base)))
+      .map((entry) => ({ id: entry.id, part: 1, count: 1 }))
+      .sort(byId);
   }
 
   /** layer / category 고유 값 캐시 — 테이블 핸들과 버전이 그대로일 때만 유효하다 */

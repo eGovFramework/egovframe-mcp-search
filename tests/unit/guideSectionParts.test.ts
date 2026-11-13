@@ -90,6 +90,8 @@ describe("GuideSearchManager.getSectionParts", () => {
   const DOC = "egovframe-runtime/foundation-layer/cache.md";
   const OTHER_DOC = "egovframe-runtime/foundation-layer/session.md";
   const QUOTED_DOC = "egovframe-runtime/it's/o'brien.md";
+  /** 나뉘지 않은 절의 제목이 ' (k/n)' 으로 끝나는 문서 (예: '## 단계 (3/3)') */
+  const TITLED_DOC = "egovframe-runtime/foundation-layer/steps.md";
 
   /** 행마다 다른 축만 1 인 단위 벡터 (조회는 벡터를 쓰지 않는다) */
   let nextAxis = 0;
@@ -142,6 +144,20 @@ describe("GuideSearchManager.getSectionParts", () => {
       row("quoted-2", QUOTED_DOC, "it's (2/2)"),
       row("quoted-1", QUOTED_DOC, "it's (1/2)"),
       row("quoted-plain", QUOTED_DOC, "x' OR '1'='1"),
+      // 조각이 아닌데 제목이 ' (k/n)' 으로 끝나는 절: 번호가 1부터 n까지 빠짐없이 있지 않다
+      row("lone-3", TITLED_DOC, "단계 (3/3)"),
+      row("gap-2", TITLED_DOC, "준비 (2/3)"),
+      row("gap-3", TITLED_DOC, "준비 (3/3)"),
+      row("mixed-1", TITLED_DOC, "설치 (1/2)"),
+      row("mixed-2", TITLED_DOC, "설치 (2/3)"),
+      row("twice-1", TITLED_DOC, "확인 (1/2)"),
+      row("twice-2a", TITLED_DOC, "확인 (2/2)"),
+      row("twice-2b", TITLED_DOC, "확인 (2/2)"),
+      row("plain", TITLED_DOC, "정리"),
+      row("plain-2", TITLED_DOC, "정리 (2/2)"),
+      // 제목이 ' (k/n)' 으로 끝나는 절이 다시 조각으로 나뉜 경우: 맨 끝의 번호가 조각 번호다
+      row("nested-2", TITLED_DOC, "단계 (1/2) (2/2)"),
+      row("nested-1", TITLED_DOC, "단계 (1/2) (1/2)"),
     ]);
     manager = new GuideSearchManager(tmpDir);
     await manager.initialize({ createIfMissing: false });
@@ -199,6 +215,49 @@ describe("GuideSearchManager.getSectionParts", () => {
     expect(await manager.getSectionParts(DOC, "설명 > Output")).toEqual([]);
   });
 
+  describe("번호가 1부터 n까지 빠짐없이 있을 때만 조각으로 다룬다", () => {
+    it("제목이 ' (k/n)' 으로 끝나는 나뉘지 않은 절은 조각이 아니다: section 전체로 찾으면 조각 하나(1/1)다", async () => {
+      // '## 단계 (3/3)' 처럼 제목이 그 모양인 절 하나: 번호를 뗀 이름으로는 찾지 못하고, 제목 전체가 절의 이름이다
+      expect(await manager.getSectionParts(TITLED_DOC, "단계")).toEqual([]);
+      expect(await manager.getSectionParts(TITLED_DOC, "단계 (3/3)")).toEqual([{ id: "lone-3", part: 1, count: 1 }]);
+    });
+
+    it("번호가 빠져 있으면 조각이 아니다", async () => {
+      expect(await manager.getSectionParts(TITLED_DOC, "준비")).toEqual([]);
+      expect(await manager.getSectionParts(TITLED_DOC, "준비 (2/3)")).toEqual([{ id: "gap-2", part: 1, count: 1 }]);
+      expect(await manager.getSectionParts(TITLED_DOC, "준비 (3/3)")).toEqual([{ id: "gap-3", part: 1, count: 1 }]);
+    });
+
+    it("전체 조각 수(n)가 서로 다르면 조각이 아니다", async () => {
+      expect(await manager.getSectionParts(TITLED_DOC, "설치")).toEqual([]);
+      expect(await manager.getSectionParts(TITLED_DOC, "설치 (1/2)")).toEqual([{ id: "mixed-1", part: 1, count: 1 }]);
+      expect(await manager.getSectionParts(TITLED_DOC, "설치 (2/3)")).toEqual([{ id: "mixed-2", part: 1, count: 1 }]);
+    });
+
+    it("같은 번호가 둘이면 조각이 아니다 (어느 것이 이웃인지 가릴 수 없다)", async () => {
+      expect(await manager.getSectionParts(TITLED_DOC, "확인")).toEqual([]);
+      expect(await manager.getSectionParts(TITLED_DOC, "확인 (1/2)")).toEqual([{ id: "twice-1", part: 1, count: 1 }]);
+      expect(await manager.getSectionParts(TITLED_DOC, "확인 (2/2)")).toEqual([
+        { id: "twice-2a", part: 1, count: 1 },
+        { id: "twice-2b", part: 1, count: 1 },
+      ]);
+    });
+
+    it("조각이 아닌 번호 모양의 절은 이름이 같은 번호 없는 절을 가리지 않는다", async () => {
+      expect(await manager.getSectionParts(TITLED_DOC, "정리")).toEqual([{ id: "plain", part: 1, count: 1 }]);
+      expect(await manager.getSectionParts(TITLED_DOC, "정리 (2/2)")).toEqual([{ id: "plain-2", part: 1, count: 1 }]);
+    });
+
+    it("제목이 ' (k/n)' 으로 끝나는 절이 조각으로 나뉘면 맨 끝의 번호로 묶는다", async () => {
+      expect(await manager.getSectionParts(TITLED_DOC, "단계 (1/2)")).toEqual([
+        { id: "nested-1", part: 1, count: 2 },
+        { id: "nested-2", part: 2, count: 2 },
+      ]);
+      // 조각인 행은 section 전체로 찾아도 절로 나오지 않는다
+      expect(await manager.getSectionParts(TITLED_DOC, "단계 (1/2) (1/2)")).toEqual([]);
+    });
+  });
+
   it("없는 문서나 없는 절은 빈 배열이다", async () => {
     expect(await manager.getSectionParts(DOC, "없는 절")).toEqual([]);
     expect(await manager.getSectionParts("없는/문서.md", "설정 > 캐시")).toEqual([]);
@@ -237,19 +296,25 @@ describe.skipIf(!HAS_BUNDLED_TABLES)("GuideSearchManager.getSectionParts — 동
 
     for (const row of spread(rows, 60)) {
       const parsed = parseSectionPart(row.section);
-      const parts = await manager.getSectionParts(row.source, parsed ? parsed.base : row.section);
       const label = `${row.source} | ${row.section}`;
-      const own = parts.find((part) => part.id === row.id);
-      if (parsed) {
-        expect(own, label).toEqual({ id: row.id, part: parsed.part, count: parsed.count });
-      } else if (parts.every((part) => part.count === 1)) {
-        expect(own, label).toEqual({ id: row.id, part: 1, count: 1 });
+      const pieces = parsed ? await manager.getSectionParts(row.source, parsed.base) : [];
+      if (pieces.some((part) => part.id === row.id)) {
+        // 조각으로 나뉜 절의 행: 그 절의 조각이 1부터 n까지 빠짐없이 차례로 나온다
+        expect(pieces, label).toHaveLength(parsed!.count);
+        expect(pieces.map((part) => [part.part, part.count]), label).toEqual(
+          pieces.map((_, index) => [index + 1, parsed!.count]),
+        );
+        expect(pieces[parsed!.part - 1].id, label).toBe(row.id);
+        continue;
+      }
+      // 번호 없는 절의 행 (제목이 ' (k/n)' 으로 끝나지만 조각이 아닌 절 포함): section 전체가 절의 이름이다
+      const parts = await manager.getSectionParts(row.source, row.section);
+      if (parts.every((part) => part.count === 1)) {
+        expect(parts.find((part) => part.id === row.id), label).toEqual({ id: row.id, part: 1, count: 1 });
       } else {
         // 제목 경로가 같은 번호 붙은 절이 있는 문서: 번호가 붙은 조각만 돌려준다
         expect(parts.every((part) => part.count > 1), label).toBe(true);
       }
-      // 조각 번호 순
-      expect(parts.map((part) => part.part), label).toEqual([...parts.map((part) => part.part)].sort((a, b) => a - b));
     }
   });
 });
