@@ -8,6 +8,7 @@
  * - 제품 버전 표기가 검색 대상이 아니었다 ("JEUS 8").
  * - 프레임워크 버전과 확인일자가 검색 대상이 아니었다 (설명에 버전이 적히지 않은 행, "2025", "2024-11").
  * - 제품명을 여럿 나열하거나 영어 문장으로 물으면 0건이었다 ("JEUS Tibero WebLogic").
+ * - vendor 필터가 법인 표기까지 같은 행만 돌려줬다 ("(주)아이액츠", "㈜아이액츠", "주식회사 아이액츠").
  *
  * DB 는 읽기 전용으로 열고, 조회가 파일을 바꾸지 않았는지 마지막에 확인한다.
  * 동봉 데이터는 갱신될 수 있으므로 건수를 숫자로 고정하지 않고, 같은 뜻의 두 조회가 같은 결과를 내는지와
@@ -247,6 +248,23 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       // 그 달에 확인된 행은 하나도 빠지지 않는다
       const sameMonth = sqlite.queryCompatibleSoftware().rows.filter((row) => row.verified_date.startsWith("2024-11"));
       expect(result.total).toBe(sameMonth.length);
+    });
+
+    it("vendor 필터는 법인 표기가 달라도 같은 업체의 행을 모두 돌려준다", () => {
+      const byVendor = (vendor: string) => sqlite.queryCompatibleSoftware({ filters: { vendor } });
+      // 같은 업체가 '(주)아이액츠', '㈜아이액츠', '주식회사 아이액츠' 세 표기로 들어 있다.
+      // 글자 그대로 비교하던 때에는 표기마다 건수가 달랐다 (이 테스트를 쓴 시점에 3건, 1건, 2건이고 합쳐 6건이다)
+      const bare = byVendor("아이액츠");
+      const spellings = [...new Set(bare.rows.map((row) => row.vendor))];
+      expect(spellings.length).toBeGreaterThan(1);
+
+      for (const vendor of [...spellings, "(주)아이액츠", "㈜아이액츠", "주식회사 아이액츠", "아이액츠(주)"]) {
+        const result = byVendor(vendor);
+        expect(result.total, `vendor=${vendor}`).toBe(bare.total);
+        expect(rowSet(result), `vendor=${vendor}`).toEqual(rowSet(bare));
+      }
+      // 키워드 검색과 함께 줘도 같다
+      expect(compatible("Smart", { vendor: "㈜아이액츠" }).total).toBe(compatible("Smart", { vendor: "아이액츠" }).total);
     });
 
     it("이름에 검색어가 든 행을 확인일자가 최근인 순으로 먼저 돌려준다", () => {

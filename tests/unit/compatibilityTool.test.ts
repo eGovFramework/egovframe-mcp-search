@@ -402,6 +402,15 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       expect(versionsOf((await searchCompatibleSoftware({ productName: " Tibero " })).software)).toEqual(["Tibero 7"]);
     });
 
+    it("vendor 는 법인 표기가 달라도 찾되, 응답의 filters 에는 받은 값을 그대로 싣는다", async () => {
+      // 고정 데이터의 업체명은 '(주)티맥스소프트' 다
+      for (const vendor of ["주식회사 티맥스소프트", "㈜티맥스소프트", "티맥스소프트(주)"]) {
+        const response = await searchCompatibleSoftware({ vendor });
+        expect(versionsOf(response.software), `vendor=${vendor}`).toEqual(["JEUS 21", "JEUS 8.5"]);
+        expect(response.filters, `vendor=${vendor}`).toEqual({ vendor });
+      }
+    });
+
     it("공백뿐인 필터는 주지 않은 것으로 보고 응답의 filters 에도 넣지 않는다", async () => {
       const response = await searchCompatibleSoftware({ frameworkVersion: "  ", category: "", vendor: " " });
       expect(response.count).toBe(CATALOGUE.length);

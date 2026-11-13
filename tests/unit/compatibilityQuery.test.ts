@@ -831,6 +831,96 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     });
   });
 
+  describe("vendor 필터의 법인 표기", () => {
+    /** 같은 업체를 표기만 달리 적은 행. 제품 버전 표기로 구분한다 */
+    const acts = (suffix: string, vendor: string): SoftwareSeed => ({
+      ...CATALOGUE[5],
+      product_name: `Acts ${suffix}`,
+      product_version: `Acts ${suffix}`,
+      vendor,
+    });
+    const SAME_VENDOR = [
+      acts("half", "(주)아이액츠"),
+      acts("symbol", "㈜아이액츠"),
+      acts("word", "주식회사 아이액츠"),
+      acts("full", "（주）아이액츠"),
+      acts("tail", "아이액츠(주)"),
+      acts("tailword", "아이액츠 주식회사"),
+      acts("spaced", "㈜ 아이 액츠"),
+      acts("bare", "아이액츠"),
+    ];
+    /** 이름이 비슷한 다른 업체 */
+    const OTHER_VENDOR = acts("other", "(주)아이엑스");
+    const ALL_SPELLINGS = versionsOf(SAME_VENDOR).sort();
+
+    /** vendor 필터만 준 조회의 결과를 제품 버전 표기 순으로 */
+    const byVendor = (vendor: string, query?: string) =>
+      versionsOf(sqlite.queryCompatibleSoftware({ query, filters: { vendor } }).rows).sort();
+
+    beforeEach(() => {
+      sqlite.addCompatibilitySoftwareBatch([...SAME_VENDOR, OTHER_VENDOR]);
+    });
+
+    it("결과에 보이는 업체명을 어느 표기로 넣어도 그 업체의 행을 모두 찾는다", () => {
+      // 글자 그대로 비교하던 때에는 넣은 표기의 행만 나왔다 ('(주)아이액츠' 는 한 행, '아이액츠' 는 여덟 행)
+      for (const row of SAME_VENDOR) {
+        expect(byVendor(row.vendor), `vendor=${row.vendor}`).toEqual(ALL_SPELLINGS);
+      }
+    });
+
+    it("필터 값의 공백과 법인 표기의 자리도 가리지 않는다", () => {
+      for (const vendor of ["아이 액츠", " ㈜ 아이액츠 ", "아이액츠㈜", "( 주 ) 아이액츠", "주식회사아이액츠", "아이액츠（주）"]) {
+        expect(byVendor(vendor), `vendor=${vendor}`).toEqual(ALL_SPELLINGS);
+      }
+    });
+
+    it("표기를 뗀 값을 부분 문자열로 비교한다", () => {
+      expect(byVendor("액츠")).toEqual(ALL_SPELLINGS);
+      expect(byVendor("(주)액츠")).toEqual(ALL_SPELLINGS);
+      // '아이' 는 다른 업체 '(주)아이엑스' 에도 들어 있다
+      expect(byVendor("㈜아이")).toEqual([...ALL_SPELLINGS, "Acts other"].sort());
+      expect(byVendor("아이엑스")).toEqual(["Acts other"]);
+      // 고정 데이터의 '(주)티맥스소프트' 는 '주식회사 티맥스소프트' 로도 찾는다
+      expect(byVendor("주식회사 티맥스소프트")).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(byVendor("없는업체(주)")).toEqual([]);
+    });
+
+    it("영문자의 대소문자는 지금처럼 가리지 않는다", () => {
+      sqlite.addCompatibilitySoftwareBatch([acts("latin", "LG CNS Korea(주)")]);
+      for (const vendor of ["LG CNS", "lg cns", "LGCNS", "㈜lg cns korea", "Cns Kor"]) {
+        expect(byVendor(vendor), `vendor=${vendor}`).toEqual(["Acts latin"]);
+      }
+    });
+
+    it("법인 표기만 적은 값은 떼지 않고 글자 그대로 비교한다", () => {
+      // 떼면 빈 값이 되어 모든 행과 일치한다. 그 표기가 적힌 행을 찾는 것으로 본다
+      expect(byVendor("(주)")).toEqual(["Acts half", "Acts other", "Acts tail", "JEUS 21", "JEUS 8.5", "Tibero 7"]);
+      expect(byVendor("㈜")).toEqual(["Acts spaced", "Acts symbol"]);
+      expect(byVendor("주식회사")).toEqual(["Acts tailword", "Acts word"]);
+      expect(byVendor("（주）")).toEqual(["Acts full"]);
+      // 고정 데이터에 그렇게 적힌 행이 없는 조합
+      expect(byVendor("㈜ 주식회사")).toEqual([]);
+    });
+
+    it("키워드 검색과 함께 줘도 같은 규칙으로 거른다", () => {
+      expect(byVendor("㈜아이액츠", "Acts")).toEqual(ALL_SPELLINGS);
+      // 대체 검색에서도 같다: 'Acts' 는 대상 안에 있고 '없는말' 은 없다
+      const fallback = sqlite.queryCompatibleSoftware({ query: "Acts 없는말", filters: { vendor: "주식회사 아이액츠" } });
+      expect(fallback.matchMode).toBe("any-term");
+      expect(fallback.total).toBe(SAME_VENDOR.length);
+    });
+
+    it("필터 값의 LIKE 와일드카드는 표기를 뗀 뒤에도 글자 그대로 비교한다", () => {
+      // '_' 가 와일드카드였다면 '아이액츠' 와 일치했을 것
+      expect(byVendor("(주)아이_츠")).toEqual([]);
+      expect(byVendor("아이%")).toEqual([]);
+    });
+
+    it("배열을 돌려주는 searchCompatibleSoftware 도 같다", () => {
+      expect(versionsOf(sqlite.searchCompatibleSoftware({ vendor: "㈜아이액츠" })).sort()).toEqual(ALL_SPELLINGS);
+    });
+  });
+
   describe("LIKE 로 비교하는 필터(vendor, productName)에 쓸 수 없는 값", () => {
     const NO_ROWS = { rows: [], total: 0 };
     /** UTF-8 로 SQLite 의 LIKE 패턴 한도(50,000바이트)를 넘는 값 */

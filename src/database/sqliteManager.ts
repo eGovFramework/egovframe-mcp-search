@@ -12,6 +12,7 @@ import { codePointLength, extractSearchTerms, particleStrippedForms } from '../u
 import { escapeLikePattern } from '../utils/sqlLike.js';
 import { UserFacingError } from '../utils/errors.js';
 import { normalizeFrameworkVersion } from '../utils/frameworkVersion.js';
+import { VENDOR_IGNORED_SEQUENCES, stripVendorDesignation } from '../utils/vendorName.js';
 import {
   CompatibilitySoftware,
   CompatibilitySearchFilter,
@@ -397,9 +398,11 @@ export class SQLiteManager {
       params.push(filters.minLevel);
     }
 
+    // 업체명은 법인 표기(㈜, (주), 주식회사)와 공백의 차이를 없애고 비교한다.
+    // 조회 결과에 보이는 업체명을 어느 표기로 넣어도 그 업체의 행을 모두 찾을 수 있어야 한다.
     const vendor = trimFilter(filters.vendor);
     if (vendor) {
-      addContainsClause(clauses, params, ['cs.vendor'], vendor);
+      addVendorClause(clauses, params, 'cs.vendor', vendor);
     }
 
     // 제품명 필터는 버전 표기(product_version, 예: 'JEUS 8.5')와도 비교한다.
@@ -1354,6 +1357,32 @@ function addContainsClause(clauses: string[], params: unknown[], columns: string
   const condition = likeAnyColumn(columns, pattern);
   clauses.push(condition.sql);
   params.push(...condition.params);
+}
+
+/**
+ * "업체명 컬럼이 vendor 를 부분 문자열로 포함한다" 는 필터 조건을 clauses 와 params 에 덧붙인다.
+ *
+ * 필터 값과 컬럼 값 양쪽에서 법인 표기와 공백을 뗀 뒤 비교한다 (utils/vendorName 의 목록을 같은 순서로 적용한다).
+ * '㈜아이액츠', '(주)아이액츠', '주식회사 아이액츠', '아이액츠' 가 같은 행을 찾는다. 영문자의 대소문자는 가리지 않는다.
+ *
+ * 법인 표기와 공백뿐인 값('(주)')은 떼면 남는 것이 없어 모든 행과 일치하게 된다. 그런 값은 그 표기가 적힌 행을
+ * 찾는 것으로 보고 떼지 않은 채 글자 그대로 비교한다.
+ */
+function addVendorClause(clauses: string[], params: unknown[], column: string, vendor: string): void {
+  const bare = stripVendorDesignation(vendor);
+  if (bare === '') {
+    addContainsClause(clauses, params, [column], vendor);
+    return;
+  }
+  const pattern = containsPattern(bare);
+  if (pattern === null) {
+    clauses.push('1=0');
+    return;
+  }
+  // REPLACE 를 목록의 순서대로 겹친다: 가장 안쪽이 먼저 적용되고, 그 '?' 가 SQL 문에서도 가장 먼저 나온다
+  const stripped = VENDOR_IGNORED_SEQUENCES.reduce((expression) => `REPLACE(${expression}, ?, '')`, column);
+  clauses.push(`${stripped} LIKE ? ESCAPE '\\'`);
+  params.push(...VENDOR_IGNORED_SEQUENCES, pattern);
 }
 
 /** 조회할 범위. SQL 의 LIMIT / OFFSET 에 그대로 넣는 정수다. */
