@@ -43,17 +43,35 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     });
 
     it("문장으로 물어도 뜻이 있는 검색어가 일치하는 컴포넌트를 찾는다", () => {
-      // 게시판: 2행 / 컴포넌트: 0행 → k=2, 한 개 이상 일치하면 통과
+      // 게시판: 2행 / 컴포넌트: 0행(제외) → k=1
       const result = sqlite.queryComponents({ query: "게시판 컴포넌트" });
       expect(idsOf(result.rows)).toEqual(["bbs", "tpl"]);
       expect(result.matchMode).toBe("any-term");
     });
 
+    it("일치하는 행이 하나도 없는 검색어는 세지 않는다 (군말이 섞인 문장형 질의)", () => {
+      // 게시판: 2행 / 만들기·방법: 0행(제외) → k=1.
+      // 0행인 검색어까지 세면 k=3 이 되어 두 개 이상 일치해야 하므로 결과가 없어진다
+      const result = sqlite.queryComponents({ query: "게시판 만들기 방법" });
+      expect(idsOf(result.rows)).toEqual(["bbs", "tpl"]);
+      expect(result.total).toBe(2);
+      expect(result.matchMode).toBe("any-term");
+    });
+
+    it("모든 검색어가 일치하는 행이 없으면 빈 결과를 돌려준다", () => {
+      // 만들기·방법·없는말: 0행 → k=0
+      expect(sqlite.queryComponents({ query: "만들기 방법 없는말" })).toEqual({
+        rows: [],
+        total: 0,
+        matchMode: "any-term",
+      });
+    });
+
     it("절반을 넘는 행에 들어 있는 검색어는 빼고, 남은 검색어의 절반 이상이 일치하는 행만 돌려준다", () => {
-      // 기능: 7행(제외) / 게시판: 2행 / 없는말: 0행 → k=2, 한 개 이상 일치
+      // 기능: 7행(제외) / 게시판: 2행 / 없는말: 0행(제외) → k=1
       expect(idsOf(sqlite.queryComponents({ query: "기능 게시판 없는말" }).rows)).toEqual(["bbs", "tpl"]);
-      // 게시판: 2행 / 만들기: 0행 / 방법: 0행 → k=3, 두 개 이상 일치해야 하므로 없음
-      expect(sqlite.queryComponents({ query: "게시판 만들기 방법" }).rows).toEqual([]);
+      // 시판: bbs, tpl / 플릿: tpl / 통계: bst → k=3, 두 개 이상 일치해야 하므로 tpl 만 남는다
+      expect(idsOf(sqlite.queryComponents({ query: "시판 플릿 통계" }).rows)).toEqual(["tpl"]);
       // 능을('기능을' 의 중간): 7행(제외) / 공함('제공함' 의 중간): 7행(제외) → k=0
       const nothing = sqlite.queryComponents({ query: "능을 공함" });
       expect(nothing.rows).toEqual([]);
@@ -76,7 +94,8 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     });
 
     it("한 글자 검색어는 대체 검색에서 쓰지 않는다", () => {
-      // 'x', 'y' 를 검색어로 세면 k=3 이 되어 '증서' 하나만 일치하는 행이 탈락한다
+      // 'y' 는 영문명 'Authority Management' 를 쓰는 두 행(ram, drm)에 들어 있다.
+      // 검색어로 세면 '증서' 와 무관한 그 두 행이 결과에 함께 나온다
       expect(idsOf(sqlite.queryComponents({ query: "x y 증서" }).rows)).toEqual(["sec"]);
     });
 
@@ -134,9 +153,18 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
 
     it("필터까지 만족하는 컴포넌트가 없으면 부분 일치 검색으로 넘어간다", () => {
       // '게시판 관리' 는 tpl 하나와 일치하지만 tpl 은 4.3.1 이다.
-      // 대체 검색: 게시판 2행, 관리 3행 → 5.0.0 가운데 일치하는 행이 없다
+      // 대체 검색: 게시판 2행, 관리 3행 모두 4.3.1 이라 5.0.0 안에는 일치하는 행이 없다 → k=0
       const result = sqlite.queryComponents({ query: "게시판 관리", filters: { version: "5.0.0" } });
       expect(result.rows).toEqual([]);
+      expect(result.matchMode).toBe("any-term");
+    });
+
+    it("필터를 적용한 대상 안에서 일치하는 행이 없는 검색어는 세지 않는다", () => {
+      // 대상(로그인)은 uia, sec 두 행이다. 게시판(2행)과 관리(3행)는 표에는 있지만 대상 안에는 없다 → k=1(증서).
+      // 표 전체에서 일치한 검색어를 모두 세면 k=3 이 되어, '증서' 하나만 일치하는 sec 이 탈락한다
+      const result = sqlite.queryComponents({ query: "증서 게시판 관리", filters: { categoryId: "로그인" } });
+      expect(idsOf(result.rows)).toEqual(["sec"]);
+      expect(result.total).toBe(1);
       expect(result.matchMode).toBe("any-term");
     });
 

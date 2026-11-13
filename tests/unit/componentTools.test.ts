@@ -150,14 +150,19 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
     });
 
     it("일부 검색어만 일치하는 컴포넌트로 대체했으면 any-term 을 알린다", () => {
+      // 게시판: 2행 / 컴포넌트·DDL·보여줘: 0행(세지 않는다) → 게시판이 일치하는 행을 찾는다
       const found = searchComponents("게시판 컴포넌트 DDL 보여줘");
-      // 게시판: 2행 / 컴포넌트·DDL·보여줘: 0행 → k=4, 두 개 이상 일치하는 행이 없다
-      expect(found.results).toEqual([]);
-      expect(found.matchMode).toBe("any-term");
+      expect(idsOf(found.results)).toEqual(["bbs", "tpl"]);
+      expect(found).toMatchObject({ total: 2, matchMode: "any-term" });
 
       const partial = searchComponents("게시판 컴포넌트");
       expect(idsOf(partial.results)).toEqual(["bbs", "tpl"]);
       expect(partial).toMatchObject({ total: 2, matchMode: "any-term" });
+
+      // 일치하는 검색어가 하나도 없으면 결과가 없다
+      const nothing = searchComponents("컴포넌트 DDL 보여줘");
+      expect(nothing.results).toEqual([]);
+      expect(nothing).toMatchObject({ total: 0, matchMode: "any-term" });
     });
 
     it("예상하지 못한 오류는 다른 검색으로 바꾸지 않고 그대로 던진다", () => {

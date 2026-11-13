@@ -43,22 +43,40 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     });
 
     it("절반을 넘는 행에 들어 있는 검색어는 빼고, 남은 검색어로 찾는다", () => {
-      // 호환: 6행 모두(제외) / JEUS: 2행 / 여부: 0행 → k=2, 한 개 이상 일치하면 통과
+      // 호환: 6행 모두(제외) / JEUS: 2행 / 여부: 0행(제외) → k=1
       const result = sqlite.queryCompatibleSoftware({ query: "JEUS 호환 여부" });
       expect(versionsOf(result.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
       expect(result.matchMode).toBe("any-term");
     });
 
     it("남은 검색어의 절반 이상(올림)이 일치하는 행만 돌려준다", () => {
-      // JEUS: 2행 / 8.5: 1행 / Tibero: 1행 / 여부: 0행 → k=4, 두 개 이상 일치해야 통과
+      // JEUS: 2행 / 8.5: 1행 / Tibero: 1행 / 여부: 0행(제외) → k=3, 두 개 이상 일치해야 통과
       const result = sqlite.queryCompatibleSoftware({ query: "JEUS 8.5 Tibero 여부" });
       expect(versionsOf(result.rows)).toEqual(["JEUS 8.5"]);
     });
 
     it("정확히 절반의 행에 들어 있는 검색어는 빼지 않는다", () => {
-      // 맥스: 3행(절반) / 없는말: 0행 → k=2, 한 개 이상 일치하면 통과
+      // 맥스: 3행(절반) / 없는말: 0행(제외) → k=1
       const result = sqlite.queryCompatibleSoftware({ query: "맥스 없는말" });
       expect(versionsOf(result.rows).sort()).toEqual(["JEUS 21", "JEUS 8.5", "Tibero 7"]);
+    });
+
+    it("일치하는 행이 하나도 없는 검색어는 세지 않는다 (군말이 섞인 문장형 질의)", () => {
+      // 오라클: 1행 / 제품·호환성·문의: 0행(제외) → k=1.
+      // 0행인 검색어까지 세면 k=4 가 되어, '오라클' 하나만 일치하는 WebLogic 이 탈락한다
+      const result = sqlite.queryCompatibleSoftware({ query: "오라클 제품 호환성 문의" });
+      expect(versionsOf(result.rows)).toEqual(["WebLogic 12c"]);
+      expect(result.total).toBe(1);
+      expect(result.matchMode).toBe("any-term");
+    });
+
+    it("모든 검색어가 일치하는 행이 없으면 빈 결과를 돌려준다", () => {
+      // 없는말·다른말·문의: 0행 → k=0
+      expect(sqlite.queryCompatibleSoftware({ query: "없는말 다른말 문의" })).toEqual({
+        rows: [],
+        total: 0,
+        matchMode: "any-term",
+      });
     });
 
     it("일치한 검색어 수가 많은 행을 먼저, 같으면 확인일자가 최근인 행을 먼저 돌려준다", () => {
@@ -76,14 +94,25 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     });
 
     it("한 글자 검색어는 대체 검색에서 쓰지 않는다", () => {
-      // X, Y 를 검색어로 세면 k=3 이 되어 '오라클' 하나만 일치하는 행이 탈락한다
-      const result = sqlite.queryCompatibleSoftware({ query: "X Y 오라클" });
+      // T 와 M 은 각각 3행(Tibero, SampleCMS, OtherCMS)에 들어 있다. 검색어로 세면 k=3 이 되어
+      // 그 세 행이 나오고, '오라클' 하나만 일치하는 WebLogic 이 탈락한다
+      const result = sqlite.queryCompatibleSoftware({ query: "T M 오라클" });
       expect(versionsOf(result.rows)).toEqual(["WebLogic 12c"]);
     });
 
     it("글자 수는 코드 포인트로 센다 (UTF-16 두 단위로 표현되는 한 글자도 한 글자다)", () => {
       // '𠀀', '𠀁' 는 한 글자지만 String.length 는 2 다
       expect("𠀀".length).toBe(2);
+      // 두 글자가 설명에 들어 있는 행을 둔다. 두 글자를 검색어로 세면 k=3 이 되어
+      // 이 두 행이 나오고, '오라클' 하나만 일치하는 WebLogic 이 탈락한다
+      sqlite.addCompatibilitySoftwareBatch(
+        ["RareA", "RareB"].map((product_name) => ({
+          ...CATALOGUE[5],
+          product_name,
+          product_version: `${product_name} 1.0`,
+          description: "𠀀 𠀁 표준프레임워크 4.2 호환 확인",
+        })),
+      );
       const result = sqlite.queryCompatibleSoftware({ query: "𠀀 𠀁 오라클" });
       expect(versionsOf(result.rows)).toEqual(["WebLogic 12c"]);
     });
@@ -101,7 +130,7 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     it("LIKE 패턴 길이 한도를 넘는 검색어가 있어도 오류 없이 처리한다", () => {
       const huge = "가".repeat(20000); // UTF-8 60,000 바이트 — SQLite LIKE 패턴 한도(50,000)를 넘는다
       expect(sqlite.queryCompatibleSoftware({ query: huge }).rows).toEqual([]);
-      // 한도를 넘는 검색어는 어떤 행과도 일치하지 않는 검색어로 센다 (k=2, 한 개 이상 일치)
+      // 한도를 넘는 검색어는 어떤 행과도 일치할 수 없으므로 세지 않는다 (k=1)
       expect(versionsOf(sqlite.queryCompatibleSoftware({ query: `오라클 ${huge}` }).rows)).toEqual([
         "WebLogic 12c",
       ]);
@@ -165,10 +194,36 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
 
     it("필터까지 만족하는 행이 없으면 부분 일치 검색으로 넘어가고, 거기에도 필터를 적용한다", () => {
       // '티맥스 JEUS' 는 JEUS 두 행과 일치하지만 둘 다 WAS 다.
-      // 대체 검색: 티맥스 3행, JEUS 2행 → 한 개 이상 일치하는 DBMS 행은 Tibero 뿐
+      // 대체 검색: 티맥스 3행(DBMS 안에 1행), JEUS 2행(DBMS 안에 없음, 제외) → k=1, DBMS 행은 Tibero 뿐
       const result = sqlite.queryCompatibleSoftware({ query: "티맥스 JEUS", filters: { category: "DBMS" } });
       expect(versionsOf(result.rows)).toEqual(["Tibero 7"]);
       expect(result.matchMode).toBe("any-term");
+    });
+
+    it("필터를 적용한 대상 안에서 일치하는 행이 없는 검색어는 세지 않는다", () => {
+      // 대상(DBMS)은 Tibero 한 행이다. JEUS(2행)와 WebLogic(1행)은 표에는 있지만 대상 안에는 없다 → k=1(맥스).
+      // 표 전체에서 일치한 검색어를 모두 세면 k=3 이 되어, '맥스' 하나만 일치하는 Tibero 가 탈락한다
+      const result = sqlite.queryCompatibleSoftware({ query: "JEUS WebLogic 맥스", filters: { category: "DBMS" } });
+      expect(versionsOf(result.rows)).toEqual(["Tibero 7"]);
+      expect(result.total).toBe(1);
+      expect(result.matchMode).toBe("any-term");
+    });
+
+    it("문장으로 물으면서 필터를 함께 줘도 뜻이 있는 검색어로 찾는다", () => {
+      // eGovFrame·에서·검증된·솔루션: 0행(제외) / 4.3: 2행(대상 안에 1행) / CMS: 2행(대상 안에 1행) → k=2
+      const result = sqlite.queryCompatibleSoftware({
+        query: "eGovFrame 4.3 에서 검증된 CMS 솔루션",
+        filters: { frameworkVersion: "4.3", category: "CMS Solution" },
+      });
+      expect(versionsOf(result.rows)).toEqual(["SampleCMS 1.0"]);
+      expect(result.total).toBe(1);
+      expect(result.matchMode).toBe("any-term");
+    });
+
+    it("대상 안에서 일치하는 검색어가 하나도 남지 않으면 빈 결과를 돌려준다", () => {
+      // JEUS(2행)와 WebLogic(1행) 모두 DBMS 안에는 없다 → k=0
+      const result = sqlite.queryCompatibleSoftware({ query: "JEUS WebLogic", filters: { category: "DBMS" } });
+      expect(result).toEqual({ rows: [], total: 0, matchMode: "any-term" });
     });
 
     it("query 에서 검색어가 하나도 추출되지 않으면 query 가 없는 것으로 보고 필터만 적용한다", () => {

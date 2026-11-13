@@ -121,6 +121,18 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       expect(response.matchMode).toBe("any-term");
     });
 
+    it("문장으로 물으면서 필터를 함께 줘도 뜻이 있는 검색어로 찾는다", async () => {
+      // eGovFrame·에서·검증된·솔루션 은 어떤 행에도 없다. 이런 검색어까지 세면 일치 기준이 올라가 0건이 된다
+      const response = await searchCompatibleSoftware({
+        query: "eGovFrame 4.3 에서 검증된 CMS 솔루션",
+        frameworkVersion: "4.3",
+        category: "CMS Solution",
+      });
+      expect(versionsOf(response.software)).toEqual(["SampleCMS 1.0"]);
+      expect(response).toMatchObject({ total: 1, count: 1, matchMode: "any-term" });
+      expect(response).not.toHaveProperty("available");
+    });
+
     it("query 가 없으면 matchMode 를 넣지 않는다", async () => {
       const response = await searchCompatibleSoftware({ frameworkVersion: "4.3" });
       expect(response.count).toBe(2);

@@ -477,11 +477,14 @@ export class SQLiteManager {
   /**
    * 부분 일치 대체 검색.
    *
-   * - 길이 2 이상인 검색어만 쓰고, 각 검색어는 대상 컬럼에 부분 문자열로 들어 있는지로 판정한다.
-   * - 테이블 전체 행의 절반을 넘게 일치하는 검색어는 변별력이 없다고 보고 뺀다.
-   * - 남은 검색어가 k 개일 때 ceil(k/2) 개 이상 일치한 행만 돌려준다 (k 가 0 이면 빈 결과).
-   * - 일치한 검색어 수가 많은 행을 먼저, 그다음은 대상의 기본 정렬을 따른다.
-   * - 필터는 같은 SQL 문에서 적용한다.
+   * 각 검색어는 대상 컬럼에 부분 문자열로 들어 있는지로 판정한다. 아래 검색어는 세지 않는다.
+   * - 길이가 2 미만인 검색어
+   * - 테이블 전체 행의 절반을 넘게 일치하는 검색어 (변별력이 없다)
+   * - 필터를 적용한 검색 대상 안에서 일치하는 행이 하나도 없는 검색어
+   *   (문장으로 물을 때 섞이는 군말이 일치 기준을 올려 결과를 0건으로 만들지 않게 한다)
+   *
+   * 남은 검색어가 k 개일 때 ceil(k/2) 개 이상 일치한 행만 돌려준다 (k 가 0 이면 빈 결과).
+   * 일치한 검색어 수가 많은 행을 먼저, 그다음은 대상의 기본 정렬을 따른다. 필터는 같은 SQL 문에서 적용한다.
    */
   private partialTermSearch<Row>(
     target: KeywordSearchTarget,
@@ -495,34 +498,46 @@ export class SQLiteManager {
     const tableRows = (
       this.db.prepare(`SELECT COUNT(*) AS count FROM ${target.table}`).get() as { count: number }
     ).count;
-    const countMatches = this.db.prepare(`SELECT COUNT(*) AS count FROM ${target.table} WHERE ${termMatches}`);
+    const countInTable = this.db.prepare(`SELECT COUNT(*) AS count FROM ${target.table} WHERE ${termMatches}`);
+    // 필터가 없으면 검색 대상이 테이블 전체이므로 따로 세지 않는다
+    const countInScope = filter.sql
+      ? this.db.prepare(
+          `SELECT COUNT(*) AS count FROM ${target.table} ${target.joins ?? ''} WHERE ${termMatches}${filter.sql}`,
+        )
+      : null;
 
-    // 변별력 있는 검색어의 수(k)와, 그 가운데 실제로 비교할 수 있는 검색어의 LIKE 패턴.
-    // LIKE 패턴 길이 한도를 넘는 검색어는 일치하는 행이 없는 검색어로 센다.
-    let distinctiveTerms = 0;
+    // 세기로 한 검색어의 LIKE 패턴. 이 배열의 길이가 k 다.
     const patterns: string[] = [];
     for (const term of terms) {
       // 글자 수는 코드 포인트로 센다 (String.length 는 UTF-16 단위라 한 글자가 2 로 나올 수 있다)
       if (Array.from(term).length < 2) {
         continue;
       }
+      // LIKE 패턴 길이 한도를 넘는 검색어는 어떤 행과도 일치할 수 없다
       const pattern = containsPattern(term);
       if (pattern === null) {
-        distinctiveTerms += 1;
         continue;
       }
-      const matched = (countMatches.get(...bindPattern(pattern)) as { count: number }).count;
-      if (matched * 2 > tableRows) {
+      const params = bindPattern(pattern);
+      const inTable = (countInTable.get(...params) as { count: number }).count;
+      if (inTable * 2 > tableRows) {
         continue;
       }
-      distinctiveTerms += 1;
+      // 테이블 전체에서 일치하는 행이 없으면 필터를 적용한 대상 안에도 없다
+      const inScope =
+        countInScope && inTable > 0
+          ? (countInScope.get(...params, ...filter.params) as { count: number }).count
+          : inTable;
+      if (inScope === 0) {
+        continue;
+      }
       patterns.push(pattern);
     }
 
-    const required = Math.ceil(distinctiveTerms / 2);
-    if (distinctiveTerms === 0 || patterns.length < required) {
+    if (patterns.length === 0) {
       return { rows: [], total: 0 };
     }
+    const required = Math.ceil(patterns.length / 2);
 
     const matchedTerms = patterns.map(() => `(CASE WHEN ${termMatches} THEN 1 ELSE 0 END)`).join(' + ');
     const matchedTermsParams = patterns.flatMap(bindPattern);
