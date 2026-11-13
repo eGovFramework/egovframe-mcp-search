@@ -322,7 +322,7 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
       }
     });
 
-    it("부분 일치 대체 검색에도 필터를 적용한다", () => {
+    it("대체 검색에도 필터를 적용한다", () => {
       // 증서: sec / 시판: bbs, tpl → 한 개 이상 일치
       expect(idsOf(sqlite.queryComponents({ query: "증서 시판" }).rows)).toEqual(["bbs", "sec", "tpl"]);
       const login = sqlite.queryComponents({ query: "증서 시판", filters: { categoryId: "로그인" } });
@@ -331,7 +331,7 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
       expect(login.matchMode).toBe("any-term");
     });
 
-    it("필터까지 만족하는 컴포넌트가 없으면 부분 일치 검색으로 넘어간다", () => {
+    it("필터까지 만족하는 컴포넌트가 없으면 대체 검색으로 넘어간다", () => {
       // '게시판 관리' 는 tpl 하나와 일치하지만 tpl 은 4.3.1 이다.
       // 대체 검색: 게시판 2행, 관리 3행 모두 4.3.1 이라 5.0.0 안에는 일치하는 행이 없다 → k=0
       const result = sqlite.queryComponents({ query: "게시판 관리", filters: { version: "5.0.0" } });
@@ -390,7 +390,7 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
         matchMode: "any-term",
         terms: { used: [], ignored: ["게시"] },
       });
-      // 부분 일치 대체 검색으로 넘어가는 질의도 같다
+      // 다른 검색어로 물어도 같다
       expect(sqlite.queryComponents({ query: "증서", filters: { keyword: "\u0000" } }).total).toBe(0);
     });
 

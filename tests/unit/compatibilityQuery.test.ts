@@ -482,7 +482,7 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       }
     });
 
-    it("필터까지 만족하는 행이 없으면 부분 일치 검색으로 넘어가고, 거기에도 필터를 적용한다", () => {
+    it("필터까지 만족하는 행이 없으면 대체 검색으로 넘어가고, 거기에도 필터를 적용한다", () => {
       // '티맥스 JEUS' 는 JEUS 두 행과 일치하지만 둘 다 WAS 다.
       // 대체 검색: 티맥스(DBMS 안에 1행), JEUS(DBMS 안에 없음, 제외) → k=1, DBMS 행은 Tibero 뿐
       const result = sqlite.queryCompatibleSoftware({ query: "티맥스 JEUS", filters: { category: "DBMS" } });
@@ -624,7 +624,7 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
         terms: { used: [], ignored: ["JEUS"] },
       });
       expect(sqlite.queryCompatibleSoftware({ query: "티맥스", filters: { productName: "\u0000" } }).total).toBe(0);
-      // 부분 일치 대체 검색으로 넘어가는 질의도 같다
+      // 다른 검색어로 물어도 같다
       expect(sqlite.queryCompatibleSoftware({ query: "오라클", filters: { vendor: "\u0000" } }).total).toBe(0);
     });
 
@@ -693,7 +693,7 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(versionsOf(paged)).toEqual(versionsOf(all.rows));
     });
 
-    it("부분 일치 대체 검색(any-term)에도 total 과 offset 을 적용한다", () => {
+    it("대체 검색(any-term)에도 total 과 offset 을 적용한다", () => {
       const result = sqlite.queryCompatibleSoftware({ query: "JEUS Tibero", limit: 1, offset: 2 });
       expect(versionsOf(result.rows)).toEqual(["JEUS 8.5"]);
       expect(result.total).toBe(3);

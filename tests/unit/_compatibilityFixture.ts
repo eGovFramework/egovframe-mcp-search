@@ -5,7 +5,7 @@
  * - 전체 6행.
  * - 모든 행의 설명에 "표준프레임워크"·"호환"·"확인" 이 들어 있다 (변별력 없는 낱말).
  * - "티맥스" 는 정확히 3행(절반)의 벤더명에 들어 있다.
- * - "오라클" 은 '한국오라클' 한 토큰의 뒷부분이라 접두 일치로는 찾을 수 없다.
+ * - "오라클" 은 '한국오라클' 의 뒷부분에만 있다 (낱말의 앞에서부터 견주면 찾을 수 없다).
  */
 export interface SoftwareSeed {
   product_name: string;
@@ -89,8 +89,8 @@ export const CATALOGUE: SoftwareSeed[] = [
  * - 적재 순서(id 순)가 확인일자 순서와 다르다.
  * - 두 행은 verified_date 에 날짜가 아닌 값이 들어 있다 (원본 데이터에서 필드가 밀린 행을 본뜬 것).
  *   문자열로 내림차순 정렬하면 이 값들이 어떤 날짜보다도 앞에 온다 ('㈜…' > 'https…' > '2025…').
- * - 컬럼마다 낱말 수가 같아, "Dated" 로 찾으면 네 행의 검색 순위(rank)가 같다.
- * - "ated" 는 'Dated' 의 중간이라 접두 일치로는 찾을 수 없고, 이 네 행에만 들어 있다.
+ * - "Dated" 로 찾으면 네 행 모두 이름에 일치해, 확인일자 말고는 순서를 가를 기준이 없다.
+ * - "ated" 는 'Dated' 의 뒷부분이고, 이 네 행에만 들어 있다.
  */
 const dated = (suffix: string, verified_date: string): SoftwareSeed => ({
   product_name: `Dated ${suffix}`,
@@ -113,10 +113,10 @@ export const DATED: SoftwareSeed[] = [
 /**
  * 확인일자가 같은 행. CATALOGUE 에 넣지 않고, 필요한 테스트가 따로 적재한다.
  *
- * - 네 행의 확인일자가 같고 컬럼마다 낱말 수도 같아, "Tied" 로 찾으면 검색 순위(rank)까지 같다.
+ * - 네 행의 확인일자가 같고 "Tied" 로 찾으면 모두 이름에 일치해, id 말고는 순서를 가를 기준이 없다.
  * - 호환 레벨이 적재 순서(A, B, C, D)와 엇갈린다 (2, 1, 2, 1). minLevel 필터를 주면 SQLite 가 호환 레벨
  *   인덱스 순서(레벨 1 → 2)로 행을 읽으므로, 정렬에 id 기준이 없으면 B, D, A, C 순으로 나온다.
- * - "ied" 는 'Tied' 의 중간이라 접두 일치로는 찾을 수 없고, 이 네 행에만 들어 있다.
+ * - "ied" 는 'Tied' 의 뒷부분이고, 이 네 행에만 들어 있다.
  */
 export const SAME_DAY: SoftwareSeed[] = ["A", "B", "C", "D"].map(
   (suffix, index): SoftwareSeed => ({
