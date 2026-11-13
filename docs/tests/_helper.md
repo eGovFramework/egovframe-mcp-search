@@ -37,9 +37,13 @@ export async function createMcpClient(): Promise<Client> {
   const transport = new StdioClientTransport({
     command: "node",
     args: [SERVER_ENTRY],
+    // SDK 가 물려주는 기본 환경 변수(HOME, PATH 등)에 더해진다
     env: { EGOV_MCP_DATA_DIR: ISOLATED_DATA_DIR },
   });
-  const client = new Client({ name: "test-client", version: "1.0.0" }, { capabilities: {} });
+  const client = new Client(
+    { name: "test-client", version: "1.0.0" },
+    { capabilities: {} },
+  );
   await client.connect(transport);
   return client;
 }
