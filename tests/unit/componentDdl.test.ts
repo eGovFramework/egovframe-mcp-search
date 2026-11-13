@@ -117,6 +117,35 @@ describe('extractTableDDLs — 한 줄짜리 문 처리', () => {
     expect(result.foundCount).toBe(1);
   });
 
+  it('한 줄짜리 CREATE 문 뒤에 오는 CREATE 가 아닌 문을 출력에 섞지 않는다', () => {
+    // 뒤따르는 문이 CREATE 가 아니면 "다음 CREATE 문에서 닫기"로는 걸러지지 않는다.
+    // 블록을 연 줄에서 종결자를 검사해야만 한 줄짜리 문이 닫힌다
+    const sql = [
+      'CREATE TABLE WANTED (ID CHAR(20) NOT NULL);',
+      'CREATE INDEX WANTED_i01 ON WANTED (ID ASC);',
+      'ALTER TABLE OTHER ADD CONSTRAINT OTHER_FK FOREIGN KEY (ID) REFERENCES WANTED (ID);',
+      "COMMENT ON TABLE OTHER IS '다른 테이블';",
+    ].join('\n');
+
+    const result = extractTableDDLs(sql, ['WANTED']);
+
+    expect(result.ddl).not.toContain('OTHER');
+    expect(summarize(result.ddl)).toEqual(['table WANTED', 'index WANTED']);
+    expect(result.foundCount).toBe(1);
+  });
+
+  it('인덱스 이름이 ON 으로 끝나도 ON 뒤의 테이블을 인덱스의 대상으로 읽는다', () => {
+    // 줄 어디서나 "ON <이름>" 을 찾으면 IDX_ACTION 끝의 "ON" 에 걸려 대상을 'ON' 으로 읽고
+    // 인덱스를 버린다. 패턴을 문 머리(CREATE [UNIQUE] INDEX <이름> ON)에 고정해야 한다
+    const sql = ['CREATE TABLE ACTION_T (ID INT);', 'CREATE INDEX IDX_ACTION ON ACTION_T (ID);'].join('\n');
+
+    const result = extractTableDDLs(sql, ['ACTION_T']);
+
+    expect(result.ddl).toContain('IDX_ACTION');
+    expect(summarize(result.ddl)).toEqual(['table ACTION_T', 'index ACTION_T']);
+    expect(result.foundCount).toBe(1);
+  });
+
   it('여러 줄에 걸친 CREATE TABLE 과 CREATE INDEX 는 종결자까지 그대로 추출한다', () => {
     const sql = [
       '',
