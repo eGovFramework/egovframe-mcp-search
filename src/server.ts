@@ -124,7 +124,7 @@ const filtersSchema = z.strictObject({
     .enum(["knowledge", "all"])
     .optional()
     .describe(
-      "knowledge: all additionally returns compatible software whose text matches every query word; knowledge entries then carry a 200-character preview instead of the full content. The knowledge filters (type, tags, minImportance, verifiedOnly) still apply.",
+      "knowledge: all additionally returns compatible software whose text matches every query word; knowledge entries then carry a 200-character preview instead of the full content. The knowledge filters (type, tags, minImportance, verifiedOnly) still apply. Not used with sort recent.",
     ),
 
   // ── components ──
@@ -133,8 +133,10 @@ const filtersSchema = z.strictObject({
     .describe(
       "components: component ID (e.g. uia), package name (e.g. egovframework.com.uat.uia) or exact component name; case-insensitive. Target of get/info, sourceFiles, ddl, dml; also accepted by dependencies (ID or package name). When nothing matches, the response lists similar components with their IDs.",
     ),
-  component: filterString().optional().describe("components: alias of componentId."),
-  id: filterString().optional().describe("components: alias of componentId."),
+  component: filterString()
+    .optional()
+    .describe("components: alias of componentId. Give only one of componentId, component and id; different values are rejected."),
+  id: filterString().optional().describe("components: alias of componentId (see component)."),
   componentIds: z
     .array(filterString())
     .max(50)
@@ -158,7 +160,7 @@ const filtersSchema = z.strictObject({
   categoryId: filterString()
     .optional()
     .describe(
-      "components: keep only the components of one category. Accepts the category ID, Korean name or English name shown by the category overview (a components call without query and filters). Applies to the list and to the keyword search.",
+      "components: keep only the components of one category. Accepts the category ID, Korean name or English name shown by the category overview (a components call without query and filters). Applies to the list and to the keyword search. When the value names no category, the response lists the category IDs.",
     ),
   keyword: filterString()
     .optional()
@@ -171,7 +173,9 @@ const filtersSchema = z.strictObject({
     .describe("components: filter the list or keyword search by whether the component ships web pages."),
   version: filterString()
     .optional()
-    .describe("components: filter the list or keyword search by component metadata version."),
+    .describe(
+      "components: filter the list or keyword search by component metadata version (exact match). When no component has that version, the response lists the versions present in the data.",
+    ),
 
   // ── compatibility ──
   frameworkVersion: filterString()
@@ -238,12 +242,12 @@ server.registerTool(
         ),
       action: absentIfEmpty(z.enum(COMPONENT_ACTIONS).optional())
         .describe(
-          "Optional sub-action, supported only for the components scope. get/info: component detail (filters.componentId). dependencies: transitive dependencies (filters.componentIds array, or a single filters.componentId). sourceFiles: source file list (filters.componentId). readSource: one source file (filters.filePath), up to 60,000 characters per call; continue with filters.offset. ddl: pre-built CREATE TABLE / INDEX / VIEW statements (filters.componentId, optional filters.dbType). dml: initial INSERT statements (filters.componentId, optional filters.dbType), by default the first 20 per table; add filters.table to page through one table with limit and filters.offset. Without an action, filters.componentId returns the component detail and otherwise the component list/search runs.",
+          "Optional sub-action, supported only for the components scope. get/info: component detail (filters.componentId). dependencies: transitive dependencies (filters.componentIds array, or a single filters.componentId). sourceFiles: files under the component's package path (Java, mapper XML, JSP, CSS, JavaScript, images, messages) and the Spring configs that belong to it (filters.componentId); files the component uses from other paths are not listed. readSource: one source file (filters.filePath), up to 60,000 characters per call; continue with filters.offset. ddl: pre-built CREATE TABLE / INDEX / VIEW statements (filters.componentId, optional filters.dbType); tables referenced by foreign keys are included, and for a database whose script keeps foreign keys as separate ALTER statements (cubrid) those statements follow at the end. dml: initial INSERT statements (filters.componentId, optional filters.dbType), by default the first 20 per table; add filters.table to page through one table with limit and filters.offset. An action uses neither query nor (except dml with filters.table) limit. Without an action, filters.componentId returns the component detail and otherwise the component list/search runs.",
         ),
       filters: z
         .preprocess(dropEmptyFilters, filtersSchema.optional())
         .describe(
-          "Scope-specific filters. Each key states the scope it applies to. Unknown keys and values of the wrong type are rejected; a value of null or an empty string counts as not given. A known key that the chosen scope or action does not use is ignored, and the response names the ignored keys. Filters must be nested here: a filter key placed at the top level of the arguments is dropped.",
+          "Scope-specific filters. Each key states the scope it applies to. Unknown keys and values of the wrong type are rejected; a value of null, an empty string or an array of empty strings counts as not given. A known key that the chosen scope or action does not use is ignored, and the response names the ignored keys (a top-level query or limit that the call does not use is named as well). Filters must be nested here: a filter key placed at the top level of the arguments is dropped.",
         ),
       limit: absentIfEmpty(z.number().int().min(1).max(200).optional())
         .describe(
