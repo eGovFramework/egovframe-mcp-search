@@ -106,6 +106,34 @@ describe.skipIf(!canRestrict)('읽기 권한이 없는 파일·디렉토리', ()
   });
 });
 
+describe.skipIf(!canRestrict)('읽기 권한이 없는 Spring 설정', () => {
+  let root: string;
+  const SPRING_DIR = path.join('src', 'main', 'resources', 'egovframework', 'spring', 'com');
+  /** 내용(빈 정의)을 봐야 어느 컴포넌트의 것인지 알 수 있는 설정 */
+  const SHARED_CONFIG = path.join(SPRING_DIR, 'context-shared.xml');
+
+  beforeAll(() => {
+    root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'egov-src-eacces-config-')));
+    fs.writeFileSync(path.join(root, 'pom.xml'), '<project/>\n');
+    fs.mkdirSync(path.join(root, SPRING_DIR), { recursive: true });
+    fs.writeFileSync(path.join(root, SHARED_CONFIG), '<beans/>\n');
+    fs.chmodSync(path.join(root, SHARED_CONFIG), 0o000);
+  });
+
+  afterAll(() => {
+    fs.chmodSync(path.join(root, SHARED_CONFIG), 0o700);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('sourceFiles: 빈 정의를 확인해야 하는 설정을 읽을 수 없으면 상대 경로로 알린다', () => {
+    const error = catchError(() => collectComponentSourceFiles(root, COMPONENT));
+
+    expect(error).toBeInstanceOf(UserFacingError);
+    expect((error as Error).message).toBe(`파일을 읽을 수 없습니다: ${SHARED_CONFIG} (권한 거부)`);
+    expect((error as Error).message).not.toContain(root);
+  });
+});
+
 describe('대상이 없는 경우는 오류가 아니라 "찾을 수 없음"이다', () => {
   let root: string;
 

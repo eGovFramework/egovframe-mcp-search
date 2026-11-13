@@ -544,7 +544,16 @@ export function collectComponentSourceFiles(
     schedulingConfig
   );
 
-  const config = springXml.filter(f => schedulingConfig.includes(f) || idgnConfig.has(f));
+  // spring/com 바로 아래의 설정은 대부분 여러 컴포넌트가 함께 쓰는 전역 설정이다.
+  // 파일 이름이 컴포넌트 ID 와 같거나 컴포넌트 패키지의 클래스를 빈으로 정의한 파일만 포함한다
+  const ownConfig = selectOwnSpringConfigs(
+    srcRoot,
+    springXml.filter(f => path.dirname(f) === springDir),
+    component.component_id,
+    pkgName
+  );
+
+  const config = springXml.filter(f => schedulingConfig.includes(f) || idgnConfig.has(f) || ownConfig.has(f));
 
   const message = listFilesRecursive(
     path.join(srcRoot, 'src/main/resources/egovframework/message', subPath),
@@ -593,15 +602,67 @@ const BEAN_REF_PATTERN = /\bref\s*=\s*"([^"]+)"/g;
 /** Spring 설정 XML 이 정의하는 빈 이름 (<bean name="..."> 또는 <bean id="...">) */
 const BEAN_DEFINITION_PATTERN = /<bean\b[^>]*?\b(?:name|id)\s*=\s*"([^"]+)"/g;
 
-/** 소스 트리 안의 파일에서 패턴의 첫 번째 캡처 그룹을 모은다 (파일이 없으면 아무것도 모으지 않는다) */
-function collectFromSourceFile(srcRoot: string, filePath: string, pattern: RegExp, into: Set<string>): void {
-  const text = readFromSourceTree(path.relative(srcRoot, filePath), 'file', () =>
+/** Spring 설정 XML 이 정의하는 빈의 클래스 이름 (<bean class="...">) */
+const BEAN_CLASS_PATTERN = /<bean(?:\s[^>]*?)?\sclass\s*=\s*"([^"]+)"/g;
+
+/** XML 주석 */
+const XML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
+
+/** 소스 트리 안의 파일을 UTF-8 텍스트로 읽는다 (파일이 없으면 null) */
+function readSourceTreeText(srcRoot: string, filePath: string): string | null {
+  return readFromSourceTree(path.relative(srcRoot, filePath), 'file', () =>
     fs.readFileSync(filePath, 'utf-8')
   );
+}
+
+/** 소스 트리 안의 파일에서 패턴의 첫 번째 캡처 그룹을 모은다 (파일이 없으면 아무것도 모으지 않는다) */
+function collectFromSourceFile(srcRoot: string, filePath: string, pattern: RegExp, into: Set<string>): void {
+  const text = readSourceTreeText(srcRoot, filePath);
   if (text === null) return;
   for (const match of text.matchAll(pattern)) {
     into.add(match[1]);
   }
+}
+
+/**
+ * spring/com 바로 아래의 설정 가운데 이 컴포넌트의 것으로 볼 수 있는 파일을 고른다.
+ *
+ * 다음 둘 중 하나에 해당하는 파일만 고른다. 파일 이름의 부분 문자열로는 추측하지 않는다.
+ * - 파일 이름이 'context-<컴포넌트 ID>.xml' 과 정확히 같다 (대소문자 무시).
+ *   예: ldap → context-ldap.xml (컴포넌트 패키지의 빈이 없어 이름으로만 찾을 수 있다)
+ * - 파일이 컴포넌트 패키지의 클래스를 빈으로 정의한다 (주석 처리된 정의는 세지 않는다).
+ *   예: egovframework.com.cop.ems → context-mail.xml 의 EgovMultiPartEmail 빈
+ *
+ * 패키지는 '.' 경계까지 비교한다. egovframework.com.cop.bbs 는
+ * egovframework.com.cop.bbsx.Foo 의 패키지가 아니다.
+ */
+function selectOwnSpringConfigs(
+  srcRoot: string,
+  topLevelFiles: string[],
+  componentId: string,
+  packageName: string
+): Set<string> {
+  const selected = new Set<string>();
+  const ownFileName = `context-${componentId}.xml`.toLowerCase();
+  const classPrefix = `${packageName}.`;
+
+  for (const file of topLevelFiles) {
+    if (path.basename(file).toLowerCase() === ownFileName) {
+      selected.add(file);
+      continue;
+    }
+
+    const text = readSourceTreeText(srcRoot, file);
+    if (text === null) continue;
+    for (const match of text.replace(XML_COMMENT_PATTERN, '').matchAll(BEAN_CLASS_PATTERN)) {
+      if (match[1].startsWith(classPrefix)) {
+        selected.add(file);
+        break;
+      }
+    }
+  }
+
+  return selected;
 }
 
 /**

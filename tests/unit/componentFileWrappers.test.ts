@@ -87,6 +87,8 @@ describe('공통컴포넌트 파일 기능 공개 함수 (임시 DB + 임시 소
     write(path.join(javaDir, '._BoardService.java'), Buffer.from([0x00, 0x05, 0x16, 0x07]));
     write(path.join('src', 'main', 'resources', 'egovframework', 'mapper', 'com', 'cop', 'brd', 'Board_SQL_mysql.xml'), '<mapper/>\n');
     write(path.join(springDir, 'context-common.xml'), '<beans/>\n');
+    // 파일 이름이 컴포넌트 ID(brd)와 같은 설정
+    write(path.join(springDir, 'context-brd.xml'), '<beans/>\n');
     write(path.join(springDir, 'scheduling', 'context-scheduling-cop-brd.xml'), '<beans/>\n');
 
     // 지식베이스 DB (임시 디렉토리의 새 DB)
@@ -135,10 +137,15 @@ describe('공통컴포넌트 파일 기능 공개 함수 (임시 DB + 임시 소
       const byPackage = tools.getComponentSourceFiles('egovframework.com.cop.brd');
 
       expect(byId).not.toBeNull();
-      expect(byId).toMatchObject({ componentId: 'brd', componentName: '테스트 게시판', total: 3 });
+      expect(byId).toMatchObject({ componentId: 'brd', componentName: '테스트 게시판', total: 4 });
       expect(byId!.java.map((file) => path.basename(file))).toEqual(['BoardService.java']);
       expect(byId!.mapperXml).toHaveLength(1);
-      expect(byId!.config.map((file) => path.basename(file))).toEqual(['context-scheduling-cop-brd.xml']);
+      // 설정: DB 의 컴포넌트 ID 와 이름이 같은 파일, 그리고 패키지에서 나온 이름의 스케줄링 설정
+      expect(byId!.config.map((file) => path.basename(file))).toEqual([
+        'context-brd.xml',
+        'context-scheduling-cop-brd.xml',
+      ]);
+      // 패키지명으로 찾아도 DB 의 컴포넌트 ID 로 설정을 고른다
       expect(byPackage).toEqual(byId);
     });
 
