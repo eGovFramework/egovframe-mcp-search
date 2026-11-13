@@ -10,6 +10,7 @@ import {
 } from '../types/knowledge.js';
 import { UserFacingError } from '../utils/errors.js';
 import { excerptKnowledgeContent } from '../utils/knowledgeExcerpt.js';
+import { sliceHead } from '../utils/text.js';
 
 /**
  * 검색 결과의 score(코사인 거리)를 코사인 유사도로 바꾼다.
@@ -27,6 +28,19 @@ function requireQuery(query: string | undefined): string {
     throw new UserFacingError('query is required for knowledge search');
   }
   return query;
+}
+
+/** 응답에 되돌려 주는 query 의 최대 길이 */
+const MAX_ECHOED_QUERY_LENGTH = 200;
+
+/**
+ * 응답에 싣는 query 표기를 만든다. 200자를 넘으면 앞 200자만 싣고 끝에 '…' 를 붙인다.
+ *
+ * 질의를 통째로 되돌려 주면 응답이 질의만큼 커진다 (22만 자 질의에 22만 자가 넘는 응답).
+ * 검색에는 원래 query 를 쓰고, 이 표기는 응답에만 쓴다. 서로게이트 쌍은 가운데에서 자르지 않는다.
+ */
+function echoQuery(query: string): string {
+  return query.length > MAX_ECHOED_QUERY_LENGTH ? `${sliceHead(query, MAX_ECHOED_QUERY_LENGTH)}…` : query;
 }
 
 /**
@@ -64,6 +78,8 @@ function normalizeExcerptLength(value: number | undefined): number | undefined {
  * excerptLength 를 주면 결과의 content 를 그 길이 이내의 발췌로 바꾼다 (표지·생략 표시 포함).
  * Q&A 본문은 질문과 답변에 길이를 나눠 답변의 앞부분이 반드시 들어간다 (utils/knowledgeExcerpt).
  * 주지 않으면 시맨틱 검색은 본문 전체를, 통합 검색은 200자 미리보기를 돌려준다.
+ *
+ * 응답에 되돌려 주는 query 는 앞 200자까지다 (echoQuery). 검색에는 원래 query 를 쓴다.
  *
  * See: docs/TODO_TOOL_OPTIMIZATION.md Phase 3-C
  */
@@ -116,7 +132,7 @@ export async function searchKnowledge(args: {
     return {
       success: true,
       scope: 'all',
-      query,
+      query: echoQuery(query),
       totalResults: results.totalResults,
       compatibility: results.compatibility.map((s: any) => ({
         product: formatProductLabel(s.product_name, s.product_version),
@@ -149,7 +165,7 @@ export async function searchKnowledge(args: {
 
   return {
     success: true,
-    query,
+    query: echoQuery(query),
     options,
     resultCount: results.length,
     // createdAt 은 넣지 않는다: 모든 행이 색인한 시각이라 글이 쓰인 날짜로 오해된다
@@ -231,7 +247,7 @@ export async function smartSearch(args: {
 
   return {
     success: true,
-    query: args.query,
+    query: echoQuery(args.query),
     totalResults: results.totalResults,
     compatibility: results.compatibility.map(s => ({
       product: formatProductLabel(s.product_name, s.product_version),

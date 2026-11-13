@@ -6,7 +6,7 @@
  * 건드리지 않도록 싱글톤 접근 함수만 대체하고, 그 뒤의 DeveloperKnowledgeManager 는 동봉
  * LanceDB 테이블을 읽기 전용으로 여는 실제 객체를 쓴다 (_lanceFixtures 참고).
  */
-import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { DeveloperKnowledgeManager } from "../../src/rag/knowledgeManager.js";
 import { getEmbedder } from "../../src/rag/embedder.js";
 import { formatProductLabel, searchKnowledge, smartSearch } from "../../src/tools/knowledge.js";
@@ -210,6 +210,76 @@ describe("searchKnowledge 도구 — 통합 검색(scope=all)의 지식 미리�
     expect(preview).toContain("\n\n답변:\n안녕하세요.");
 
     expect((await previewOf(80)).length).toBeLessThanOrEqual(80);
+  });
+});
+
+describe("도구 응답에 되돌려 주는 query", () => {
+  /** 응답에 싣는 query 의 최대 길이 */
+  const MAX_ECHO = 200;
+
+  /** 검색(매니저)에 실제로 전달된 질의 */
+  let searched: string[];
+
+  beforeEach(() => {
+    searched = [];
+    hybrid.current = {
+      getKnowledge: () => ({
+        searchKnowledge: async (query: string) => {
+          searched.push(query);
+          return [];
+        },
+      }),
+      smartSearch: async (options: { query: string }) => {
+        searched.push(options.query);
+        return { compatibility: [], knowledge: [], totalResults: 0 };
+      },
+    };
+  });
+
+  /** 긴 문자열 비교 — 실패했을 때 수십만 자가 출력되지 않도록 길이와 일치 여부만 확인한다 */
+  const expectSameText = (actual: string, expected: string): void => {
+    expect(actual.length).toBe(expected.length);
+    expect(actual === expected).toBe(true);
+  };
+
+  /** 세 응답 경로: 의미 검색, 통합 검색(scope=all), smartSearch */
+  const ECHO_PATHS: Array<[string, (query: string) => Promise<unknown>]> = [
+    ["의미 검색", (query) => searchKnowledge({ query })],
+    ["통합 검색(scope=all)", (query) => searchKnowledge({ query, scope: "all" })],
+    ["smartSearch", (query) => smartSearch({ query })],
+  ];
+
+  it.each(ECHO_PATHS)("%s: 200자를 넘는 query 는 앞 200자와 '…' 만 되돌려 준다", async (_name, run) => {
+    const query = "가".repeat(220_000);
+    const output = (await run(query)) as { query: string };
+
+    expectSameText(output.query, `${"가".repeat(MAX_ECHO)}…`);
+    // 응답 전체도 질의 길이를 따라 커지지 않는다
+    expect(JSON.stringify(output).length).toBeLessThan(1000);
+  });
+
+  it.each(ECHO_PATHS)("%s: 검색에는 원래 query 를 그대로 쓴다", async (_name, run) => {
+    const query = "게시판 ".repeat(1000);
+    await run(query);
+
+    expect(searched).toHaveLength(1);
+    expectSameText(searched[0], query);
+  });
+
+  it.each(ECHO_PATHS)("%s: 200자 이하의 query 는 그대로 되돌려 준다", async (_name, run) => {
+    for (const query of ["게시판 구현 방법", "가".repeat(MAX_ECHO)]) {
+      const output = (await run(query)) as { query: string };
+      expect(output.query).toBe(query);
+    }
+  });
+
+  it.each(ECHO_PATHS)("%s: 서로게이트 쌍의 가운데에서 자르지 않는다", async (_name, run) => {
+    // 😀 은 UTF-16 코드 단위 두 개다 — 200번째 자리에 걸치면 통째로 뺀다
+    const straddling = (await run(`${"가".repeat(MAX_ECHO - 1)}😀${"나".repeat(50)}`)) as { query: string };
+    expect(straddling.query).toBe(`${"가".repeat(MAX_ECHO - 1)}…`);
+
+    const fitting = (await run(`${"가".repeat(MAX_ECHO - 2)}😀${"나".repeat(50)}`)) as { query: string };
+    expect(fitting.query).toBe(`${"가".repeat(MAX_ECHO - 2)}😀…`);
   });
 });
 
