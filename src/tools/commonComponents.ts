@@ -542,22 +542,50 @@ function listFilesRecursive(dirPath: string, extensions: string[]): string[] {
   return results.sort();
 }
 
+/** readSource 가 한 번에 돌려주는 최대 문자 수 */
+export const SOURCE_READ_MAX_CHARS = 60_000;
+
+/** readComponentSource 의 조회 옵션 */
+export interface ReadComponentSourceOptions {
+  /**
+   * 읽기 시작할 위치 (문자 단위 — JS 문자열 인덱스, 기본 0).
+   * 앞선 결과의 nextOffset 을 넘기면 이어서 읽는다.
+   */
+  offset?: number;
+}
+
 /** readComponentSource 의 결과 */
 export interface ComponentSourceContent {
   /** 소스 루트 기준 상대 경로 */
   filePath: string;
+  /** 이번 호출이 돌려주는 텍스트 (최대 60,000자). 바이너리 파일은 내용 대신 안내 문구 */
   content: string;
+  /** 코드 블록 언어. 바이너리 파일은 'binary' */
   language: string;
   /** 파일의 실제 바이트 수 */
   size: number;
+  /** content 뒤에 아직 읽지 않은 내용이 남았는지 */
+  truncated: boolean;
+  /** 파일 전체의 문자 수 (바이너리 파일은 0) */
+  totalChars: number;
+  /** content 가 시작하는 위치 (문자 단위) */
+  offset: number;
+  /** 이어 읽을 때 넘길 offset. 남은 내용이 없으면 null */
+  nextOffset: number | null;
 }
 
 /**
  * 컴포넌트 소스 파일 내용 읽기
  * 보안: common-components-src 디렉토리 내부만 허용
+ *
+ * 텍스트는 한 번에 60,000자까지 돌려주고, options.offset 으로 이어 읽는다.
+ * 바이너리 파일은 내용 없이 메타데이터만 돌려준다.
  */
-export function readComponentSource(filePath: string): ComponentSourceContent | null {
-  return readSourceFileInRoot(getComponentSrcRoot(), filePath);
+export function readComponentSource(
+  filePath: string,
+  options: ReadComponentSourceOptions = {}
+): ComponentSourceContent | null {
+  return readSourceFileInRoot(getComponentSrcRoot(), filePath, options);
 }
 
 /** 소스 루트 안에서 해석한 파일 경로 */
@@ -602,10 +630,41 @@ function resolveSourcePath(srcRoot: string, filePath: string): ResolvedSourcePat
 }
 
 /**
+ * 버퍼를 UTF-8 텍스트로 디코딩한다. 텍스트가 아니면 null.
+ *
+ * 확장자가 아니라 내용으로 판정한다: NUL 바이트가 있거나 UTF-8 로 유효하게 디코딩되지
+ * 않으면 바이너리다. 확장자 목록에 없는 글꼴(.ttf, .woff)·문서(.hwp, .xls)도 걸러지고,
+ * 텍스트인 .svg 는 읽을 수 있다. 맨 앞의 BOM 은 디코더가 떼어 낸다.
+ */
+function decodeUtf8Text(buffer: Buffer): string | null {
+  if (buffer.includes(0)) return null;
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+  } catch {
+    return null;
+  }
+}
+
+/** offset 을 0 이상 totalChars 이하의 정수로 맞춘다 (유한한 숫자가 아니면 0) */
+function normalizeCharOffset(offset: number | undefined, totalChars: number): number {
+  if (typeof offset !== 'number' || !Number.isFinite(offset)) return 0;
+  return Math.min(totalChars, Math.max(0, Math.floor(offset)));
+}
+
+/** UTF-16 상위 서로게이트(쌍의 앞쪽 절반)인지 */
+function isHighSurrogate(codeUnit: number): boolean {
+  return codeUnit >= 0xd800 && codeUnit <= 0xdbff;
+}
+
+/**
  * 소스 루트를 인자로 받는 readComponentSource 의 본체.
  * 루트 밖의 파일은 읽지 않으며, 찾을 수 없거나 읽으면 안 되는 경로에는 null 을 돌려준다.
  */
-export function readSourceFileInRoot(srcRoot: string, filePath: string): ComponentSourceContent | null {
+export function readSourceFileInRoot(
+  srcRoot: string,
+  filePath: string,
+  options: ReadComponentSourceOptions = {}
+): ComponentSourceContent | null {
   // 보안: srcRoot 내부의 실제 경로인지 검증
   const resolved = resolveSourcePath(srcRoot, filePath);
   if (!resolved) return null;
@@ -616,27 +675,42 @@ export function readSourceFileInRoot(srcRoot: string, filePath: string): Compone
     return null;
   }
 
-  // 바이너리 파일 제외
-  const ext = path.extname(realPath).toLowerCase();
-  const binaryExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.svg', '.ico', '.class', '.jar', '.war'];
-  if (binaryExtensions.includes(ext)) {
+  const text = decodeUtf8Text(fs.readFileSync(realPath));
+
+  // 바이너리 파일은 내용 없이 메타데이터만 돌려준다
+  if (text === null) {
     return {
       filePath: relPath,
-      content: `[바이너리 파일 - ${ext} 형식은 텍스트로 표시할 수 없습니다]`,
+      content: '[바이너리 파일 - UTF-8 텍스트가 아니어서 내용을 표시하지 않습니다]',
       language: 'binary',
       size: stat.size,
+      truncated: false,
+      totalChars: 0,
+      offset: 0,
+      nextOffset: null,
     };
   }
 
-  const content = fs.readFileSync(realPath, 'utf-8');
-  const language = getLanguageFromExtension(ext);
+  // 텍스트는 offset 부터 상한까지만 돌려준다
+  const totalChars = text.length;
+  const offset = normalizeCharOffset(options.offset, totalChars);
+  let end = Math.min(totalChars, offset + SOURCE_READ_MAX_CHARS);
+  // 서로게이트 쌍(이모지 등)의 한가운데에서 자르지 않는다
+  if (end < totalChars && end - offset > 1 && isHighSurrogate(text.charCodeAt(end - 1))) {
+    end -= 1;
+  }
+  const truncated = end < totalChars;
 
   return {
     filePath: relPath,
-    content,
-    language,
+    content: text.slice(offset, end),
+    language: getLanguageFromExtension(path.extname(realPath).toLowerCase()),
     // 디코딩한 문자 수가 아니라 파일의 실제 바이트 수
     size: stat.size,
+    truncated,
+    totalChars,
+    offset,
+    nextOffset: truncated ? end : null,
   };
 }
 
