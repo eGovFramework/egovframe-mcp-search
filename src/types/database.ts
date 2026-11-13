@@ -27,6 +27,25 @@ export interface CompatibilitySearchFilter {
   productName?: string;
 }
 
+/**
+ * 키워드 검색이 결과를 찾은 방식.
+ * - all-terms: 모든 검색어가 일치하는 행을 찾았다 (접두 일치 AND 검색)
+ * - any-term: 그런 행이 없어, 일부 검색어만 일치하는 행을 부분 문자열로 찾았다
+ */
+export type KeywordMatchMode = 'all-terms' | 'any-term';
+
+// 호환성 소프트웨어 조회 옵션
+export interface CompatibilityQueryOptions {
+  query?: string;  // 키워드 질의
+  limit?: number;  // 최대 행 수 (생략하면 제한 없음)
+}
+
+// 호환성 소프트웨어 조회 결과
+export interface CompatibilityQueryResult {
+  rows: CompatibilitySoftware[];
+  matchMode?: KeywordMatchMode;  // 키워드 검색을 수행했을 때만 채워진다
+}
+
 // 호환성 요약 통계
 export interface CompatibilitySummary {
   byVersion: Array<{ framework_version: string; count: number }>;

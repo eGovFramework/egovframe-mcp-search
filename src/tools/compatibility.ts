@@ -4,7 +4,7 @@
  */
 
 import { getInitializedHybridManager } from '../database/hybridManager.js';
-import { CompatibilitySearchFilter } from '../types/database.js';
+import { CompatibilitySearchFilter, KeywordMatchMode } from '../types/database.js';
 
 /**
  * 호환성 소프트웨어 검색 (통합)
@@ -40,10 +40,14 @@ export async function searchCompatibleSoftware(args: {
   const query = args.query?.trim();
   const hasFilters = Object.values(filters).some((value) => value !== undefined);
   let results = sqlite.searchCompatibleSoftware(filters, limit);
+  // 키워드 검색이 결과를 찾은 방식 (all-terms: 모든 검색어 일치, any-term: 일부 검색어만 일치)
+  let matchMode: KeywordMatchMode | undefined;
 
   if (query) {
     const searchLimit = hasFilters ? limit * 5 : limit;
-    results = sqlite.fullTextSearchCompatibility(query, searchLimit)
+    const found = sqlite.queryCompatibleSoftware({ query, limit: searchLimit });
+    matchMode = found.matchMode;
+    results = found.rows
       .filter((software) => {
         if (filters.frameworkVersion && software.framework_version !== filters.frameworkVersion) return false;
         if (filters.category && software.category !== filters.category) return false;
@@ -59,6 +63,7 @@ export async function searchCompatibleSoftware(args: {
     success: true,
     count: results.length,
     filters,
+    ...(matchMode ? { matchMode } : {}),
     software: results,
   };
 

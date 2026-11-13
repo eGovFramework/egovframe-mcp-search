@@ -21,6 +21,9 @@ import {
   ComponentSearchFilter,
   ComponentSummary,
   DependencyResolution,
+  CompatibilityQueryOptions,
+  CompatibilityQueryResult,
+  KeywordMatchMode,
 } from '../types/database.js';
 
 export interface SQLiteManagerOptions {
@@ -330,49 +333,124 @@ export class SQLiteManager {
   }
 
   /**
-   * 전체 텍스트 검색
+   * 전체 텍스트 검색 — 키워드로 찾은 행을 배열로 돌려준다.
+   * 검색 규칙은 queryCompatibleSoftware 와 같다.
    */
   fullTextSearchCompatibility(query: string, limit: number = 20): CompatibilitySoftware[] {
-    const terms = extractSearchTerms(query);
-    const match = buildFts5MatchQuery(terms);
-    if (!match) {
-      return [];
-    }
-
-    try {
-      return this.db.prepare(`
-      SELECT cs.* 
-      FROM compatibility_fts fts
-      JOIN compatibility_software cs ON cs.id = fts.rowid
-      WHERE compatibility_fts MATCH ?
-      ORDER BY rank
-      LIMIT ?
-    `).all(match, limit) as CompatibilitySoftware[];
-    } catch {
-      return this.fallbackCompatibilityKeywordSearch(terms, limit);
-    }
+    return this.queryCompatibleSoftware({ query, limit }).rows;
   }
 
-  private fallbackCompatibilityKeywordSearch(terms: string[], limit: number): CompatibilitySoftware[] {
-    const tokens = terms.filter((t) => t.length >= 2).slice(0, 8);
-    if (tokens.length === 0) {
+  /**
+   * 호환성 소프트웨어 키워드 조회.
+   *
+   * 모든 검색어가 접두 일치하는 행을 먼저 찾고(all-terms), 그런 행이 없으면
+   * 일부 검색어가 부분 문자열로 들어 있는 행을 찾는다(any-term).
+   * 검색어가 하나도 추출되지 않으면 빈 결과를 돌려준다.
+   */
+  queryCompatibleSoftware(options: CompatibilityQueryOptions = {}): CompatibilityQueryResult {
+    const terms = extractSearchTerms(options.query ?? '');
+    if (terms.length === 0) {
+      return { rows: [] };
+    }
+    return this.keywordSearch<CompatibilitySoftware>(COMPATIBILITY_SEARCH, terms, toSqlLimit(options.limit));
+  }
+
+  // ==================== 키워드 검색 공통 ====================
+
+  /**
+   * 키워드 검색 (호환성 소프트웨어와 공통컴포넌트가 함께 쓴다).
+   *
+   * 1) 모든 검색어를 접두 일치 AND 로 묶은 FTS5 MATCH 로 찾는다.
+   * 2) 결과가 0건이면 부분 일치 대체 검색(partialTermSearch)으로 넘어간다.
+   */
+  private keywordSearch<Row>(
+    target: KeywordSearchTarget,
+    terms: string[],
+    limit: number,
+  ): { rows: Row[]; matchMode: KeywordMatchMode } {
+    const match = buildFts5MatchQuery(terms);
+    if (match) {
+      try {
+        const rows = this.db
+          .prepare(
+            `SELECT ${target.columns}
+             FROM ${target.ftsTable} fts
+             JOIN ${target.table} ON ${target.rowid} = fts.rowid
+             WHERE ${target.ftsTable} MATCH ?
+             ORDER BY rank, ${target.rowid}
+             LIMIT ?`,
+          )
+          .all(match, limit) as Row[];
+        if (rows.length > 0) {
+          return { rows, matchMode: 'all-terms' };
+        }
+      } catch (error) {
+        // MATCH 식을 FTS5 가 해석하지 못한 경우에만 부분 일치 검색으로 넘어간다.
+        // 그 밖의 오류(잠금, 손상, 테이블 없음 등)는 다른 검색으로 가리지 않고 그대로 던진다.
+        if (!isFts5QueryError(error)) {
+          throw error;
+        }
+      }
+    }
+
+    return { rows: this.partialTermSearch<Row>(target, terms, limit), matchMode: 'any-term' };
+  }
+
+  /**
+   * 부분 일치 대체 검색.
+   *
+   * - 길이 2 이상인 검색어만 쓰고, 각 검색어는 대상 컬럼에 부분 문자열로 들어 있는지로 판정한다.
+   * - 테이블 전체 행의 절반을 넘게 일치하는 검색어는 변별력이 없다고 보고 뺀다.
+   * - 남은 검색어가 k 개일 때 ceil(k/2) 개 이상 일치한 행만 돌려준다 (k 가 0 이면 빈 결과).
+   * - 일치한 검색어 수가 많은 행을 먼저, 그다음은 대상의 기본 정렬을 따른다.
+   */
+  private partialTermSearch<Row>(target: KeywordSearchTarget, terms: string[], limit: number): Row[] {
+    const termMatches = `(${target.likeColumns.map((column) => `${column} LIKE ? ESCAPE '\\'`).join(' OR ')})`;
+    const bindPattern = (pattern: string) => target.likeColumns.map(() => pattern);
+
+    const tableRows = (
+      this.db.prepare(`SELECT COUNT(*) AS count FROM ${target.table}`).get() as { count: number }
+    ).count;
+    const countMatches = this.db.prepare(`SELECT COUNT(*) AS count FROM ${target.table} WHERE ${termMatches}`);
+
+    // 변별력 있는 검색어의 수(k)와, 그 가운데 실제로 비교할 수 있는 검색어의 LIKE 패턴.
+    // LIKE 패턴 길이 한도를 넘는 검색어는 일치하는 행이 없는 검색어로 센다.
+    let distinctiveTerms = 0;
+    const patterns: string[] = [];
+    for (const term of terms) {
+      if (term.length < 2) {
+        continue;
+      }
+      const pattern = containsPattern(term);
+      if (pattern === null) {
+        distinctiveTerms += 1;
+        continue;
+      }
+      const matched = (countMatches.get(...bindPattern(pattern)) as { count: number }).count;
+      if (matched * 2 > tableRows) {
+        continue;
+      }
+      distinctiveTerms += 1;
+      patterns.push(pattern);
+    }
+
+    const required = Math.ceil(distinctiveTerms / 2);
+    if (distinctiveTerms === 0 || patterns.length < required) {
       return [];
     }
 
-    const clause = tokens
-      .map(() => "(product_name LIKE ? ESCAPE '\\' OR vendor LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' OR category LIKE ? ESCAPE '\\')")
-      .join(' OR ');
-    const params: string[] = [];
-    for (const t of tokens) {
-      const p = `%${escapeLikePattern(t)}%`;
-      params.push(p, p, p, p);
-    }
+    const matchedTerms = patterns.map(() => `(CASE WHEN ${termMatches} THEN 1 ELSE 0 END)`).join(' + ');
+    const matchedTermsParams = patterns.flatMap(bindPattern);
 
     return this.db
       .prepare(
-        `SELECT * FROM compatibility_software WHERE ${clause} ORDER BY verified_date DESC LIMIT ?`,
+        `SELECT ${target.columns}
+         FROM ${target.table}
+         WHERE (${matchedTerms}) >= ?
+         ORDER BY (${matchedTerms}) DESC, ${target.defaultOrder}, ${target.rowid}
+         LIMIT ?`,
       )
-      .all(...params, limit) as CompatibilitySoftware[];
+      .all(...matchedTermsParams, required, ...matchedTermsParams, limit) as Row[];
   }
 
   /**
@@ -871,4 +949,54 @@ export class SQLiteManager {
   }
 }
 
+// ==================== 조회용 도우미 ====================
 
+/** 키워드 검색 대상 하나를 기술하는 SQL 조각. */
+interface KeywordSearchTarget {
+  /** 조회할 컬럼 목록 */
+  columns: string;
+  /** 본 테이블과 별칭. 전체 행 수와 검색어별 일치 행 수도 이 테이블에서 센다 */
+  table: string;
+  /** FTS5 테이블 이름 */
+  ftsTable: string;
+  /** FTS rowid 와 짝이 되는 본 테이블의 키. 정렬의 마지막 기준(동률 해소)으로도 쓴다 */
+  rowid: string;
+  /** 부분 일치 대체 검색이 검색어를 찾아보는 컬럼 */
+  likeColumns: string[];
+  /** 부분 일치 대체 검색에서 일치한 검색어 수 다음에 적용하는 기본 정렬 */
+  defaultOrder: string;
+}
+
+const COMPATIBILITY_SEARCH: KeywordSearchTarget = {
+  columns: 'cs.*',
+  table: 'compatibility_software cs',
+  ftsTable: 'compatibility_fts',
+  rowid: 'cs.id',
+  likeColumns: ['cs.product_name', 'cs.vendor', 'cs.description', 'cs.category'],
+  defaultOrder: 'cs.verified_date DESC',
+};
+
+/** SQLite 가 허용하는 LIKE 패턴의 최대 길이 (SQLITE_MAX_LIKE_PATTERN_LENGTH 기본값, 바이트). */
+const MAX_LIKE_PATTERN_BYTES = 50000;
+
+/**
+ * 검색어를 부분 문자열로 찾는 LIKE 패턴 (`LIKE ? ESCAPE '\'` 와 함께 쓴다).
+ * 패턴이 SQLite 의 길이 한도를 넘으면 null 을 돌려준다. 그런 검색어는 어떤 행과도 일치할 수 없다.
+ */
+function containsPattern(term: string): string | null {
+  const pattern = `%${escapeLikePattern(term)}%`;
+  return Buffer.byteLength(pattern, 'utf8') > MAX_LIKE_PATTERN_BYTES ? null : pattern;
+}
+
+/** SQL LIMIT 에 넣을 값. 생략하면 -1(제한 없음), 그 밖에는 1 이상의 정수로 맞춘다. */
+function toSqlLimit(limit: number | undefined): number {
+  if (typeof limit !== 'number' || Number.isNaN(limit)) {
+    return -1;
+  }
+  return Math.min(Math.max(1, Math.floor(limit)), Number.MAX_SAFE_INTEGER);
+}
+
+/** FTS5 가 MATCH 식을 해석하지 못해 낸 오류인지 판별한다. */
+function isFts5QueryError(error: unknown): boolean {
+  return error instanceof Database.SqliteError && error.message.startsWith('fts5:');
+}
