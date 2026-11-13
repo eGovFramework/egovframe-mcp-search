@@ -153,6 +153,8 @@ describe("GuideSearchManager.getSectionParts", () => {
       row("twice-1", TITLED_DOC, "확인 (1/2)"),
       row("twice-2a", TITLED_DOC, "확인 (2/2)"),
       row("twice-2b", TITLED_DOC, "확인 (2/2)"),
+      row("same-1a", TITLED_DOC, "검증 (1/2)"),
+      row("same-1b", TITLED_DOC, "검증 (1/2)"),
       row("plain", TITLED_DOC, "정리"),
       row("plain-2", TITLED_DOC, "정리 (2/2)"),
       // 제목이 ' (k/n)' 으로 끝나는 절이 다시 조각으로 나뉜 경우: 맨 끝의 번호가 조각 번호다
@@ -240,6 +242,12 @@ describe("GuideSearchManager.getSectionParts", () => {
       expect(await manager.getSectionParts(TITLED_DOC, "확인 (2/2)")).toEqual([
         { id: "twice-2a", part: 1, count: 1 },
         { id: "twice-2b", part: 1, count: 1 },
+      ]);
+      // 행의 수가 n 과 같아도 번호가 겹치면(1/2 가 둘) 조각이 아니다
+      expect(await manager.getSectionParts(TITLED_DOC, "검증")).toEqual([]);
+      expect(await manager.getSectionParts(TITLED_DOC, "검증 (1/2)")).toEqual([
+        { id: "same-1a", part: 1, count: 1 },
+        { id: "same-1b", part: 1, count: 1 },
       ]);
     });
 

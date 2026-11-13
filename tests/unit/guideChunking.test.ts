@@ -14,6 +14,8 @@ import os from "node:os";
 import path from "node:path";
 import * as lancedb from "@lancedb/lancedb";
 import { GuideSearchManager, chunkMarkdown, parseFrontMatter, parseSectionPart } from "../../src/rag/guideManager.js";
+import { estimateGuideChunkTokens, estimateTokens, guideSearchText } from "../../src/rag/guideChunking.js";
+import { getEmbedder } from "../../src/rag/embedder.js";
 import { chunkGuideDocument, indexGuideDirectory, relativeGuidePath } from "../../src/kb/guideIndexer.js";
 import { REPO_ROOT, hasEmbeddingModel } from "../integration/_helper.js";
 
@@ -130,6 +132,61 @@ describe("가이드 색인 경로 — build-index 와 update CLI 가 같은 청�
       expect(source, file).toMatch(/await indexGuideDirectory\(/);
       expect(source, file).not.toMatch(/chunkMarkdown|chunkGuideDocument|splitGuideSections|guideChunking/);
     }
+  });
+});
+
+describe("GuideSearchManager.addGuideBatch — 임베딩에 넘기는 문자열", () => {
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "egov-guide-embed-input-"));
+  });
+
+  afterAll(async () => {
+    await fs.remove(tmpDir);
+  });
+
+  it("청킹이 상한을 잴 때 쓴 검색 텍스트(guideSearchText)를 그대로 임베딩하고, 벡터를 그 청크의 행에 넣는다", async () => {
+    const relative = "egovframe-runtime/persistence-layer/transaction.md";
+    const content = ["---", "title: Transaction 서비스", "---", BODY, "", LONG_SECTION].join("\n");
+    const chunks = chunkGuideDocument(content, relative)!;
+    expect(chunks.length).toBeGreaterThan(3);
+
+    // 임베딩 모델 대신 세운 것: 넘어온 문자열을 적어 두고, i번째 문자열에는 i번째 축만 1 인 벡터를 돌려준다
+    const embedder = getEmbedder();
+    const original = embedder.embedBatch;
+    const calls: Array<{ texts: string[]; purpose: string | undefined }> = [];
+    embedder.embedBatch = async (texts, options = {}) => {
+      calls.push({ texts: [...texts], purpose: options.purpose });
+      return texts.map((_, index) => Float32Array.from({ length: 384 }, (_, axis) => (axis === index ? 1 : 0)));
+    };
+    try {
+      const manager = new GuideSearchManager(tmpDir);
+      await manager.initialize();
+      expect(await manager.addGuideBatch(chunks)).toBe(chunks.length);
+    } finally {
+      embedder.embedBatch = original;
+    }
+
+    // 한 번에, 색인 문서용(passage)으로, 제목과 분류를 붙인 검색 텍스트를 넘긴다 (본문만 넘기지 않는다)
+    expect(calls).toHaveLength(1);
+    expect(calls[0].purpose).toBe("passage");
+    expect(calls[0].texts).toEqual(
+      chunks.map((chunk) => guideSearchText(chunk.title, chunk.content, chunk.layer, chunk.category)),
+    );
+    // 청킹이 잰 크기는 이 문자열 앞에 임베더가 붙이는 접두("passage: ")를 더한 것이다
+    chunks.forEach((chunk, index) => {
+      expect(estimateGuideChunkTokens(chunk)).toBeCloseTo(estimateTokens(`passage: ${calls[0].texts[index]}`), 6);
+    });
+
+    // i번째 청크의 행에 i번째 문자열의 벡터가 들어 있다
+    const rows = await (await (await lancedb.connect(tmpDir)).openTable("egovframe_guide")).query().toArray();
+    expect(rows).toHaveLength(chunks.length);
+    chunks.forEach((chunk, index) => {
+      const row = rows.find((candidate: { title: string; content: string }) => candidate.title === chunk.title && candidate.content === chunk.content);
+      expect(row, chunk.title).toBeDefined();
+      expect(Array.from(row.vector as ArrayLike<number>).indexOf(1), chunk.title).toBe(index);
+    });
   });
 });
 

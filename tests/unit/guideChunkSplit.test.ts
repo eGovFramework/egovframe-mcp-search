@@ -463,6 +463,15 @@ describe("chunkMarkdown — 코드 블록을 나눈 조각은 펜스를 닫고 �
       ]);
     });
 
+    it("블록 밖의 줄 경계가 소개하는 줄과 블록 사이뿐이어도 그 자리에서 끊는다 (블록을 쪼개는 것보다 낫다)", () => {
+      // 소개하는 줄 하나와 코드 블록: 합치면 상한을 넘지만 블록만으로는 한 조각에 들어간다.
+      // 블록의 안에서 끊으면 소개하는 줄이 블록과 함께 남지만, 블록이 두 조각으로 갈린다
+      const intro = "캐시 영역마다 쓰는 값은 아래에 보인 설정 파일에 영역의 이름과 함께 한 줄씩 차례로 적어 넣는다.";
+      const block = ["```ini", ...Array.from({ length: 10 }, (_, i) => `cache.region${i} = value${i}`), "```"];
+      const chunks = chunk(doc("## 설정", intro, ...block));
+      expect(chunks.map((c) => c.content)).toEqual([intro, block.join("\n")]);
+    });
+
     it("한 조각에 들어가지 않는 코드 블록은 지금처럼 줄에서 나누고 펜스를 닫고 다시 연다", () => {
       const longCode = Array.from({ length: 24 }, (_, i) => `cache.region${i} = value${i}`);
       const chunks = chunk(doc("## 설정", ...steps(1, 2), "```ini", ...longCode, "```", ...steps(3, 4)));
@@ -521,6 +530,35 @@ describe("chunkMarkdown — 코드 블록을 나눈 조각은 펜스를 닫고 �
     expectLossless(result[0]);
     for (const c of chunk(doc("## 설정", "", opener, firstLine, ...codeLines.slice(0, 10), "```"))) {
       expect(estimateGuideChunkTokens(c), c.title).toBeLessThanOrEqual(SMALL.tokenBudget!);
+    }
+  });
+
+  it("긴 코드 줄을 줄 안에서 끊어도 모든 조각의 펜스 짝이 맞는다 (여는 펜스 바로 다음 줄이어도)", () => {
+    // 코드 블록의 첫 줄이 상한보다 길다: 그 줄을 줄 안에서 끊은 조각마다 펜스를 닫고 다시 연다
+    const longLine = Array.from({ length: 40 }, (_, i) => `call${i}(arg${i});`).join(" ");
+    const chunks = chunk(doc("## 설정", "", "```java", longLine, "```"));
+    expect(chunks.length).toBeGreaterThan(2);
+    for (const c of chunks) {
+      expect(fenceLines(c.content), c.title).toBe(2);
+      expect(c.content.startsWith("```java\n"), c.title).toBe(true);
+      expect(c.content.endsWith("\n```"), c.title).toBe(true);
+      expect(estimateGuideChunkTokens(c), c.title).toBeLessThanOrEqual(SMALL.tokenBudget!);
+    }
+    // 코드 줄의 내용은 그대로다 (공백에서 끊은 자리의 공백만 조각 사이에서 빠진다)
+    const code = chunks.map((c) => c.content.split("\n").slice(1, -1).join("\n"));
+    expect(code.join(" ")).toBe(longLine);
+  });
+
+  it("코드 블록 가운데의 긴 줄을 줄 안에서 끊어도 앞뒤 줄과 함께 펜스 짝이 맞는다", () => {
+    const longLine = `    ${Array.from({ length: 40 }, (_, i) => `call${i}(arg${i});`).join(" ")}`;
+    const chunks = chunk(doc("## 설정", "", "```java", ...codeLines.slice(0, 4), longLine, ...codeLines.slice(4, 8), "```"));
+    expect(chunks.length).toBeGreaterThan(2);
+    for (const c of chunks) {
+      expect(fenceLines(c.content), c.title).toBe(2);
+      expect(estimateGuideChunkTokens(c), c.title).toBeLessThanOrEqual(SMALL.tokenBudget!);
+    }
+    for (const line of codeLines.slice(0, 8)) {
+      expect(chunks.filter((c) => c.content.split("\n").includes(line)), line).toHaveLength(1);
     }
   });
 
@@ -675,9 +713,55 @@ describe("chunkMarkdown — 코드 블록 안의 제목 모양 줄은 제목이 
     expect(chunks[0].content).toContain("### 의존성을 내려받는다\n#### 시간이 걸린다\nmvn dependency:resolve");
   });
 
-  it("펜스보다 짧거나 종류가 다른 펜스 줄은 코드 블록을 닫지 않는다", () => {
-    const body = doc("## 예제", "", paragraph("예제", 6), "", "````markdown", "```", "## 문서 안의 제목", "```", "````", "", "## 다음", "", paragraph("다음", 6));
-    expect(chunk(body).map((c) => c.section)).toEqual(["예제", "다음"]);
+  it("펜스보다 짧은 펜스 줄은 코드 블록을 닫지 않는다 (그 사이의 줄이 코드 블록의 내용으로 본문에 남는다)", () => {
+    const block = ["````markdown", "```", "## 문서 안의 제목", "```", "````"];
+    const chunks = chunk(doc("## 예제", "", paragraph("예제", 6), "", ...block, "", "## 다음", "", paragraph("다음", 6)));
+    expect(chunks.map((c) => c.section)).toEqual(["예제", "다음"]);
+    // 짧은 펜스에서 코드 블록이 닫힌다고 보면 '## 문서 안의 제목' 이 절의 제목이 되어 본문에서 빠진다
+    expect(chunks[0].content).toBe([paragraph("예제", 6), "", ...block].join("\n"));
+  });
+
+  it("종류가 다른 펜스 줄은 코드 블록을 닫지 않는다 (``` 블록 안의 ~~~, ~~~ 블록 안의 ```)", () => {
+    for (const [outer, inner] of [
+      ["```", "~~~"],
+      ["~~~", "```"],
+    ]) {
+      const block = [`${outer}markdown`, inner, "## 다른 펜스 안의 제목", inner, outer];
+      const chunks = chunk(doc("## 예제", "", paragraph("예제", 6), "", ...block, "", "## 다음", "", paragraph("다음", 6)));
+      expect(chunks.map((c) => c.section), outer).toEqual(["예제", "다음"]);
+      expect(chunks[0].content, outer).toBe([paragraph("예제", 6), "", ...block].join("\n"));
+    }
+  });
+
+  it("긴 절을 나눌 때도 짧거나 종류가 다른 펜스 안의 '### ' 줄에서 나누지 않는다", () => {
+    const block = ["````markdown", "```", "### 문서 안의 소제목", "~~~", "#### 더 깊은 소제목", "````"];
+    const chunks = chunk(doc("## 예제", "", paragraph("예제", 8), "", ...block, "", "### 확인", "", paragraph("확인", 8)));
+    expect(chunks.map((c) => c.section)).toEqual(["예제", "예제 > 확인"]);
+    expect(chunks[0].content).toBe([paragraph("예제", 8), "", ...block].join("\n"));
+  });
+});
+
+describe("chunkMarkdown — '# ' 줄(수준 1)은 맨 앞의 문서 제목만 제목으로 본다", () => {
+  it("절 중간의 '# ' 줄에서는 절을 나누지 않고 그 줄을 본문에 남긴다", () => {
+    const chunks = chunk(
+      doc("# 캐시 가이드", "", paragraph("개요", 6), "", "## 설정", "", paragraph("설정", 6), "", "# 주의", "", paragraph("주의", 7), "", "## 실행", "", paragraph("실행", 6)),
+    );
+    expect(chunks.map((c) => c.section)).toEqual(["개요", "설정", "실행"]);
+    expect(chunks[1].content).toBe([paragraph("설정", 6), "", "# 주의", "", paragraph("주의", 7)].join("\n"));
+  });
+
+  it("긴 절을 더 깊은 제목에서 나눌 때도 '# ' 줄에서는 나누지 않는다", () => {
+    const chunks = chunk(
+      doc("## 설정", "", paragraph("설정", 6), "", "# 주의", "", paragraph("주의", 7), "", "### 세션", "", paragraph("세션", 9)),
+    );
+    expect(chunks.map((c) => c.section)).toEqual(["설정", "설정 > 세션"]);
+    expect(chunks[0].content).toBe([paragraph("설정", 6), "", "# 주의", "", paragraph("주의", 7)].join("\n"));
+  });
+
+  it("개요에서는 맨 앞의 '# ' 줄만 빼고, 중간의 '# ' 줄은 본문에 남긴다", () => {
+    const chunks = chunk(doc("# 캐시 가이드", "", paragraph("개요", 5), "", "# 참고", "", paragraph("참고", 5), "", "## 설정", "", paragraph("설정", 6)));
+    expect(chunks.map((c) => c.section)).toEqual(["개요", "설정"]);
+    expect(chunks[0].content).toBe([paragraph("개요", 5), "", "# 참고", "", paragraph("참고", 5)].join("\n"));
   });
 });
 
