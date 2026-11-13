@@ -335,7 +335,8 @@ describe("chunkMarkdown — 제목이 없으면 문단, 그다음 줄 경계에�
     };
 
     it("처리 시간이 줄 길이에 비례한다 (줄이 네 배가 되어도 시간이 여덟 배가 되지 않는다)", () => {
-      // 토막마다 남은 줄 전체를 다시 세면 시간이 길이의 제곱에 비례해, 줄이 네 배면 열여섯 배가 걸린다
+      // 토막마다 남은 줄 전체를 다시 세면 시간이 길이의 제곱에 비례한다. 그렇게 구현했을 때는 아래의 세 가지 줄에서
+      // 20만 자와 80만 자의 시간이 15배 안팎으로 벌어졌다
       for (const unit of ["가나다라마바사아자차", "A1b2C3d4", "낱말과 공백으로 된 문장입니다. "]) {
         const line = (length: number) => unit.repeat(Math.ceil(length / unit.length)).slice(0, length);
         const short = doc("## 데이터", "", line(200_000));
@@ -344,7 +345,7 @@ describe("chunkMarkdown — 제목이 없으면 문단, 그다음 줄 경계에�
         const shortMs = fastest(() => chunkMarkdown(short, FRONTMATTER, DOC_PATH));
         const longMs = fastest(() => chunkMarkdown(long, FRONTMATTER, DOC_PATH));
         expect(longMs / Math.max(shortMs, 1), `${unit}: ${shortMs.toFixed(1)}ms → ${longMs.toFixed(1)}ms`).toBeLessThan(8);
-        // 80만 자 한 줄이 1초 안에 끝난다 (제곱에 비례하던 구현은 3초가 넘었다)
+        // 80만 자 한 줄이 1초 안에 끝난다 (제곱에 비례하던 구현은 줄의 종류에 따라 1.3초에서 3.0초가 걸렸다)
         expect(longMs, unit).toBeLessThan(1000);
       }
     }, 120_000);
