@@ -934,6 +934,9 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       seed("AI+(플러스) CMS"),
       seed("ALPAS v1.0 (도서관리 시스템)"),
       seed("UCARE(콜센터상담시스템)"),
+      seed("Zenkaku CMS（전각 괄호 설명）"),
+      seed("Nested CMS(설명(안쪽 괄호) 더)"),
+      seed("(괄호뿐인 이름)"),
     ]);
 
     /** 제품 하나를 조회해 그 제품의 관련 지식 id 를 돌려준다 */
@@ -961,6 +964,25 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
         "k1",
       ]);
       expect(await relatedIds("UCARE", [knowledge("k1", "ucare 연동", "본문")])).toEqual(["k1"]);
+    });
+
+    it("전각 괄호와 겹친 괄호도 그 안의 내용과 함께 뺀다", async () => {
+      // 전각 괄호를 빼지 않으면 '（전각 괄호 설명）' 까지 붙은 이름으로 견줘 하나도 남지 않는다
+      expect(await relatedIds("Zenkaku", [knowledge("k1", "Zenkaku CMS 설치 문의", "본문")])).toEqual(["k1"]);
+      // 겹친 괄호를 한 번만 빼면 바깥 괄호가 남은 이름('Nested CMS(설명 더)')으로 견주게 된다
+      expect(await relatedIds("Nested", [knowledge("k1", "메뉴 문의", "Nested CMS 에서 메뉴가 보이지 않습니다")])).toEqual([
+        "k1",
+      ]);
+    });
+
+    it("괄호를 빼고 남는 것이 없는 제품명은 그대로 견준다", async () => {
+      // 빈 이름으로 견주면 어떤 글과도 일치하지 않는다
+      expect(
+        await relatedIds("괄호뿐인", [
+          knowledge("k1", "제품 문의", "목록에 (괄호뿐인 이름) 으로 올라 있는 제품입니다"),
+          knowledge("k2", "다른 문의", "괄호가 없는 글입니다"),
+        ]),
+      ).toEqual(["k1"]);
     });
 
     it("의미 검색에는 제품명을 그대로 쓰고, 응답의 product 도 제품명 그대로다", async () => {

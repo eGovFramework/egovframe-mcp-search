@@ -60,6 +60,13 @@ describe("extractSearchTerms", () => {
     expect(extractSearchTerms(many, 3)).toEqual(["t0", "t1", "t2"]);
   });
 
+  it("검색어 수의 상한은 16개다", () => {
+    // 상한을 상수로만 견주면 상수가 바뀌어도 테스트가 따라 바뀐다. 값 자체를 고정한다
+    expect(MAX_SEARCH_TERMS).toBe(16);
+    const words = Array.from({ length: 20 }, (_, i) => `t${i}`);
+    expect(extractSearchTerms(words.join(" "))).toEqual(words.slice(0, 16));
+  });
+
   it("자모가 분리된(NFD) 한글을 합쳐진 형태(NFC)로 정규화한다", () => {
     const nfd = "게시판".normalize("NFD");
     expect(nfd).not.toBe("게시판");

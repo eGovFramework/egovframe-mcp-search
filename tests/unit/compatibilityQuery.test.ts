@@ -332,6 +332,30 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(versionsOf(result.rows)).toEqual(["OtherCMS 2.0", "SampleCMS 1.0", "Tibero 7"]);
     });
 
+    it("제품 버전 표기에만 일치한 행이 설명에만 일치한 행보다 앞에 온다", () => {
+      // '가나다판' 은 한 행의 제품 버전 표기에만, 다른 한 행의 설명에만 들어 있다.
+      // 설명에만 든 행의 확인일자가 더 최근이라, 제품 버전 표기를 이름으로 세지 않으면 그 행이 먼저 나온다
+      sqlite.addCompatibilitySoftwareBatch([
+        {
+          ...CATALOGUE[5],
+          product_name: "Plain",
+          product_version: "Plain 가나다판",
+          verified_date: "2015-01-01",
+          description: "설명 없음",
+        },
+        {
+          ...CATALOGUE[5],
+          product_name: "Other",
+          product_version: "Other 1.0",
+          verified_date: "2026-03-03",
+          description: "가나다판 을 지원함",
+        },
+      ]);
+      const result = sqlite.queryCompatibleSoftware({ query: "가나다판" });
+      expect(versionsOf(result.rows)).toEqual(["Plain 가나다판", "Other 1.0"]);
+      expect(result.matchMode).toBe("all-terms");
+    });
+
     it("이름에 일치한 검색어 수가 같으면 확인일자가 최근인 행을 먼저 돌려준다", () => {
       // 여섯 행 모두 설명에만 '호환' 이 들어 있다
       expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "호환" }).rows)).toEqual([
@@ -464,6 +488,31 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       const result = sqlite.queryCompatibleSoftware({ query: "JEUS 8.5 Tibero 4.0" });
       expect(versionsOf(result.rows)).toEqual(["JEUS 8.5", "Tibero 7"]);
       expect(result.total).toBe(2);
+      expect(result.matchMode).toBe("any-term");
+    });
+
+    it("일치한 검색어 수는 이름에 일치한 검색어 수보다 앞선 기준이다", () => {
+      // 설명에만 두 검색어가 든 행(Alpha)과 이름에 한 검색어가 든 행(가나다 Suite). 이름에 든 행의 확인일자가 더 최근이다.
+      // 이름에 일치한 수를 먼저 보면 '가나다 Suite' 가 앞에 온다
+      sqlite.addCompatibilitySoftwareBatch([
+        {
+          ...CATALOGUE[5],
+          product_name: "Alpha",
+          product_version: "Alpha 1.0",
+          verified_date: "2015-01-01",
+          description: "가나다 라마바 설명",
+        },
+        {
+          ...CATALOGUE[5],
+          product_name: "가나다 Suite",
+          product_version: "가나다 Suite 1.0",
+          verified_date: "2026-03-03",
+          description: "설명 없음",
+        },
+      ]);
+      // 없는말: 0행(제외) → k=2, 하나 이상 일치하면 통과. Alpha 는 둘, '가나다 Suite' 는 하나가 일치한다
+      const result = sqlite.queryCompatibleSoftware({ query: "가나다 라마바 없는말" });
+      expect(versionsOf(result.rows)).toEqual(["Alpha 1.0", "가나다 Suite 1.0"]);
       expect(result.matchMode).toBe("any-term");
     });
 

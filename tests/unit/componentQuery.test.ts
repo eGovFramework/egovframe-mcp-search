@@ -154,6 +154,30 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
       expect(idsOf(sqlite.queryComponents({ query: "통계" }).rows)).toEqual(["bst", "aaa"]);
     });
 
+    it("컴포넌트 ID 에만 일치한 컴포넌트가 설명에만 일치한 컴포넌트보다 앞에 온다", () => {
+      // 'zq9' 는 한 컴포넌트의 ID(와 패키지명)에, 다른 컴포넌트의 설명에만 들어 있다.
+      // 설명에만 든 컴포넌트의 이름이 더 짧아, 컴포넌트 ID 를 이름으로 세지 않으면 그 컴포넌트가 먼저 나온다
+      sqlite.addCommonComponentsBatch([
+        extra("ab1", "가", "Beta Tool", "zq9 와 함께 쓴다"),
+        extra("zq9", "가나다라", "Alpha Tool", "설명 없음"),
+      ]);
+      const result = sqlite.queryComponents({ query: "zq9" });
+      expect(idsOf(result.rows)).toEqual(["zq9", "ab1"]);
+      expect(result.matchMode).toBe("all-terms");
+    });
+
+    it("영문명에만 일치한 컴포넌트가 설명에만 일치한 컴포넌트보다 앞에 온다", () => {
+      // 'xylophone' 은 한 컴포넌트의 영문명에만, 다른 컴포넌트의 설명에만 들어 있다.
+      // 설명에만 든 컴포넌트의 이름이 더 짧아, 영문명을 이름으로 세지 않으면 그 컴포넌트가 먼저 나온다
+      sqlite.addCommonComponentsBatch([
+        extra("de1", "나", "Other", "xylophone 을 다룬다"),
+        extra("en1", "가나다라", "Xylophone", "설명 없음"),
+      ]);
+      const result = sqlite.queryComponents({ query: "xylophone" });
+      expect(idsOf(result.rows)).toEqual(["en1", "de1"]);
+      expect(result.matchMode).toBe("all-terms");
+    });
+
     it("이름에 일치한 검색어 수가 같으면 이름이 짧은 컴포넌트를 먼저 돌려준다", () => {
       // 이름이 짧을수록 검색어가 이름에서 차지하는 비중이 크다: '일반로그인'(uia, 5자) < '인증서로그인'(sec, 6자).
       // 컴포넌트 ID 순으로는 sec 가 먼저다
