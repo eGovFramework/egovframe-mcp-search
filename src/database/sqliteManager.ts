@@ -291,45 +291,11 @@ export class SQLiteManager {
   }
 
   /**
-   * 호환성 소프트웨어 검색
+   * 호환성 소프트웨어 검색 — 필터에 맞는 행을 배열로 돌려준다.
+   * limit 을 생략하면 전체를 돌려준다.
    */
   searchCompatibleSoftware(filters: CompatibilitySearchFilter = {}, limit?: number): CompatibilitySoftware[] {
-    let sql = 'SELECT * FROM compatibility_software WHERE 1=1';
-    const params: any[] = [];
-
-    if (filters.frameworkVersion) {
-      sql += ' AND framework_version = ?';
-      params.push(filters.frameworkVersion);
-    }
-
-    if (filters.category) {
-      sql += ' AND category = ?';
-      params.push(filters.category);
-    }
-
-    if (filters.minLevel) {
-      sql += ' AND compatibility_level >= ?';
-      params.push(filters.minLevel);
-    }
-
-    if (filters.vendor) {
-      sql += " AND vendor LIKE ? ESCAPE '\\'";
-      params.push(`%${escapeLikePattern(filters.vendor)}%`);
-    }
-
-    if (filters.productName) {
-      sql += " AND product_name LIKE ? ESCAPE '\\'";
-      params.push(`%${escapeLikePattern(filters.productName)}%`);
-    }
-
-    sql += ' ORDER BY verified_date DESC';
-
-    if (limit && Number.isFinite(limit) && limit > 0) {
-      sql += ' LIMIT ?';
-      params.push(Math.floor(limit));
-    }
-
-    return this.db.prepare(sql).all(...params) as CompatibilitySoftware[];
+    return this.queryCompatibleSoftware({ filters, limit }).rows;
   }
 
   /**
@@ -341,18 +307,70 @@ export class SQLiteManager {
   }
 
   /**
-   * 호환성 소프트웨어 키워드 조회.
+   * 호환성 소프트웨어 조회 (키워드 + 필터).
    *
-   * 모든 검색어가 접두 일치하는 행을 먼저 찾고(all-terms), 그런 행이 없으면
-   * 일부 검색어가 부분 문자열로 들어 있는 행을 찾는다(any-term).
-   * 검색어가 하나도 추출되지 않으면 빈 결과를 돌려준다.
+   * 필터는 키워드 검색과 같은 SQL 문에서 적용하고 LIMIT 은 그 뒤에 적용한다.
+   * - query 가 없으면 필터에 맞는 행을 확인일자가 최근인 순으로 돌려준다.
+   * - query 가 있으면 모든 검색어가 접두 일치하는 행을 먼저 찾고(all-terms), 그런 행이 없으면
+   *   일부 검색어가 부분 문자열로 들어 있는 행을 찾는다(any-term).
+   *   검색어가 하나도 추출되지 않으면 빈 결과를 돌려준다.
    */
   queryCompatibleSoftware(options: CompatibilityQueryOptions = {}): CompatibilityQueryResult {
-    const terms = extractSearchTerms(options.query ?? '');
-    if (terms.length === 0) {
+    const filter = this.buildCompatibilityFilter(options.filters ?? {});
+    const limit = toSqlLimit(options.limit);
+    const query = options.query ?? '';
+
+    const terms = extractSearchTerms(query);
+    if (terms.length > 0) {
+      return this.keywordSearch<CompatibilitySoftware>(COMPATIBILITY_SEARCH, terms, filter, limit);
+    }
+    if (query.trim() !== '') {
       return { rows: [] };
     }
-    return this.keywordSearch<CompatibilitySoftware>(COMPATIBILITY_SEARCH, terms, toSqlLimit(options.limit));
+
+    const rows = this.db
+      .prepare(
+        `SELECT ${COMPATIBILITY_SEARCH.columns}
+         FROM ${COMPATIBILITY_SEARCH.table}
+         WHERE 1=1${filter.sql}
+         ORDER BY ${COMPATIBILITY_SEARCH.defaultOrder}
+         LIMIT ?`,
+      )
+      .all(...filter.params, limit) as CompatibilitySoftware[];
+    return { rows };
+  }
+
+  /** 호환성 소프트웨어 필터를 WHERE 절에 덧붙일 조건으로 바꾼다 (테이블 별칭 cs 기준). */
+  private buildCompatibilityFilter(filters: CompatibilitySearchFilter): SqlCondition {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters.frameworkVersion) {
+      clauses.push('cs.framework_version = ?');
+      params.push(filters.frameworkVersion);
+    }
+
+    if (filters.category) {
+      clauses.push('cs.category = ?');
+      params.push(filters.category);
+    }
+
+    if (filters.minLevel) {
+      clauses.push('cs.compatibility_level >= ?');
+      params.push(filters.minLevel);
+    }
+
+    if (filters.vendor) {
+      clauses.push("cs.vendor LIKE ? ESCAPE '\\'");
+      params.push(`%${escapeLikePattern(filters.vendor)}%`);
+    }
+
+    if (filters.productName) {
+      clauses.push("cs.product_name LIKE ? ESCAPE '\\'");
+      params.push(`%${escapeLikePattern(filters.productName)}%`);
+    }
+
+    return { sql: clauses.map((clause) => ` AND ${clause}`).join(''), params };
   }
 
   // ==================== 키워드 검색 공통 ====================
@@ -361,11 +379,12 @@ export class SQLiteManager {
    * 키워드 검색 (호환성 소프트웨어와 공통컴포넌트가 함께 쓴다).
    *
    * 1) 모든 검색어를 접두 일치 AND 로 묶은 FTS5 MATCH 로 찾는다.
-   * 2) 결과가 0건이면 부분 일치 대체 검색(partialTermSearch)으로 넘어간다.
+   * 2) 필터까지 적용한 결과가 0건이면 부분 일치 대체 검색(partialTermSearch)으로 넘어간다.
    */
   private keywordSearch<Row>(
     target: KeywordSearchTarget,
     terms: string[],
+    filter: SqlCondition,
     limit: number,
   ): { rows: Row[]; matchMode: KeywordMatchMode } {
     const match = buildFts5MatchQuery(terms);
@@ -376,11 +395,11 @@ export class SQLiteManager {
             `SELECT ${target.columns}
              FROM ${target.ftsTable} fts
              JOIN ${target.table} ON ${target.rowid} = fts.rowid
-             WHERE ${target.ftsTable} MATCH ?
+             WHERE ${target.ftsTable} MATCH ?${filter.sql}
              ORDER BY rank, ${target.rowid}
              LIMIT ?`,
           )
-          .all(match, limit) as Row[];
+          .all(match, ...filter.params, limit) as Row[];
         if (rows.length > 0) {
           return { rows, matchMode: 'all-terms' };
         }
@@ -393,7 +412,7 @@ export class SQLiteManager {
       }
     }
 
-    return { rows: this.partialTermSearch<Row>(target, terms, limit), matchMode: 'any-term' };
+    return { rows: this.partialTermSearch<Row>(target, terms, filter, limit), matchMode: 'any-term' };
   }
 
   /**
@@ -403,8 +422,14 @@ export class SQLiteManager {
    * - 테이블 전체 행의 절반을 넘게 일치하는 검색어는 변별력이 없다고 보고 뺀다.
    * - 남은 검색어가 k 개일 때 ceil(k/2) 개 이상 일치한 행만 돌려준다 (k 가 0 이면 빈 결과).
    * - 일치한 검색어 수가 많은 행을 먼저, 그다음은 대상의 기본 정렬을 따른다.
+   * - 필터는 같은 SQL 문에서 적용한다.
    */
-  private partialTermSearch<Row>(target: KeywordSearchTarget, terms: string[], limit: number): Row[] {
+  private partialTermSearch<Row>(
+    target: KeywordSearchTarget,
+    terms: string[],
+    filter: SqlCondition,
+    limit: number,
+  ): Row[] {
     const termMatches = `(${target.likeColumns.map((column) => `${column} LIKE ? ESCAPE '\\'`).join(' OR ')})`;
     const bindPattern = (pattern: string) => target.likeColumns.map(() => pattern);
 
@@ -446,11 +471,11 @@ export class SQLiteManager {
       .prepare(
         `SELECT ${target.columns}
          FROM ${target.table}
-         WHERE (${matchedTerms}) >= ?
+         WHERE (${matchedTerms}) >= ?${filter.sql}
          ORDER BY (${matchedTerms}) DESC, ${target.defaultOrder}, ${target.rowid}
          LIMIT ?`,
       )
-      .all(...matchedTermsParams, required, ...matchedTermsParams, limit) as Row[];
+      .all(...matchedTermsParams, required, ...filter.params, ...matchedTermsParams, limit) as Row[];
   }
 
   /**
@@ -950,6 +975,12 @@ export class SQLiteManager {
 }
 
 // ==================== 조회용 도우미 ====================
+
+/** WHERE 절에 덧붙이는 조건. sql 은 비어 있거나 ' AND ...' 로 시작한다. */
+interface SqlCondition {
+  sql: string;
+  params: unknown[];
+}
 
 /** 키워드 검색 대상 하나를 기술하는 SQL 조각. */
 interface KeywordSearchTarget {

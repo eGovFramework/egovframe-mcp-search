@@ -122,6 +122,54 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     });
   });
 
+  describe("필터", () => {
+    it("query 없이 필터만 주면 확인일자가 최근인 순으로 돌려주고 matchMode 는 넣지 않는다", () => {
+      const result = sqlite.queryCompatibleSoftware({ filters: { category: "WAS" } });
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "JEUS 8.5", "WebLogic 12c"]);
+      expect(result.matchMode).toBeUndefined();
+    });
+
+    it("키워드와 필터를 모두 만족하는 행만 돌려준다", () => {
+      const result = sqlite.queryCompatibleSoftware({ query: "JEUS", filters: { frameworkVersion: "4.3" } });
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21"]);
+      expect(result.matchMode).toBe("all-terms");
+    });
+
+    it("minLevel 과 vendor, productName 필터도 키워드와 함께 적용한다", () => {
+      // 'CMS' 는 카테고리 'CMS Solution' 의 두 행과 일치하고, 그중 레벨 2 는 OtherCMS 뿐이다
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "CMS", filters: { minLevel: 2 } }).rows)).toEqual([
+        "OtherCMS 2.0",
+      ]);
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "CMS", filters: { vendor: "샘플" } }).rows)).toEqual([
+        "SampleCMS 1.0",
+      ]);
+      expect(
+        versionsOf(sqlite.queryCompatibleSoftware({ query: "CMS", filters: { productName: "othercms" } }).rows),
+      ).toEqual(["OtherCMS 2.0"]);
+    });
+
+    it("필터는 LIMIT 보다 먼저 적용한다", () => {
+      // 필터를 나중에 적용하면 상위 1건(다른 버전)만 남긴 뒤 걸러 0건이 된다
+      for (const frameworkVersion of ["4.0", "4.3"]) {
+        const result = sqlite.queryCompatibleSoftware({ query: "JEUS", filters: { frameworkVersion }, limit: 1 });
+        expect(result.rows.map((row) => row.framework_version)).toEqual([frameworkVersion]);
+      }
+    });
+
+    it("필터까지 만족하는 행이 없으면 부분 일치 검색으로 넘어가고, 거기에도 필터를 적용한다", () => {
+      // '티맥스 JEUS' 는 JEUS 두 행과 일치하지만 둘 다 WAS 다.
+      // 대체 검색: 티맥스 3행, JEUS 2행 → 한 개 이상 일치하는 DBMS 행은 Tibero 뿐
+      const result = sqlite.queryCompatibleSoftware({ query: "티맥스 JEUS", filters: { category: "DBMS" } });
+      expect(versionsOf(result.rows)).toEqual(["Tibero 7"]);
+      expect(result.matchMode).toBe("any-term");
+    });
+
+    it("searchCompatibleSoftware 는 같은 필터 조회 결과를 배열로 돌려준다", () => {
+      expect(versionsOf(sqlite.searchCompatibleSoftware({ category: "WAS" }, 2))).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(sqlite.searchCompatibleSoftware()).toHaveLength(CATALOGUE.length);
+    });
+  });
+
   describe("fullTextSearchCompatibility (배열을 돌려주는 기존 메서드)", () => {
     it("같은 규칙으로 찾은 행을 배열로 돌려준다", () => {
       expect(versionsOf(sqlite.fullTextSearchCompatibility("오라클"))).toEqual(["WebLogic 12c"]);

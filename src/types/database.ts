@@ -37,6 +37,7 @@ export type KeywordMatchMode = 'all-terms' | 'any-term';
 // 호환성 소프트웨어 조회 옵션
 export interface CompatibilityQueryOptions {
   query?: string;  // 키워드 질의
+  filters?: CompatibilitySearchFilter;  // 키워드와 함께(AND) 적용할 필터
   limit?: number;  // 최대 행 수 (생략하면 제한 없음)
 }
 

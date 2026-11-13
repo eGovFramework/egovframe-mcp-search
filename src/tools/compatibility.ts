@@ -4,7 +4,7 @@
  */
 
 import { getInitializedHybridManager } from '../database/hybridManager.js';
-import { CompatibilitySearchFilter, KeywordMatchMode } from '../types/database.js';
+import { CompatibilitySearchFilter } from '../types/database.js';
 
 /**
  * 호환성 소프트웨어 검색 (통합)
@@ -37,27 +37,13 @@ export async function searchCompatibleSoftware(args: {
     productName: args.productName,
   };
 
-  const query = args.query?.trim();
-  const hasFilters = Object.values(filters).some((value) => value !== undefined);
-  let results = sqlite.searchCompatibleSoftware(filters, limit);
-  // 키워드 검색이 결과를 찾은 방식 (all-terms: 모든 검색어 일치, any-term: 일부 검색어만 일치)
-  let matchMode: KeywordMatchMode | undefined;
-
-  if (query) {
-    const searchLimit = hasFilters ? limit * 5 : limit;
-    const found = sqlite.queryCompatibleSoftware({ query, limit: searchLimit });
-    matchMode = found.matchMode;
-    results = found.rows
-      .filter((software) => {
-        if (filters.frameworkVersion && software.framework_version !== filters.frameworkVersion) return false;
-        if (filters.category && software.category !== filters.category) return false;
-        if (filters.minLevel && software.compatibility_level < filters.minLevel) return false;
-        if (filters.vendor && !software.vendor.includes(filters.vendor)) return false;
-        if (filters.productName && !software.product_name.includes(filters.productName)) return false;
-        return true;
-      })
-      .slice(0, limit);
-  }
+  // 키워드와 필터를 한 번의 조회로 처리한다 (필터는 SQL 에서 LIMIT 보다 먼저 적용된다).
+  // matchMode 는 키워드 검색이 결과를 찾은 방식이다 (all-terms: 모든 검색어 일치, any-term: 일부만 일치).
+  const { rows: results, matchMode } = sqlite.queryCompatibleSoftware({
+    query: args.query?.trim(),
+    filters,
+    limit,
+  });
 
   const response: any = {
     success: true,
