@@ -59,18 +59,21 @@ export function listComponentCategories(): {
 
 /**
  * 공통컴포넌트 목록 조회
+ *
+ * limit 을 주면 앞에서부터 그만큼만 돌려주고, 주지 않으면 전체를 돌려준다.
+ * total 은 limit 과 무관하게 필터에 맞는 전체 건수다.
  */
-export function listCommonComponents(filters: ComponentSearchFilter = {}): {
+export function listCommonComponents(filters: ComponentSearchFilter = {}, limit?: number): {
   components: CommonComponent[];
   total: number;
   filters: ComponentSearchFilter;
 } {
   const db = getDB();
-  const components = db.getCommonComponents(filters);
-  
+  const { rows, total } = db.queryComponents({ filters, limit });
+
   return {
-    components,
-    total: components.length,
+    components: rows,
+    total,
     filters,
   };
 }
@@ -203,18 +206,22 @@ export function formatCategoryList(
 /**
  * 결과 포맷팅 - 컴포넌트 목록
  *
- * options.matchMode 가 'any-term' 이면 일부 검색어만 일치한 결과임을 제목 아래에 적는다.
+ * - options.total: 조건에 맞는 전체 건수. 표시하는 건수보다 크면 제목에 'N개 중 M개 표시' 를 적는다.
+ * - options.matchMode: 'any-term' 이면 일부 검색어만 일치한 결과임을 제목 아래에 적는다.
  */
 export function formatComponentList(
   components: CommonComponent[],
   groupByCategory: boolean = true,
-  options: { matchMode?: KeywordMatchMode } = {}
+  options: { total?: number; matchMode?: KeywordMatchMode } = {}
 ): string {
   if (components.length === 0) {
     return '검색 결과가 없습니다.';
   }
 
-  let output = `## 공통컴포넌트 목록 (${components.length}개)\n\n`;
+  const shown = components.length;
+  const countLabel =
+    options.total !== undefined && options.total > shown ? `${options.total}개 중 ${shown}개 표시` : `${shown}개`;
+  let output = `## 공통컴포넌트 목록 (${countLabel})\n\n`;
 
   if (options.matchMode === 'any-term') {
     output += '> 모든 검색어가 일치하는 컴포넌트가 없어, 일부 검색어만 일치하는 컴포넌트를 표시합니다.\n\n';

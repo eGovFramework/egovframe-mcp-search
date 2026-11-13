@@ -28,7 +28,11 @@ vi.mock("../../src/utils/dataPaths.js", async (importOriginal) => {
   };
 });
 
-import { formatComponentList, searchComponents } from "../../src/tools/commonComponents.js";
+import {
+  formatComponentList,
+  listCommonComponents,
+  searchComponents,
+} from "../../src/tools/commonComponents.js";
 
 describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
   let tmpDir: string;
@@ -47,6 +51,22 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  describe("listCommonComponents", () => {
+    it("limit 을 주면 그만큼만 돌려주고 total 로 전체 건수를 알린다", () => {
+      const listed = listCommonComponents({ version: "4.3.1" }, 2);
+      expect(listed.components).toHaveLength(2);
+      expect(listed.total).toBe(6);
+      expect(listed.filters).toEqual({ version: "4.3.1" });
+    });
+
+    it("limit 을 주지 않으면 지금처럼 전체를 돌려준다", () => {
+      const listed = listCommonComponents({ version: "4.3.1" });
+      expect(listed.components).toHaveLength(6);
+      expect(listed.total).toBe(6);
+      expect(listCommonComponents().components).toHaveLength(COMPONENTS.length);
+    });
   });
 
   describe("searchComponents", () => {
@@ -98,6 +118,19 @@ describe("공통컴포넌트 도구 — 결과 포맷", () => {
   const [uia, sec] = COMPONENTS.map((component) => ({ ...component, category_name: component.category_id }));
 
   describe("formatComponentList", () => {
+    it("일부만 표시할 때는 제목 줄에 'N개 중 M개 표시' 를 적는다", () => {
+      expect(formatComponentList([uia, sec], true, { total: 6 })).toContain("## 공통컴포넌트 목록 (6개 중 2개 표시)");
+      expect(formatComponentList([uia, sec], false, { total: 6 })).toContain(
+        "## 공통컴포넌트 목록 (6개 중 2개 표시)",
+      );
+    });
+
+    it("전체를 표시하거나 total 을 주지 않으면 지금처럼 건수만 적는다", () => {
+      expect(formatComponentList([uia, sec], true, { total: 2 })).toContain("## 공통컴포넌트 목록 (2개)");
+      expect(formatComponentList([uia, sec])).toContain("## 공통컴포넌트 목록 (2개)");
+      expect(formatComponentList([uia, sec], false)).toContain("## 공통컴포넌트 목록 (2개)");
+    });
+
     it("일부 검색어만 일치한 결과(any-term)이면 그 사실을 적는다", () => {
       const text = formatComponentList([uia, sec], false, { matchMode: "any-term" });
       expect(text).toContain("## 공통컴포넌트 목록 (2개)");

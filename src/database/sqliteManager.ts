@@ -766,9 +766,10 @@ export class SQLiteManager {
 
   /**
    * 공통컴포넌트 목록 조회 (카테고리별) — 필터에 맞는 컴포넌트를 배열로 돌려준다.
+   * limit 을 생략하면 전체를 돌려준다.
    */
-  getCommonComponents(filters: ComponentSearchFilter = {}): CommonComponent[] {
-    return this.queryComponents({ filters }).rows;
+  getCommonComponents(filters: ComponentSearchFilter = {}, limit?: number): CommonComponent[] {
+    return this.queryComponents({ filters, limit }).rows;
   }
 
   /**

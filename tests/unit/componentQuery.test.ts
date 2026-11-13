@@ -162,6 +162,37 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     });
   });
 
+  describe("목록의 limit 과 전체 건수", () => {
+    it("limit 을 주면 앞에서부터 그만큼만 돌려주고, total 은 전체 건수다", () => {
+      const result = sqlite.queryComponents({ filters: { version: "4.3.1" }, limit: 2 });
+      expect(result.rows).toHaveLength(2);
+      expect(result.total).toBe(6);
+      // 잘린 목록은 전체 목록의 앞부분이다
+      const all = sqlite.queryComponents({ filters: { version: "4.3.1" } });
+      expect(idsOf(result.rows)).toEqual(idsOf(all.rows).slice(0, 2));
+    });
+
+    it("limit 을 주지 않으면 전체를 돌려준다", () => {
+      const result = sqlite.queryComponents({ filters: { version: "4.3.1" } });
+      expect(result.rows).toHaveLength(6);
+      expect(result.total).toBe(6);
+      expect(sqlite.queryComponents().rows).toHaveLength(COMPONENTS.length);
+    });
+
+    it("getCommonComponents 도 선택 인자로 limit 을 받는다", () => {
+      expect(sqlite.getCommonComponents({ version: "4.3.1" }, 2)).toHaveLength(2);
+      expect(sqlite.getCommonComponents({ version: "4.3.1" })).toHaveLength(6);
+    });
+
+    it("limit 은 1 이상의 정수로 맞춘다", () => {
+      expect(sqlite.queryComponents({ limit: 2.5 }).rows).toHaveLength(2);
+      expect(sqlite.queryComponents({ limit: 0 }).rows).toHaveLength(1);
+      expect(sqlite.queryComponents({ limit: -3 }).rows).toHaveLength(1);
+      expect(sqlite.queryComponents({ limit: 1e300 }).rows).toHaveLength(COMPONENTS.length);
+      expect(sqlite.queryComponents({ query: "게시", limit: 1.9 }).rows).toHaveLength(1);
+    });
+  });
+
   describe("searchComponents (배열을 돌려주는 기존 메서드)", () => {
     it("선택 인자로 받은 필터를 함께 적용한다", () => {
       expect(idsOf(sqlite.searchComponents("게시", 20, { version: "5.0.0" }))).toEqual(["bst"]);
