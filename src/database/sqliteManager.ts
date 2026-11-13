@@ -11,12 +11,14 @@ import { getSQLiteDBPath } from '../utils/projectPath.js';
 import {
   COMPATIBILITY_GENERIC_WORDS,
   COMPONENT_GENERIC_WORDS,
+  MAX_SEARCH_TERMS,
   codePointLength,
   dropGenericTerms,
   extractSearchTerms,
   flexibleForm,
   isEnglishFunctionWord,
   isEnglishTerm,
+  joinedTermKeys,
   listedTargetWord,
   parseKeywordQuery,
   particleStrippedForms,
@@ -342,9 +344,9 @@ export class SQLiteManager {
     limit: number = 20,
   ): { rows: CompatibilitySoftware[]; total: number } {
     const target = COMPATIBILITY_SEARCH_ALL_COLUMNS;
-    // 가려 주지 못하는 낱말은 조회(keywordSearch)와 같이 뺀다. 검색어가 하나도 추출되지 않으면 빈 배열 그대로다
-    const parsed = parseKeywordQuery(query);
-    const terms = dropGenericTerms(parsed.terms, target.genericTerms, parsed.joinedTerms);
+    // 가려 주지 못하는 낱말은 다른 검색어가 남으면 뺀다 (검색어를 상한까지 추출한 뒤에 뺀다).
+    // 검색어가 하나도 추출되지 않으면 빈 배열 그대로다
+    const terms = dropGenericTerms(extractSearchTerms(query), target.genericTerms, joinedTermKeys(query));
     if (terms.length === 0) {
       return { rows: [], total: 0 };
     }
@@ -566,7 +568,12 @@ export class SQLiteManager {
    * 어느 경우에도 검색어가 하나는 남는다: (가)는 기능어가 아닌 검색어가 있을 때만, (나)는 쓸 수 있는 다른 검색어가 있을
    * 때만 빼기 때문이다. 영어 기능어뿐이거나 대상 낱말뿐인 query 는 그대로 찾는다.
    *
-   * dropped 는 뺀 낱말(query 에 적힌 꼴, 적힌 순서)이다. 빼지 않고 쓴 영어 기능어와 대상 낱말은 넣지 않는다.
+   * 검색어 수의 상한(MAX_SEARCH_TERMS)은 뺄 낱말을 뺀 뒤에 적용한다: 남은 검색어 가운데 앞의 것부터 그만큼만 쓴다.
+   * query 에서는 그보다 넉넉히 읽어 두므로(MAX_PARSED_TERMS), 영어 문장의 앞쪽을 채운 기능어가 뒤쪽의 제품명을
+   * 밀어내지 않는다. (나)의 판정도 상한 안에 들어 실제로 쓰게 될 검색어만 본다.
+   *
+   * dropped 는 뺀 낱말(query 에 적힌 꼴, 적힌 순서)이다. 빼지 않고 쓴 영어 기능어와 대상 낱말, 상한을 넘어 쓰지 못한
+   * 검색어는 넣지 않는다.
    */
   private selectSearchTerms(
     target: KeywordSearchTarget,
@@ -595,17 +602,18 @@ export class SQLiteManager {
       return [{ term, listed }];
     });
     if (candidates.length === 0) {
-      return { terms: kept, dropped: functionWords, droppedInName: [] };
+      return { terms: kept.slice(0, MAX_SEARCH_TERMS), dropped: functionWords, droppedInName: [] };
     }
 
-    // (나) 후보를 빼고 남는 검색어 가운데, 대상 낱말이 아닌 두 글자 이상의 검색어를 하나라도 쓸 수 있어야 뺀다
+    // (나) 후보를 빼고 남는 검색어 가운데, 대상 낱말이 아닌 두 글자 이상의 검색어를 하나라도 쓸 수 있어야 뺀다.
+    // 상한을 넘어 쓰지 못할 검색어는 세지 않는다
     const droppable = candidates.map((candidate) => candidate.term);
-    const remaining = kept.filter((term) => !droppable.includes(term));
+    const remaining = kept.filter((term) => !droppable.includes(term)).slice(0, MAX_SEARCH_TERMS);
     const findsRows = remaining.some(
       (term) => listedOf(term) === null && codePointLength(term) >= 2 && formOf(term) !== null,
     );
     if (!findsRows) {
-      return { terms: kept, dropped: functionWords, droppedInName: [] };
+      return { terms: kept.slice(0, MAX_SEARCH_TERMS), dropped: functionWords, droppedInName: [] };
     }
 
     // (라) 뺀 대상 낱말마다 이름 컬럼에 든 행을 가리는 조건 하나 (대소문자만 다른 낱말은 같은 낱말이다)

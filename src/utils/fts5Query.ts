@@ -18,6 +18,15 @@
 export const MAX_SEARCH_TERMS = 16;
 
 /**
+ * 키워드 검색이 query 에서 읽는 서로 다른 낱말 수의 상한 (parseKeywordQuery).
+ *
+ * 검색어 수 상한(MAX_SEARCH_TERMS)보다 넉넉히 읽는다. 키워드 검색은 읽은 낱말에서 행을 가려 주지 못하는 낱말
+ * (영어 기능어 등)을 뺀 뒤에 앞의 MAX_SEARCH_TERMS 개를 쓴다. 상한을 먼저 적용하면 긴 영어 문장의 앞쪽을 채운
+ * 기능어 때문에 뒤쪽의 제품명이 검색어가 되지 못한다.
+ */
+export const MAX_PARSED_TERMS = 64;
+
+/**
  * 키워드 추출에 쓰는 query 의 최대 길이 (String.length 기준, UTF-16 코드 단위).
  * 이보다 긴 query 는 앞부분만 읽는다. 검색어 하나의 길이와 추출에 드는 시간이 입력 크기와 무관하게 묶인다.
  */
@@ -97,7 +106,10 @@ export function hasOrOperator(raw: string): boolean {
 
 /** query 에서 읽어 낸 키워드 검색의 입력 */
 export interface KeywordQuery {
-  /** 검색어 (extractSearchTerms 의 결과) */
+  /**
+   * query 에서 읽은 낱말 (extractSearchTerms 의 결과. 서로 다른 낱말 MAX_PARSED_TERMS 개까지).
+   * 검색에 쓰는 것은 이 가운데 가려 주지 못하는 낱말을 뺀 뒤의 앞 MAX_SEARCH_TERMS 개다
+   */
   terms: string[];
   /** 다른 낱말과 공백 없이 기호로 이어 적힌 낱말, 소문자 (joinedTermKeys 의 결과) */
   joinedTerms: ReadonlySet<string>;
@@ -107,7 +119,11 @@ export interface KeywordQuery {
 
 /** query 에서 키워드 검색(database/sqliteManager 의 keywordSearch)에 필요한 것을 한 번에 읽어 낸다. */
 export function parseKeywordQuery(raw: string): KeywordQuery {
-  return { terms: extractSearchTerms(raw), joinedTerms: joinedTermKeys(raw), orQuery: hasOrOperator(raw) };
+  return {
+    terms: extractSearchTerms(raw, MAX_PARSED_TERMS),
+    joinedTerms: joinedTermKeys(raw),
+    orQuery: hasOrOperator(raw),
+  };
 }
 
 /** query 에서 읽어 낸 낱말 하나 */

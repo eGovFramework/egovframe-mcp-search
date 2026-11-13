@@ -340,6 +340,16 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       expect(result.rows[0]).toMatchObject({ product_name: "JEUS", framework_version: "4.3" });
     });
 
+    it("긴 영어 문장의 뒤쪽에 적은 제품명도 검색어로 쓴다", () => {
+      // 검색어 수 상한(16개)을 영어 기능어를 빼기 전에 적용하던 때에는, 기능어 열여섯 개 뒤의 JEUS 가 추출되지 않았다
+      const functionWords = "is the a of to in on at by as it this that what which how".split(" ");
+      const result = compatible(`${functionWords.join(" ")} JEUS`);
+      expect(result.matchMode).toBe("all-terms");
+      expect(result.terms).toEqual({ used: ["JEUS"], ignored: [], dropped: functionWords, required: 1 });
+      expect(rowKeys(result)).toEqual(rowKeys(compatible("JEUS")));
+      expect(result.total).toBeGreaterThan(0);
+    });
+
     it("영어 기능어가 제품명의 일부와 일치한 행은 결과에 섞이지 않는다", () => {
       // 'Is' 는 aXis·WISE 의 일부와, 'with' 는 WITHCMS 의 일부와 일치한다. 검색어로 쓰던 때에는 그런 행이
       // "Is Tibero compatible with eGovFrame 4.3?" 의 맨 앞을 차지했다

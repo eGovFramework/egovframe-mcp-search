@@ -12,6 +12,7 @@ import {
   COMPONENT_GENERIC_WORDS,
   ENGLISH_FUNCTION_WORDS,
   MAX_KEYWORD_QUERY_LENGTH,
+  MAX_PARSED_TERMS,
   MAX_SEARCH_TERMS,
   dropGenericTerms,
   extractSearchTerms,
@@ -205,6 +206,16 @@ describe("parseKeywordQuery", () => {
     expect(parseKeywordQuery("Q&A 관리")).toEqual({ terms: ["Q", "A", "관리"], joinedTerms: new Set(["q", "a"]), orQuery: false });
     expect(parseKeywordQuery("JEUS and Tibero")).toEqual({ terms: ["JEUS", "Tibero"], joinedTerms: new Set(), orQuery: false });
     expect(parseKeywordQuery("")).toEqual({ terms: [], joinedTerms: new Set(), orQuery: false });
+  });
+
+  it("서로 다른 낱말을 64개까지 읽는다 (검색어 수 상한 16개는 키워드 검색이 가려 주지 못하는 낱말을 뺀 뒤에 적용한다)", () => {
+    expect(MAX_PARSED_TERMS).toBe(64);
+    const words = Array.from({ length: 80 }, (_, i) => `t${i}`);
+    expect(parseKeywordQuery(words.join(" ")).terms).toEqual(words.slice(0, 64));
+    // 접속사와 중복은 세지 않는다
+    expect(parseKeywordQuery(`x AND x OR X ${words.join(" ")}`).terms).toEqual(["x", ...words.slice(0, 63)]);
+    // 검색어만 추출하는 extractSearchTerms 의 기본 상한은 그대로 16개다
+    expect(extractSearchTerms(words.join(" "))).toEqual(words.slice(0, 16));
   });
 });
 

@@ -681,6 +681,100 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     });
   });
 
+  describe("검색어 수의 상한", () => {
+    const search = (query: string, filters = {}) => sqlite.queryCompatibleSoftware({ query, filters });
+
+    /** 이름이 서로 다른 제품 count 개 (Word00, Word01, …). 이름 말고는 견줄 낱말이 없다 */
+    const addWordProducts = (count: number): string[] => {
+      const names = Array.from({ length: count }, (_, index) => `Word${String(index).padStart(2, "0")}`);
+      sqlite.addCompatibilitySoftwareBatch(
+        names.map((product_name) => ({
+          ...CATALOGUE[5],
+          product_name,
+          product_version: `${product_name} 1.0`,
+          category: "기타",
+          description: "설명 없음",
+        })),
+      );
+      return names;
+    };
+
+    /** 영어 기능어 열여섯 개 */
+    const FUNCTION_WORDS = "is the a of to in on at by as it this that what which how".split(" ");
+
+    it("쓰는 검색어는 16개를 넘지 않는다", () => {
+      // 제품명 스무 개를 나열한다. 앞의 열여섯 개만 쓴다
+      const names = addWordProducts(20);
+      const listed = search(names.join(" "));
+      expect(listed.matchMode).toBe("any-term");
+      expect(listed.terms).toEqual({ used: names.slice(0, 16), ignored: [], dropped: [], required: 1 });
+      expect(listed.total).toBe(16);
+
+      // 모든 검색어가 일치하는 행을 찾을 때도 같다: 스무 낱말이 모두 든 행을 열여섯 낱말로 찾는다
+      const words = Array.from({ length: 20 }, (_, index) => `kw${index}x`);
+      sqlite.addCompatibilitySoftwareBatch([
+        { ...CATALOGUE[5], product_name: "Wordy", product_version: "Wordy 1.0", description: words.join(" ") },
+      ]);
+      const every = search(words.join(" "));
+      expect(versionsOf(every.rows)).toEqual(["Wordy 1.0"]);
+      expect(every.matchMode).toBe("all-terms");
+      expect(every.terms).toEqual({ used: words.slice(0, 16), ignored: [], dropped: [], required: 16 });
+    });
+
+    it("16개를 넘어 쓰지 못한 검색어는 used, ignored, dropped 어디에도 싣지 않는다", () => {
+      // 열일곱 번째부터의 낱말은 일치하는 행이 있든(Word16) 없든(없는말) 응답에 나오지 않는다
+      const names = addWordProducts(17);
+      const terms = search(`${names.join(" ")} 없는말`).terms;
+      expect(terms).toEqual({ used: names.slice(0, 16), ignored: [], dropped: [], required: 1 });
+    });
+
+    it("상한은 가려 주지 못하는 낱말을 뺀 뒤에 적용한다", () => {
+      // 영어 기능어 열여섯 개 뒤에 적은 JEUS. 상한을 먼저 적용하던 때에는 JEUS 가 추출되지 않아,
+      // 기능어들이 검색어로 쓰이고 JEUS 행은 결과에 없었다
+      const sentence = search(`${FUNCTION_WORDS.join(" ")} JEUS`);
+      expect(versionsOf(sentence.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(sentence.matchMode).toBe("all-terms");
+      expect(sentence.terms).toEqual({ used: ["JEUS"], ignored: [], dropped: FUNCTION_WORDS, required: 1 });
+
+      // 뺀 낱말은 상한에 세지 않는다: 기능어 열여섯 개와 대상 낱말 하나를 빼고도 제품명 열여섯 개를 모두 쓴다
+      const names = addWordProducts(16);
+      const mixed = search(`eGovFrame ${FUNCTION_WORDS.join(" ")} ${names.join(" ")}`);
+      expect(mixed.terms).toEqual({
+        used: names,
+        ignored: [],
+        dropped: ["eGovFrame", ...FUNCTION_WORDS],
+        required: 1,
+      });
+      expect(mixed.total).toBe(16);
+    });
+
+    it("빼지 않은 영어 기능어와 대상 낱말은 상한에 센다", () => {
+      // 영어 기능어뿐인 query 는 기능어를 빼지 않는다. 앞의 열여섯 개가 모두 검색어이고(일치하는 행이 있으면 used,
+      // 없으면 ignored), 열일곱 번째인 'for' 는 쓰지 못한다
+      const sixteen = "is the an of to in on at by as it this that what which how".split(" ");
+      const terms = search(`${sixteen.join(" ")} for`).terms;
+      expect([...(terms?.used ?? []), ...(terms?.ignored ?? [])].sort()).toEqual([...sixteen].sort());
+      expect(terms?.used).toContain("on");
+      expect(terms?.dropped).toEqual([]);
+    });
+
+    it("대상 낱말을 뺄지는 상한 안에 드는 검색어로 판정한다", () => {
+      sqlite.addCompatibilitySoftwareBatch([
+        { ...CATALOGUE[5], product_name: "DL-WCMS for eGovframe", product_version: "DL-WCMS for eGovframe v1.0" },
+      ]);
+      const absent = Array.from({ length: 16 }, (_, index) => `none${index}`);
+      // 대상 낱말을 빼면 남는 검색어의 앞 열여섯 개는 모두 일치하는 행이 없다. JEUS 는 일치하는 행이 있지만 열일곱 번째라
+      // 쓰지 못한다. JEUS 를 보고 대상 낱말을 빼면 0건이 되므로, 빼지 않고 대상 낱말로 찾는다
+      const result = search(`eGovframe ${absent.join(" ")} JEUS`);
+      expect(versionsOf(result.rows)).toEqual(["DL-WCMS for eGovframe v1.0"]);
+      expect(result.terms).toEqual({ used: ["eGovframe"], ignored: absent.slice(0, 15), dropped: [], required: 1 });
+      // JEUS 가 상한 안에 들면 대상 낱말을 빼고 JEUS 로 찾는다
+      const within = search(`eGovframe ${absent.slice(0, 15).join(" ")} JEUS`);
+      expect(versionsOf(within.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(within.terms).toEqual({ used: ["JEUS"], ignored: absent.slice(0, 15), dropped: ["eGovframe"], required: 1 });
+    });
+  });
+
   describe("키워드 검색의 정렬", () => {
     it("이름(제품명·제품 버전 표기)에 일치한 검색어가 많은 행을 먼저 돌려준다", () => {
       // 분류에만 'CMS' 가 든 행은 확인일자가 가장 최근이어도 이름에 'CMS' 가 든 행 뒤에 온다
