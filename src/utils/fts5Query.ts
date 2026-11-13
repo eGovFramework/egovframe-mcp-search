@@ -4,6 +4,11 @@
  * 공통컴포넌트·호환 소프트웨어의 키워드 검색(database/sqliteManager 의 keywordSearch)은 query 에서
  * 검색어를 추출해 LIKE 부분 문자열 일치로 찾는다. 파일 이름은 검색어로 FTS5 MATCH 식을 조립하던 때의
  * 것이고, 지금은 MATCH 식을 만들지 않는다.
+ *
+ * - 검색어 추출: extractSearchTerms, joinedTermKeys, parseKeywordQuery
+ * - 검색어로 쓰지 않는 낱말의 목록과 판정: ENGLISH_FUNCTION_WORDS, COMPATIBILITY_GENERIC_WORDS,
+ *   COMPONENT_GENERIC_WORDS, isGenericTerm, dropGenericTerms
+ * - 조사가 붙은 검색어를 조사 없는 꼴로 바꿔 보는 후보: particleStrippedForms
  */
 
 /** 한 번의 키워드 검색에 쓰는 검색어 수 상한. 긴 문장이 조회 문을 비대하게 만드는 것을 막는다. */
@@ -37,26 +42,175 @@ export function extractSearchTerms(raw: string, maxTerms: number = MAX_SEARCH_TE
   const terms: string[] = [];
   const seen = new Set<string>();
 
-  // 정규화보다 먼저 자른다 (긴 입력 전체를 정규화하지 않는다)
-  const text = toHalfWidth(raw.slice(0, MAX_KEYWORD_QUERY_LENGTH).normalize('NFC'));
-
-  for (const candidate of text.split(/[^\p{L}\p{N}._-]+/u)) {
-    const term = trimEdgeSeparators(candidate);
-    if (!term || !/[\p{L}\p{N}]/u.test(term)) {
-      continue;
-    }
-    const key = term.toLowerCase();
+  for (const word of queryWords(raw)) {
+    const key = word.text.toLowerCase();
     if (CONNECTIVE_WORDS.has(key) || seen.has(key)) {
       continue;
     }
     seen.add(key);
-    terms.push(term);
+    terms.push(word.text);
     if (terms.length >= maxTerms) {
       break;
     }
   }
 
   return terms;
+}
+
+/**
+ * query 에서 다른 낱말과 공백 없이 기호로 이어 적힌 낱말을 소문자로 돌려준다
+ * ('Q&A' 의 'q' 와 'a', 'on/off' 의 'on' 과 'off').
+ *
+ * extractSearchTerms 는 '&', '/' 같은 기호에서 낱말을 나누므로, 추출된 검색어만으로는 그 낱말이 따로 적힌
+ * 것인지 다른 낱말에 붙여 적힌 것인지 알 수 없다. 영어 기능어를 가리는 isGenericTerm 이 이 구분을 쓴다.
+ * 읽는 범위와 정규화는 extractSearchTerms 와 같다. 한 번이라도 이어 적힌 낱말은 이어 적힌 낱말로 본다.
+ */
+export function joinedTermKeys(raw: string): Set<string> {
+  const keys = new Set<string>();
+  for (const word of queryWords(raw)) {
+    if (word.joined) {
+      keys.add(word.text.toLowerCase());
+    }
+  }
+  return keys;
+}
+
+/** query 에서 읽어 낸 키워드 검색의 입력 */
+export interface KeywordQuery {
+  /** 검색어 (extractSearchTerms 의 결과) */
+  terms: string[];
+  /** 다른 낱말과 공백 없이 기호로 이어 적힌 낱말, 소문자 (joinedTermKeys 의 결과) */
+  joinedTerms: ReadonlySet<string>;
+}
+
+/** query 에서 키워드 검색(database/sqliteManager 의 keywordSearch)에 필요한 것을 한 번에 읽어 낸다. */
+export function parseKeywordQuery(raw: string): KeywordQuery {
+  return { terms: extractSearchTerms(raw), joinedTerms: joinedTermKeys(raw) };
+}
+
+/** query 에서 읽어 낸 낱말 하나 */
+interface QueryWord {
+  /** 양끝의 '.', '-', '_' 를 뗀 낱말 */
+  text: string;
+  /** 앞이나 뒤의 낱말과 공백 없이 기호로 이어 적혔는지 */
+  joined: boolean;
+}
+
+/**
+ * query 를 낱말로 나눈다 (extractSearchTerms 의 주석에 적은 규칙: 앞 MAX_KEYWORD_QUERY_LENGTH 자, NFC, 반각 변환,
+ * 문자·숫자와 `.` `-` `_` 가 이어진 것이 낱말). 접속사와 중복은 거르지 않고 적힌 순서대로 돌려준다.
+ * 입력 길이에 비례하는 시간이 걸린다.
+ */
+function queryWords(raw: string): QueryWord[] {
+  // 정규화보다 먼저 자른다 (긴 입력 전체를 정규화하지 않는다)
+  const text = toHalfWidth(raw.slice(0, MAX_KEYWORD_QUERY_LENGTH).normalize('NFC'));
+
+  const words: QueryWord[] = [];
+  // 바로 앞 낱말이 끝난 자리. 그 자리부터 이번 낱말 앞까지가 두 낱말 사이의 글자들이다
+  let previousEnd = -1;
+  for (const match of text.matchAll(/[\p{L}\p{N}._-]+/gu)) {
+    const word = trimEdgeSeparators(match[0]);
+    if (!word || !/[\p{L}\p{N}]/u.test(word)) {
+      continue;
+    }
+    const start = match.index ?? 0;
+    // 두 낱말 사이에 공백이 하나도 없으면 기호로 이어 적은 것이다
+    const joined = previousEnd !== -1 && !/\s/u.test(text.slice(previousEnd, start));
+    if (joined) {
+      words[words.length - 1].joined = true;
+    }
+    words.push({ text: word, joined });
+    previousEnd = start + match[0].length;
+  }
+  return words;
+}
+
+/**
+ * 검색어로 쓰지 않는 영어 기능어 (소문자로 비교한다). 어느 검색 대상에나 적용한다.
+ *
+ * 영어 문장으로 물을 때 섞이는 낱말이다. 부분 문자열로 견주면 제품명의 일부와 우연히 일치해
+ * ('is' 는 'aXis'·'WISE' 와, 'with' 는 'WITHCMS' 와), 일부 검색어만 일치해도 되는 대체 검색에서
+ * 찾는 제품과 무관한 행을 앞에 세운다. AND, OR, NOT, NEAR 는 CONNECTIVE_WORDS 가 따로 다룬다.
+ *
+ * 'was' 는 넣지 않는다. 호환 소프트웨어의 분류 'WAS' 와 같은 낱말이라, 넣으면 "국산 WAS", "WAS 추천" 에서
+ * 분류 이름이 검색어에서 빠진다.
+ */
+export const ENGLISH_FUNCTION_WORDS: ReadonlySet<string> = new Set([
+  ...['a', 'an', 'the'],
+  ...['is', 'are', 'were', 'be', 'do', 'does', 'did', 'can', 'could', 'will', 'would', 'should'],
+  ...['with', 'for', 'in', 'on', 'of', 'to', 'from', 'by', 'at', 'as'],
+  ...['it', 'this', 'that', 'what', 'which', 'how'],
+]);
+
+/**
+ * 프레임워크 자체를 가리키는 낱말 (소문자로 비교한다).
+ * 호환 소프트웨어 목록과 공통컴포넌트 목록의 모든 항목이 이 프레임워크에 관한 것이라, 이 낱말로는 행을 가려낼
+ * 수 없다. 'framework', '프레임워크', 'solution' 은 넣지 않는다 ('Framework Solution' 은 호환 소프트웨어의 분류다).
+ */
+const FRAMEWORK_WORDS: readonly string[] = [
+  'egovframe',
+  'egovframework',
+  'egov',
+  '전자정부',
+  '표준프레임워크',
+  '전자정부프레임워크',
+  '전자정부표준프레임워크',
+];
+
+/** 공통컴포넌트 목록의 모든 항목에 해당하는 낱말 (소문자로 비교한다). 목록의 항목이 모두 컴포넌트다. */
+const COMPONENT_WORDS: readonly string[] = ['컴포넌트', '공통컴포넌트', 'component', 'components'];
+
+/** 호환 소프트웨어 검색에서, 목록의 모든 항목에 해당해 행을 가려 주지 못하는 낱말 */
+export const COMPATIBILITY_GENERIC_WORDS: ReadonlySet<string> = new Set(FRAMEWORK_WORDS);
+
+/** 공통컴포넌트 검색에서, 목록의 모든 항목에 해당해 행을 가려 주지 못하는 낱말 */
+export const COMPONENT_GENERIC_WORDS: ReadonlySet<string> = new Set([...FRAMEWORK_WORDS, ...COMPONENT_WORDS]);
+
+/** 이어 적힌 낱말이 없는 경우 (isGenericTerm, dropGenericTerms 의 기본값) */
+const NO_JOINED_TERMS: ReadonlySet<string> = new Set();
+
+/**
+ * 낱말이 행을 가려 주지 못하는 낱말인지: 영어 기능어(ENGLISH_FUNCTION_WORDS)이거나, 검색 대상의 모든 항목에
+ * 해당하는 낱말(targetWords)이다. 영문자의 대소문자는 가리지 않고, 낱말 전체가 목록의 낱말과 같아야 한다
+ * ('within', 'egovframework.com.cop.bbs' 는 아니다).
+ *
+ * 대상의 모든 항목에 해당하는 낱말은 조사를 뗀 꼴(particleStrippedForms)이 목록에 있어도 같다
+ * ('eGovFrame에서', '컴포넌트를'). 조사가 붙은 꼴은 그대로 쓰면 설명 문장에 우연히 든 행하고만 일치하고,
+ * 떼어 쓰면 목록의 낱말 그대로일 때와 같은 문제를 일으킨다.
+ * 영어 기능어에는 이 규칙을 적용하지 않는다. 영어 기능어 뒤에 한글이 붙은 꼴은 다른 낱말일 수 있다
+ * ('IT서비스', 'AS센터').
+ *
+ * 영어 기능어는 query 에 따로 적힌 낱말일 때만 기능어로 본다. 다른 낱말과 기호로 이어 적힌 낱말(joinedTerms,
+ * joinedTermKeys 의 결과)은 기능어가 아니다: 'Q&A' 의 'A' 는 관사가 아니고 'on/off' 의 'on' 은 전치사가 아니다.
+ * 대상의 모든 항목에 해당하는 낱말은 이어 적혀 있어도 같은 것을 가리키므로 이 구분을 두지 않는다.
+ */
+export function isGenericTerm(
+  term: string,
+  targetWords: ReadonlySet<string>,
+  joinedTerms: ReadonlySet<string> = NO_JOINED_TERMS,
+): boolean {
+  const key = term.toLowerCase();
+  if (targetWords.has(key) || (ENGLISH_FUNCTION_WORDS.has(key) && !joinedTerms.has(key))) {
+    return true;
+  }
+  return particleStrippedForms(term).some((form) => targetWords.has(form.toLowerCase()));
+}
+
+/**
+ * 검색어에서 행을 가려 주지 못하는 낱말(isGenericTerm)을 뺀다.
+ *
+ * 다른 검색어가 남을 때만 뺀다. 빼고 나서 남는 검색어가 없으면 받은 검색어를 그대로 돌려준다:
+ * 제품명에 'eGovframe' 이 든 제품을 그 낱말만으로 찾을 수 있어야 한다.
+ * joinedTerms 는 query 에서 다른 낱말과 기호로 이어 적힌 낱말이다 (joinedTermKeys). 주지 않으면 모든 검색어를
+ * 따로 적힌 낱말로 본다.
+ */
+export function dropGenericTerms(
+  terms: string[],
+  targetWords: ReadonlySet<string>,
+  joinedTerms: ReadonlySet<string> = NO_JOINED_TERMS,
+): string[] {
+  const kept = terms.filter((term) => !isGenericTerm(term, targetWords, joinedTerms));
+  return kept.length > 0 ? kept : terms;
 }
 
 /** 전각 ASCII(U+FF01~U+FF5E)와 그에 대응하는 반각 문자(U+0021~U+007E)의 코드 차이 */

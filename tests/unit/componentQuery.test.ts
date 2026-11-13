@@ -220,10 +220,94 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     });
   });
 
+  describe("가려 주지 못하는 낱말 (영어 기능어, 목록의 모든 항목에 해당하는 낱말)", () => {
+    const termsOf = (query: string) => sqlite.queryComponents({ query }).terms;
+
+    it("컴포넌트를 가리키는 낱말은 검색어로 쓰지 않는다", () => {
+      // 목록의 모든 항목이 컴포넌트다. '컴포넌트' 를 검색어로 쓰면 어느 행에도 없어 대체 검색이 된다
+      const result = sqlite.queryComponents({ query: "게시판 컴포넌트" });
+      expect(idsOf(result.rows)).toEqual(["bbs", "tpl"]);
+      expect(result.matchMode).toBe("all-terms");
+      expect(result.terms).toEqual({ used: ["게시판"], ignored: [], dropped: ["컴포넌트"], required: 1 });
+
+      for (const word of ["공통컴포넌트", "component", "Components", "컴포넌트를", "공통컴포넌트의"]) {
+        expect(termsOf(`게시판 ${word}`), `word=${word}`).toEqual({
+          used: ["게시판"],
+          ignored: [],
+          dropped: [word],
+          required: 1,
+        });
+      }
+    });
+
+    it("그 낱말이 설명에 든 컴포넌트가 있어도 그 낱말만 일치한 컴포넌트로 결과가 좁혀지지 않는다", () => {
+      // 설명에 '게시판' 과 '컴포넌트' 가 함께 든 컴포넌트. '컴포넌트' 를 검색어로 쓰면 이 한 건만 나온다
+      sqlite.addCommonComponentsBatch([extra("wed", "웹에디터", "Web Editor", "게시판 등 다른 컴포넌트가 함께 쓰는 편집기")]);
+      const result = sqlite.queryComponents({ query: "게시판 컴포넌트" });
+      expect(idsOf(result.rows)).toEqual(["bbs", "tpl", "wed"]);
+      expect(result.matchMode).toBe("all-terms");
+    });
+
+    it("프레임워크 자체를 가리키는 낱말과 영어 기능어도 쓰지 않는다", () => {
+      // 'egovframework' 는 여덟 컴포넌트 모두의 패키지명에 들어 있다
+      expect(termsOf("egovframework 게시판")).toEqual({
+        used: ["게시판"],
+        ignored: [],
+        dropped: ["egovframework"],
+        required: 1,
+      });
+      expect(termsOf("전자정부 표준프레임워크의 게시판")).toEqual({
+        used: ["게시판"],
+        ignored: [],
+        dropped: ["전자정부", "표준프레임워크의"],
+        required: 1,
+      });
+      // how, to: 영어 기능어 / implement: 0행(제외) / login: uia, sec
+      const sentence = sqlite.queryComponents({ query: "how to implement login" });
+      expect(idsOf(sentence.rows)).toEqual(["uia", "sec"]);
+      expect(sentence.terms).toEqual({ used: ["login"], ignored: ["implement"], dropped: ["how", "to"], required: 1 });
+    });
+
+    it("그런 낱말뿐이면 빼지 않고 그대로 찾는다", () => {
+      // 패키지명으로 여덟 컴포넌트가 모두 일치한다
+      const packages = sqlite.queryComponents({ query: "egovframework" });
+      expect(packages.total).toBe(COMPONENTS.length);
+      expect(packages.terms).toEqual({ used: ["egovframework"], ignored: [], dropped: [], required: 1 });
+      // '컴포넌트' 가 든 컴포넌트는 고정 데이터에 없다
+      expect(sqlite.queryComponents({ query: "컴포넌트" })).toEqual({
+        rows: [],
+        total: 0,
+        matchMode: "any-term",
+        terms: { used: [], ignored: ["컴포넌트"], dropped: [], required: 0 },
+      });
+    });
+
+    it("패키지명처럼 그 낱말이 든 더 긴 검색어는 빼지 않는다", () => {
+      const result = sqlite.queryComponents({ query: "egovframework.com.cop.bbs" });
+      expect(idsOf(result.rows)).toEqual(["bbs"]);
+      expect(result.terms?.dropped).toEqual([]);
+    });
+
+    it("다른 낱말과 기호로 이어 적힌 영어 기능어는 검색어로 쓴다 ('Q&A' 의 'A')", () => {
+      sqlite.addCommonComponentsBatch([extra("qna", "Q&A관리", "Q&A Management", "질문과 답변을 관리함")]);
+      // 'A' 를 관사로 보고 빼면 'Q' 하나로 찾게 되고, 빠졌다는 안내까지 붙는다
+      for (const query of ["Q&A", "q&a", "Ｑ＆Ａ"]) {
+        const result = sqlite.queryComponents({ query });
+        expect(idsOf(result.rows), `query=${query}`).toEqual(["qna"]);
+        expect(result.matchMode, `query=${query}`).toBe("all-terms");
+        expect(result.terms?.used.map((term) => term.toLowerCase()), `query=${query}`).toEqual(["q", "a"]);
+        expect(result.terms?.dropped, `query=${query}`).toEqual([]);
+      }
+      expect(termsOf("Q&A 관리")).toEqual({ used: ["Q", "A", "관리"], ignored: [], dropped: [], required: 3 });
+      // 따로 적은 'a' 는 관사로 보고 뺀다
+      expect(termsOf("a Q")).toEqual({ used: ["Q"], ignored: [], dropped: ["a"], required: 1 });
+    });
+  });
+
   describe("2단계: 대체 검색 (any-term)", () => {
     it("문장으로 물어도 뜻이 있는 검색어가 일치하는 컴포넌트를 찾는다", () => {
-      // 게시판: 2행 / 컴포넌트: 0행(제외) → k=1
-      const result = sqlite.queryComponents({ query: "게시판 컴포넌트" });
+      // 게시판: 2행 / 추천: 0행(제외) → k=1
+      const result = sqlite.queryComponents({ query: "게시판 추천" });
       expect(idsOf(result.rows)).toEqual(["bbs", "tpl"]);
       expect(result.matchMode).toBe("any-term");
     });
@@ -295,7 +379,7 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     });
 
     it("limit 은 대체 검색 결과에도 적용하고, total 은 전체 일치 건수다", () => {
-      const result = sqlite.queryComponents({ query: "게시판 컴포넌트", limit: 1 });
+      const result = sqlite.queryComponents({ query: "게시판 추천", limit: 1 });
       expect(idsOf(result.rows)).toEqual(["bbs"]);
       expect(result.total).toBe(2);
       expect(result.matchMode).toBe("any-term");
@@ -332,10 +416,11 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     });
 
     it("대체 검색에서는 일치하는 컴포넌트가 없어 쓰지 않은 검색어를 ignored 로 돌려준다", () => {
+      // '컴포넌트' 는 목록의 모든 항목에 해당하는 낱말이라 일치하는 컴포넌트가 있는지 보기 전에 뺀다 (dropped)
       expect(termsOf("게시판 컴포넌트 DDL 보여줘")).toEqual({
         used: ["게시판"],
-        ignored: ["컴포넌트", "DDL", "보여줘"],
-        dropped: [],
+        ignored: ["DDL", "보여줘"],
+        dropped: ["컴포넌트"],
         required: 1,
       });
       expect(termsOf("만들기 방법")).toEqual({ used: [], ignored: ["만들기", "방법"], dropped: [], required: 0 });

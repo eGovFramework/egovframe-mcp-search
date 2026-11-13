@@ -166,12 +166,12 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
     });
 
     it("모든 검색어가 든 컴포넌트가 없어 대체 검색으로 찾았으면 any-term 을 알린다", () => {
-      // 게시판: 2행 / 컴포넌트·DDL·보여줘: 0행(세지 않는다) → 게시판이 일치하는 행을 찾는다
+      // 게시판: 2행 / DDL·보여줘: 0행(세지 않는다) → 게시판이 일치하는 행을 찾는다 ('컴포넌트' 는 검색어로 쓰지 않는다)
       const found = searchComponents("게시판 컴포넌트 DDL 보여줘");
       expect(idsOf(found.results)).toEqual(["bbs", "tpl"]);
       expect(found).toMatchObject({ total: 2, matchMode: "any-term" });
 
-      const partial = searchComponents("게시판 컴포넌트");
+      const partial = searchComponents("게시판 보여줘");
       expect(idsOf(partial.results)).toEqual(["bbs", "tpl"]);
       expect(partial).toMatchObject({ total: 2, matchMode: "any-term" });
 
@@ -181,6 +181,15 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
       expect(nothing).toMatchObject({ total: 0, matchMode: "any-term" });
     });
 
+    it("목록의 모든 항목에 해당하는 낱말을 빼고 남은 검색어가 모두 일치하면 all-terms 다", () => {
+      // '컴포넌트' 를 검색어로 쓰던 때에는 그 낱말이 든 컴포넌트가 없어 대체 검색(any-term)이 되었다
+      const found = searchComponents("게시판 컴포넌트");
+      expect(idsOf(found.results)).toEqual(["bbs", "tpl"]);
+      expect(found).toMatchObject({ total: 2, matchMode: "all-terms", droppedTerms: ["컴포넌트"] });
+      expect(found).not.toHaveProperty("usedTerms");
+      expect(found).not.toHaveProperty("ignoredTerms");
+    });
+
     it("낱말의 가운데나 뒤쪽에 든 검색어로 찾은 결과는 all-terms 다", () => {
       const found = searchComponents("증서");
       expect(idsOf(found.results)).toEqual(["sec"]);
@@ -188,11 +197,15 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
     });
 
     it("일치하는 컴포넌트가 없어 쓰지 않은 검색어를 ignoredTerms 로 알린다", () => {
-      expect(searchComponents("게시판 컴포넌트 DDL 보여줘").ignoredTerms).toEqual(["컴포넌트", "DDL", "보여줘"]);
+      // '컴포넌트' 는 일치하는 컴포넌트가 있는지 보기 전에 빼는 낱말이라 droppedTerms 에 따로 실린다
+      const sentence = searchComponents("게시판 컴포넌트 DDL 보여줘");
+      expect(sentence.ignoredTerms).toEqual(["DDL", "보여줘"]);
+      expect(sentence.droppedTerms).toEqual(["컴포넌트"]);
       // 결과가 0건이어도 알린다
       const nothing = searchComponents("컴포넌트 DDL 보여줘");
       expect(nothing.total).toBe(0);
-      expect(nothing.ignoredTerms).toEqual(["컴포넌트", "DDL", "보여줘"]);
+      expect(nothing.ignoredTerms).toEqual(["DDL", "보여줘"]);
+      expect(nothing.droppedTerms).toEqual(["컴포넌트"]);
       // 필터를 적용한 대상 안에서 일치하는 컴포넌트가 없는 검색어도 알린다
       expect(searchComponents("증서 게시판", 20, { categoryId: "로그인" }).ignoredTerms).toEqual(["게시판"]);
     });
@@ -233,6 +246,19 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
         expect(found, `query=${query}`).not.toHaveProperty("ignoredTerms");
       }
       expect(searchComponents("?!")).not.toHaveProperty("ignoredTerms");
+    });
+
+    it("영어 기능어와 프레임워크 자체를 가리키는 낱말도 droppedTerms 로 알린다", () => {
+      const sentence = searchComponents("how to implement login in eGovFrame");
+      expect(idsOf(sentence.results)).toEqual(["uia", "sec"]);
+      expect(sentence).toMatchObject({
+        matchMode: "any-term",
+        usedTerms: ["login"],
+        ignoredTerms: ["implement"],
+        droppedTerms: ["how", "to", "in", "eGovFrame"],
+      });
+      // 그런 낱말뿐이면 빼지 않는다
+      expect(searchComponents("egovframework")).not.toHaveProperty("droppedTerms");
     });
 
     it("한 글자라서 뺀 검색어를 droppedTerms 로 알린다", () => {
@@ -639,15 +665,16 @@ describe("공통컴포넌트 도구 — 결과 포맷", () => {
       );
     });
 
-    const DROPPED_NOTE = "> 한 글자라서 검색에 쓰지 않은 낱말: x, y.";
+    const DROPPED_NOTE =
+      "> 한 글자이거나, 영어 기능어이거나, 목록의 모든 항목에 해당해 검색에 쓰지 않은 낱말: x, with, 컴포넌트.";
 
-    it("한 글자라서 뺀 낱말(droppedTerms)은 일치하는 항목이 없어 쓰지 않은 낱말 다음 줄에 따로 적는다", () => {
+    it("검색에서 뺀 낱말(droppedTerms)은 일치하는 항목이 없어 쓰지 않은 낱말 다음 줄에 따로 적는다", () => {
       const lines = formatComponentList([uia], false, {
         matchMode: "any-term",
         usedTerms: ["로그인"],
         requiredMatches: 1,
         ignoredTerms: ["보여줘"],
-        droppedTerms: ["x", "y"],
+        droppedTerms: ["x", "with", "컴포넌트"],
       }).split("\n");
       expect(lines.slice(0, 8)).toEqual([
         "## 공통컴포넌트 목록 (1개)",
@@ -665,7 +692,7 @@ describe("공통컴포넌트 도구 — 결과 포맷", () => {
       for (const groupByCategory of [true, false]) {
         const lines = formatComponentList([sec], groupByCategory, {
           matchMode: "all-terms",
-          droppedTerms: ["x", "y"],
+          droppedTerms: ["x", "with", "컴포넌트"],
         }).split("\n");
         expect(lines.slice(0, 4), `groupByCategory=${groupByCategory}`).toEqual([
           "## 공통컴포넌트 목록 (1개)",
@@ -685,7 +712,7 @@ describe("공통컴포넌트 도구 — 결과 포맷", () => {
         usedTerms: [],
         requiredMatches: 0,
         ignoredTerms: ["없는말"],
-        droppedTerms: ["x", "y"],
+        droppedTerms: ["x", "with", "컴포넌트"],
       });
       expect(text.split("\n")).toEqual([
         "## 공통컴포넌트 목록 (0개)",

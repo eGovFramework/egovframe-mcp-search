@@ -8,7 +8,16 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { getSQLiteDBPath } from '../utils/projectPath.js';
-import { codePointLength, extractSearchTerms, particleStrippedForms } from '../utils/fts5Query.js';
+import {
+  COMPATIBILITY_GENERIC_WORDS,
+  COMPONENT_GENERIC_WORDS,
+  codePointLength,
+  dropGenericTerms,
+  extractSearchTerms,
+  parseKeywordQuery,
+  particleStrippedForms,
+  type KeywordQuery,
+} from '../utils/fts5Query.js';
 import { escapeLikePattern } from '../utils/sqlLike.js';
 import { UserFacingError } from '../utils/errors.js';
 import { normalizeFrameworkVersion } from '../utils/frameworkVersion.js';
@@ -326,12 +335,15 @@ export class SQLiteManager {
     query: string,
     limit: number = 20,
   ): { rows: CompatibilitySoftware[]; total: number } {
-    const terms = extractSearchTerms(query);
+    const target = COMPATIBILITY_SEARCH_ALL_COLUMNS;
+    // 가려 주지 못하는 낱말은 조회(keywordSearch)와 같이 뺀다. 검색어가 하나도 추출되지 않으면 빈 배열 그대로다
+    const parsed = parseKeywordQuery(query);
+    const terms = dropGenericTerms(parsed.terms, target.genericTerms, parsed.joinedTerms);
     if (terms.length === 0) {
       return { rows: [], total: 0 };
     }
     const page: SqlPage = { limit: toSqlLimit(limit), offset: 0 };
-    const found = this.allTermsStage<CompatibilitySoftware>(COMPATIBILITY_SEARCH_ALL_COLUMNS, terms, NO_FILTER, page);
+    const found = this.allTermsStage<CompatibilitySoftware>(target, terms, NO_FILTER, page);
     return found ? { rows: found.rows, total: found.total } : { rows: [], total: 0 };
   }
 
@@ -364,9 +376,9 @@ export class SQLiteManager {
     const filter = this.buildCompatibilityFilter(options.filters ?? {});
     const page: SqlPage = { limit: toSqlLimit(options.limit), offset: toSqlOffset(options.offset) };
 
-    const terms = extractSearchTerms(options.query ?? '');
-    if (terms.length > 0) {
-      return this.keywordSearch<Row>(target, terms, filter, page);
+    const query = parseKeywordQuery(options.query ?? '');
+    if (query.terms.length > 0) {
+      return this.keywordSearch<Row>(target, query, filter, page);
     }
 
     const from = `FROM ${target.table} WHERE 1=1${filter.sql}`;
@@ -445,6 +457,8 @@ export class SQLiteManager {
    * 부분 문자열로 견주면 안 되는 컬럼은 대상이 따로 정한 조건(termConditions)으로 견준다. 일치 판정은
    * 아래의 모든 단계가 termMatcher 가 만든 조건 하나를 쓴다.
    *
+   * 0) 행을 가려 주지 못하는 낱말을 검색어에서 뺀다 (dropGenericTerms): 영어 기능어와, 대상의 모든 항목에
+   *    해당하는 낱말(target.genericTerms). 다른 검색어가 남을 때만 뺀다.
    * 1) 모든 검색어가 일치하는 행을 찾는다 (allTermsStage). 한 글자 검색어도 쓰고, 그렇게 해서 찾은 행이 없을
    *    때만 한 글자 검색어를 빼고 다시 찾는다.
    * 2) 필터까지 적용한 결과가 0건이면 한 글자 검색어를 뺀 채로(dropSingleCharacterTerms) 대체 검색
@@ -455,26 +469,30 @@ export class SQLiteManager {
    * 두 단계 모두 일치한 검색어가 많은 행, 이름 컬럼(nameColumns)에 일치한 검색어가 많은 행, 대상의 기본 정렬,
    * rowid 순으로 돌려준다 (selectByMatchedTerms).
    *
-   * 결과의 terms 는 실제로 쓴 검색어(used), 일치하는 행이 없어 쓰지 않은 검색어(ignored), 검색에서 뺀 한 글자
-   * 검색어(dropped), 결과의 행마다 일치한 검색어의 최소 수(required)다.
+   * 결과의 terms 는 실제로 쓴 검색어(used), 일치하는 행이 없어 쓰지 않은 검색어(ignored), 일치하는 행이 있는지와
+   * 관계없이 검색에서 뺀 검색어(dropped: 가려 주지 못하는 낱말과 한 글자 검색어), 결과의 행마다 일치한 검색어의
+   * 최소 수(required)다.
    */
   private keywordSearch<Row>(
     target: KeywordSearchTarget,
-    terms: string[],
+    query: KeywordQuery,
     filter: SqlCondition,
     page: SqlPage,
   ): { rows: Row[]; total: number; matchMode: KeywordMatchMode; terms: KeywordTermUsage } {
+    const { terms } = query;
     /** 검색에 넘긴 검색어(searched)에 들지 못한, 검색에서 뺀 검색어. query 에 적힌 순서다 */
     const droppedFrom = (searched: string[]): string[] => terms.filter((term) => !searched.includes(term));
 
-    const allTerms = this.allTermsStage<Row>(target, terms, filter, page);
+    const distinctive = dropGenericTerms(terms, target.genericTerms, query.joinedTerms);
+
+    const allTerms = this.allTermsStage<Row>(target, distinctive, filter, page);
     if (allTerms) {
       const { used, rows, total } = allTerms;
       const usage: KeywordTermUsage = { used, ignored: [], dropped: droppedFrom(used), required: used.length };
       return { rows, total, matchMode: 'all-terms', terms: usage };
     }
 
-    const searchable = dropSingleCharacterTerms(terms);
+    const searchable = dropSingleCharacterTerms(distinctive);
     const fallback = this.anyTermSearch<Row>(target, searchable, filter, page);
     return {
       rows: fallback.rows,
@@ -1041,9 +1059,9 @@ export class SQLiteManager {
     const filter = this.buildComponentFilter(options.filters ?? {});
     const page: SqlPage = { limit: toSqlLimit(options.limit), offset: 0 };
 
-    const terms = extractSearchTerms(options.query ?? '');
-    if (terms.length > 0) {
-      return this.keywordSearch<CommonComponent>(COMPONENT_SEARCH, terms, filter, page);
+    const query = parseKeywordQuery(options.query ?? '');
+    if (query.terms.length > 0) {
+      return this.keywordSearch<CommonComponent>(COMPONENT_SEARCH, query, filter, page);
     }
 
     const from = `FROM ${COMPONENT_SEARCH.table} ${COMPONENT_SEARCH.joins} WHERE 1=1${filter.sql}`;
@@ -1262,6 +1280,11 @@ interface KeywordSearchTarget {
    */
   termConditions?: (term: string) => SqlExpression[];
   /**
+   * 이 대상의 모든 항목에 해당해 행을 가려 주지 못하는 낱말 (소문자). 다른 검색어가 남을 때만 검색어에서 뺀다.
+   * 영어 기능어는 어느 대상에나 적용하므로 여기에 넣지 않는다 (utils/fts5Query 의 dropGenericTerms)
+   */
+  genericTerms: ReadonlySet<string>;
+  /**
    * 기본 정렬. 키워드 검색에서 일치한 검색어 수와 이름에 일치한 검색어 수 다음에 적용하고,
    * 호환성 소프트웨어는 키워드 없는 필터 조회에도 이 정렬을 쓴다
    */
@@ -1354,6 +1377,8 @@ const COMPATIBILITY_SEARCH: KeywordSearchTarget = {
   nameColumns: ['cs.product_name', 'cs.product_version'],
   // 프레임워크 버전과 확인일자는 부분 문자열이 아닌 규칙으로 견준다
   termConditions: compatibilityTermConditions,
+  // 목록의 모든 행이 이 프레임워크와의 호환성에 관한 것이다 ('eGovFrame 4.3 호환 CMS' 의 'eGovFrame')
+  genericTerms: COMPATIBILITY_GENERIC_WORDS,
   defaultOrder: COMPATIBILITY_NEWEST_FIRST,
 };
 
@@ -1367,6 +1392,8 @@ const COMPONENT_SEARCH: KeywordSearchTarget = {
   rowid: 'c.id',
   searchColumns: ['c.component_id', 'c.name', 'c.name_en', 'c.description', 'c.description_en', 'c.package_name'],
   nameColumns: ['c.component_id', 'c.name', 'c.name_en'],
+  // 목록의 모든 항목이 이 프레임워크의 컴포넌트다 ('게시판 컴포넌트' 의 '컴포넌트')
+  genericTerms: COMPONENT_GENERIC_WORDS,
   // 이름이 짧을수록 검색어가 이름에서 차지하는 비중이 크다 ('로그인' 에는 '로그인화면이미지관리' 보다 '일반로그인' 이 가깝다).
   // 일치한 검색어 수가 같은 컴포넌트는 이름이 짧은 것부터, 길이도 같으면 컴포넌트 ID 순으로 놓는다
   defaultOrder: 'LENGTH(c.name), c.component_id',

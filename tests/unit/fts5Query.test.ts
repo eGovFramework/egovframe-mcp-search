@@ -7,9 +7,15 @@
  */
 import { describe, it, expect } from "vitest";
 import {
+  COMPATIBILITY_GENERIC_WORDS,
+  COMPONENT_GENERIC_WORDS,
+  ENGLISH_FUNCTION_WORDS,
   MAX_KEYWORD_QUERY_LENGTH,
   MAX_SEARCH_TERMS,
+  dropGenericTerms,
   extractSearchTerms,
+  isGenericTerm,
+  joinedTermKeys,
   particleStrippedForms,
   trimEdgeSeparators,
 } from "../../src/utils/fts5Query.js";
@@ -141,6 +147,169 @@ describe("extractSearchTerms 가 빼는 접속사", () => {
 
   it("뺀 접속사는 검색어 수 상한에 세지 않는다", () => {
     expect(extractSearchTerms("a AND b OR c NOT d", 3)).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("가려 주지 못하는 낱말 (dropGenericTerms, isGenericTerm)", () => {
+  /** 프레임워크 자체를 가리키는 낱말 */
+  const FRAMEWORK = ["egovframe", "egovframework", "egov", "전자정부", "표준프레임워크", "전자정부프레임워크", "전자정부표준프레임워크"];
+  /** 공통컴포넌트 목록의 모든 항목에 해당하는 낱말 */
+  const COMPONENT = ["컴포넌트", "공통컴포넌트", "component", "components"];
+
+  it("영어 기능어 목록은 정해진 낱말 그대로다", () => {
+    expect([...ENGLISH_FUNCTION_WORDS].sort()).toEqual(
+      [
+        ...["a", "an", "the", "is", "are", "were", "be", "do", "does", "did"],
+        ...["can", "could", "will", "would", "should", "with", "for", "in", "on", "of", "to", "from", "by", "at", "as"],
+        ...["it", "this", "that", "what", "which", "how"],
+      ].sort(),
+    );
+  });
+
+  it("was 는 영어 기능어 목록에 넣지 않는다 (호환 소프트웨어의 분류 WAS 와 같은 낱말이다)", () => {
+    expect(ENGLISH_FUNCTION_WORDS.has("was")).toBe(false);
+    for (const terms of [["국산", "WAS"], ["was", "추천"], ["which", "WAS", "is", "compatible"]]) {
+      expect(dropGenericTerms(terms, COMPATIBILITY_GENERIC_WORDS), terms.join(" ")).toContain(terms.find((t) => /was/i.test(t)));
+    }
+    expect(dropGenericTerms(["which", "WAS", "is", "compatible"], COMPATIBILITY_GENERIC_WORDS)).toEqual(["WAS", "compatible"]);
+  });
+
+  it("대상의 모든 항목에 해당하는 낱말은 대상마다 다르다", () => {
+    // 호환 소프트웨어: 프레임워크 자체를 가리키는 낱말 / 공통컴포넌트: 거기에 컴포넌트를 가리키는 낱말을 더한 것
+    expect([...COMPATIBILITY_GENERIC_WORDS].sort()).toEqual([...FRAMEWORK].sort());
+    expect([...COMPONENT_GENERIC_WORDS].sort()).toEqual([...FRAMEWORK, ...COMPONENT].sort());
+  });
+
+  it("영어 기능어는 어느 대상에서나 뺀다 (대소문자를 가리지 않는다)", () => {
+    for (const words of [COMPATIBILITY_GENERIC_WORDS, COMPONENT_GENERIC_WORDS]) {
+      expect(dropGenericTerms(["Is", "Tibero", "compatible", "WITH", "4.3"], words)).toEqual(["Tibero", "compatible", "4.3"]);
+      expect(dropGenericTerms(["how", "to", "implement", "login"], words)).toEqual(["implement", "login"]);
+    }
+  });
+
+  it("프레임워크 자체를 가리키는 낱말은 두 대상 모두에서 뺀다", () => {
+    for (const words of [COMPATIBILITY_GENERIC_WORDS, COMPONENT_GENERIC_WORDS]) {
+      for (const word of [...FRAMEWORK, "eGovFrame", "EGOVFRAMEWORK", "eGov"]) {
+        expect(dropGenericTerms([word, "4.3", "CMS"], words), `word=${word}`).toEqual(["4.3", "CMS"]);
+      }
+    }
+  });
+
+  it("컴포넌트를 가리키는 낱말은 공통컴포넌트에서만 뺀다", () => {
+    for (const word of [...COMPONENT, "Component", "COMPONENTS"]) {
+      expect(dropGenericTerms(["게시판", word], COMPONENT_GENERIC_WORDS), `word=${word}`).toEqual(["게시판"]);
+      expect(dropGenericTerms(["게시판", word], COMPATIBILITY_GENERIC_WORDS), `word=${word}`).toEqual(["게시판", word]);
+    }
+  });
+
+  it("목록에 없는 낱말은 뜻이 비슷해도 빼지 않는다", () => {
+    // 'Framework Solution' 은 호환 소프트웨어의 분류 이름이다
+    const terms = ["framework", "프레임워크", "solution", "솔루션", "JEUS"];
+    expect(dropGenericTerms(terms, COMPATIBILITY_GENERIC_WORDS)).toEqual(terms);
+    expect(dropGenericTerms(terms, COMPONENT_GENERIC_WORDS)).toEqual(terms);
+  });
+
+  it("목록의 낱말이 다른 낱말의 일부일 뿐이면 빼지 않는다", () => {
+    const terms = ["within", "forum", "information", "eGovFrameWeb", "egov-cms", "subcomponent", "전자정부포털"];
+    expect(dropGenericTerms(terms, COMPONENT_GENERIC_WORDS)).toEqual(terms);
+  });
+
+  it("뺀 뒤에 남는 검색어가 없으면 빼지 않고 그대로 돌려준다", () => {
+    // 제품명에 eGovframe 이 든 제품을 그 낱말만으로 찾을 수 있어야 한다
+    expect(dropGenericTerms(["eGovframe"], COMPATIBILITY_GENERIC_WORDS)).toEqual(["eGovframe"]);
+    expect(dropGenericTerms(["컴포넌트"], COMPONENT_GENERIC_WORDS)).toEqual(["컴포넌트"]);
+    expect(dropGenericTerms(["is", "the", "eGovFrame"], COMPATIBILITY_GENERIC_WORDS)).toEqual(["is", "the", "eGovFrame"]);
+    expect(dropGenericTerms([], COMPATIBILITY_GENERIC_WORDS)).toEqual([]);
+  });
+
+  it("남는 검색어가 한 글자뿐이어도 다른 검색어가 남은 것이다", () => {
+    expect(dropGenericTerms(["eGovFrame", "8"], COMPATIBILITY_GENERIC_WORDS)).toEqual(["8"]);
+  });
+
+  it("대상의 모든 항목에 해당하는 낱말은 조사가 붙어 있어도 뺀다", () => {
+    expect(dropGenericTerms(["eGovFrame에서", "쓰는", "CMS"], COMPATIBILITY_GENERIC_WORDS)).toEqual(["쓰는", "CMS"]);
+    expect(dropGenericTerms(["전자정부의", "표준프레임워크로", "JEUS"], COMPATIBILITY_GENERIC_WORDS)).toEqual(["JEUS"]);
+    expect(dropGenericTerms(["게시판", "컴포넌트를"], COMPONENT_GENERIC_WORDS)).toEqual(["게시판"]);
+    expect(dropGenericTerms(["components는", "게시판"], COMPONENT_GENERIC_WORDS)).toEqual(["게시판"]);
+  });
+
+  it("영어 기능어는 한글이 붙어 있으면 빼지 않는다", () => {
+    // 'IT서비스', 'AS센터' 는 영어 기능어 it, as 로 시작하지만 다른 낱말이다
+    const terms = ["IT서비스", "AS센터", "IT는", "관리"];
+    expect(dropGenericTerms(terms, COMPATIBILITY_GENERIC_WORDS)).toEqual(terms);
+    expect(dropGenericTerms(["IT", "관리"], COMPATIBILITY_GENERIC_WORDS)).toEqual(["관리"]);
+  });
+
+  it("isGenericTerm 은 낱말 하나가 목록의 낱말인지 알려 준다", () => {
+    expect(isGenericTerm("with", COMPATIBILITY_GENERIC_WORDS)).toBe(true);
+    expect(isGenericTerm("eGovFrame", COMPATIBILITY_GENERIC_WORDS)).toBe(true);
+    expect(isGenericTerm("eGovFrame에서", COMPATIBILITY_GENERIC_WORDS)).toBe(true);
+    expect(isGenericTerm("컴포넌트", COMPONENT_GENERIC_WORDS)).toBe(true);
+    expect(isGenericTerm("컴포넌트", COMPATIBILITY_GENERIC_WORDS)).toBe(false);
+    expect(isGenericTerm("JEUS", COMPATIBILITY_GENERIC_WORDS)).toBe(false);
+    expect(isGenericTerm("", COMPATIBILITY_GENERIC_WORDS)).toBe(false);
+  });
+
+  it("다른 낱말과 기호로 이어 적힌 영어 기능어는 빼지 않는다", () => {
+    // 'Q&A' 의 'A' 는 관사가 아니고, 'on/off' 의 'on' 은 전치사가 아니다. 이어 적힌 낱말은 joinedTermKeys 가 알려 준다
+    expect(dropGenericTerms(["Q", "A", "관리"], COMPONENT_GENERIC_WORDS, new Set(["q", "a"]))).toEqual(["Q", "A", "관리"]);
+    expect(dropGenericTerms(["on", "off", "스위치"], COMPONENT_GENERIC_WORDS, new Set(["on", "off"]))).toEqual([
+      "on",
+      "off",
+      "스위치",
+    ]);
+    // 따로 적힌 것은 뺀다
+    expect(dropGenericTerms(["Q", "A", "관리"], COMPONENT_GENERIC_WORDS, new Set())).toEqual(["Q", "관리"]);
+    expect(isGenericTerm("A", COMPONENT_GENERIC_WORDS, new Set(["a"]))).toBe(false);
+    expect(isGenericTerm("A", COMPONENT_GENERIC_WORDS)).toBe(true);
+  });
+
+  it("대상의 모든 항목에 해당하는 낱말은 이어 적혀 있어도 뺀다", () => {
+    // '전자정부(표준프레임워크)' 처럼 적어도 두 낱말은 프레임워크 자체를 가리킨다
+    const joined = new Set(["전자정부", "표준프레임워크", "egovframe", "spring"]);
+    expect(dropGenericTerms(["전자정부", "표준프레임워크", "4.3", "CMS"], COMPATIBILITY_GENERIC_WORDS, joined)).toEqual([
+      "4.3",
+      "CMS",
+    ]);
+    expect(dropGenericTerms(["eGovFrame", "Spring"], COMPATIBILITY_GENERIC_WORDS, joined)).toEqual(["Spring"]);
+  });
+});
+
+describe("joinedTermKeys", () => {
+  const joined = (raw: string) => [...joinedTermKeys(raw)].sort();
+
+  it("앞이나 뒤의 낱말과 공백 없이 기호로 이어 적힌 낱말을 소문자로 돌려준다", () => {
+    expect(joined("Q&A 관리")).toEqual(["a", "q"]);
+    expect(joined("on/off 스위치")).toEqual(["off", "on"]);
+    expect(joined("JEUS,Tibero+WebLogic")).toEqual(["jeus", "tibero", "weblogic"]);
+    expect(joined("게시판(BBS)")).toEqual(["bbs", "게시판"]);
+  });
+
+  it("공백으로 떨어져 있으면 이어 적힌 것이 아니다 (문장부호가 붙어 있어도 같다)", () => {
+    expect(joined("Q A")).toEqual([]);
+    expect(joined("Q & A")).toEqual([]);
+    expect(joined('Is Tibero "compatible" (with) eGovFrame 4.3?')).toEqual([]);
+    expect(joined("JEUS, Tibero")).toEqual([]);
+    expect(joined("게시판")).toEqual([]);
+    expect(joined("")).toEqual([]);
+  });
+
+  it("'.', '-', '_' 로 이은 것은 한 낱말이라 해당하지 않는다", () => {
+    expect(joined("to-do in_out egovframework.com")).toEqual([]);
+  });
+
+  it("전각 문자는 반각으로 바꾼 뒤에 본다", () => {
+    expect(joined("Ｑ＆Ａ")).toEqual(["a", "q"]);
+    // 전각 공백은 공백이다
+    expect(joined("Ｑ　Ａ")).toEqual([]);
+  });
+
+  it("한 번이라도 이어 적혔으면 이어 적힌 낱말이다", () => {
+    expect(joined("a CMS 와 Q&A")).toEqual(["a", "q"]);
+  });
+
+  it("extractSearchTerms 와 같이 query 의 앞 2,000자만 읽는다", () => {
+    expect(joined(`${"x ".repeat(1000)}Q&A`)).toEqual([]);
   });
 });
 

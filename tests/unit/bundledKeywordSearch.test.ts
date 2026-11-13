@@ -10,6 +10,8 @@
  * - 제품명을 여럿 나열하거나 영어 문장으로 물으면 0건이었다 ("JEUS Tibero WebLogic").
  * - vendor 필터가 법인 표기까지 같은 행만 돌려줬다 ("(주)아이액츠", "㈜아이액츠", "주식회사 아이액츠").
  * - 한 글자 낱말을 검색어에서 빼, 그 낱말이 가려 주던 행이 나머지 낱말만의 결과에 묻혔다 ("롤 관리", "JEUS 8").
+ * - 영어 기능어와 목록의 모든 항목에 해당하는 낱말이 결과를 흩뜨렸다 ("Is Tibero compatible with eGovFrame 4.3?",
+ *   "eGovFrame 4.3 호환 CMS", "게시판 컴포넌트").
  *
  * DB 는 읽기 전용으로 열고, 조회가 파일을 바꾸지 않았는지 마지막에 확인한다.
  * 동봉 데이터는 갱신될 수 있으므로 건수를 숫자로 고정하지 않고, 같은 뜻의 두 조회가 같은 결과를 내는지와
@@ -88,6 +90,21 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       }
     });
 
+    it('"게시판 컴포넌트" 는 게시판 컴포넌트를 맨 앞에, "게시판" 과 같은 컴포넌트를 돌려준다', () => {
+      // '컴포넌트' 를 검색어로 쓰던 때에는 두 낱말이 모두 설명에 든 웹에디터(wed) 한 건만 나왔다
+      const board = sqlite.queryComponents({ query: "게시판" });
+      const result = sqlite.queryComponents({ query: "게시판 컴포넌트" });
+      expect(result.matchMode).toBe("all-terms");
+      expect(result.terms).toEqual({ used: ["게시판"], ignored: [], dropped: ["컴포넌트"], required: 1 });
+      expect(idsOf(result.rows)).toEqual(idsOf(board.rows));
+      expect(idsOf(result.rows)[0]).toBe("bbs");
+      expect(result.total).toBeGreaterThan(1);
+      // 그 낱말뿐이면 빼지 않고 그대로 찾는다
+      const alone = sqlite.queryComponents({ query: "컴포넌트" });
+      expect(alone.terms).toEqual({ used: ["컴포넌트"], ignored: [], dropped: [], required: 1 });
+      expect(idsOf(alone.rows)).toContain("wed");
+    });
+
     it("컴포넌트 ID 로도 찾는다 (패키지명과 다른 ID)", () => {
       // 'uss-cmt' 의 패키지명은 egovframework.com.uss.cmt 다. ID 에만 'uss-cmt' 가 있다
       expect(idsOf(sqlite.queryComponents({ query: "uss-cmt" }).rows)).toEqual(["uss-cmt"]);
@@ -125,9 +142,29 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       const result = compatible("Is JEUS compatible with eGovFrame 4.3?");
       expect(result.matchMode).toBe("any-term");
       expect(result.total).toBeGreaterThan(0);
-      expect(result.terms?.used).toEqual(expect.arrayContaining(["JEUS", "4.3"]));
+      // 영어 기능어(Is, with)와 프레임워크 자체를 가리키는 낱말(eGovFrame)은 검색어로 쓰지 않는다
+      expect(result.terms).toEqual({
+        used: ["JEUS", "4.3"],
+        ignored: ["compatible"],
+        dropped: ["Is", "with", "eGovFrame"],
+        required: 1,
+      });
       // 일치한 검색어가 가장 많은 행이 맨 앞이다: 프레임워크 4.3 의 JEUS
       expect(result.rows[0]).toMatchObject({ product_name: "JEUS", framework_version: "4.3" });
+    });
+
+    it("영어 기능어가 제품명의 일부와 일치한 행은 결과에 섞이지 않는다", () => {
+      // 'Is' 는 aXis·WISE 의 일부와, 'with' 는 WITHCMS 의 일부와 일치한다. 검색어로 쓰던 때에는 그런 행이
+      // "Is Tibero compatible with eGovFrame 4.3?" 의 맨 앞을 차지했다
+      const result = compatible("Is Tibero compatible with eGovFrame 4.3?");
+      expect(result.terms?.used).toEqual(["Tibero", "4.3"]);
+      expect(result.terms?.dropped).toEqual(["Is", "with", "eGovFrame"]);
+      // Tibero 가 든 행과 4.3 의 행을 합친 것과 같다
+      const expected = new Set([...rowKeys(compatible("Tibero")), ...rowKeys(compatible("4.3"))]);
+      expect(rowSet(result)).toEqual([...expected].sort());
+      expect(result.rows.some((row) => /^(aXis|WISE|WITHCMS)/i.test(row.product_name) && row.framework_version !== "4.3")).toBe(
+        false,
+      );
     });
 
     it('"CMS 추천" 은 any-term 으로 CMS 행을 돌려준다', () => {
@@ -225,24 +262,59 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       }
     });
 
-    it('"eGovFrame 4.3 호환 CMS" 는 이름에 eGovFrame 이 든 행 다음에 프레임워크 4.3 의 CMS Solution 행을 모두 돌려준다', () => {
+    it('"eGovFrame 4.3 호환 CMS" 는 프레임워크 4.3 의 CMS Solution 행을 돌려준다', () => {
+      // 'eGovFrame' 을 검색어로 쓰던 때에는 네 검색어가 모두 든 행이 없어 대체 검색(300건 남짓)이 되었고,
+      // 제품명에 eGovframe 이 든 다른 프레임워크 버전의 제품이 맨 앞에 왔다
       const result = compatible("eGovFrame 4.3 호환 CMS");
+      expect(result.matchMode).toBe("all-terms");
+      expect(result.terms).toEqual({ used: ["4.3", "호환", "CMS"], ignored: [], dropped: ["eGovFrame"], required: 3 });
+      // 'eGovFrame' 을 적지 않은 query 와 행도 순서도 같다
+      expect(rowKeys(result)).toEqual(rowKeys(compatible("4.3 호환 CMS")));
+
       const cms43 = sqlite.queryCompatibleSoftware({ filters: { frameworkVersion: "4.3", category: "CMS Solution" } });
       expect(cms43.total).toBeGreaterThan(0);
+      expect(rowSet(result)).toEqual(rowSet(cms43));
+      expect(result.rows.some((row) => /egovframe/i.test(row.product_name))).toBe(false);
+      // 한글로 적어도, 조사가 붙어도 같다
+      for (const query of ["전자정부 표준프레임워크 4.3 호환 CMS", "eGovFrame에서 4.3 호환 CMS"]) {
+        expect(rowKeys(compatible(query)), `query=${query}`).toEqual(rowKeys(result));
+      }
+    });
 
-      // 네 검색어가 모두 든 행은 없다: 'eGovFrame' 이 든 행은 다른 프레임워크 버전의 제품뿐이다
-      expect(result.matchMode).toBe("any-term");
-      expect(result.terms?.used).toEqual(["eGovFrame", "4.3", "호환", "CMS"]);
-      const namedAfterFramework = (row: CompatibilitySoftwareInfo) => /egovframe/i.test(row.product_name);
-      const named = result.rows.filter(namedAfterFramework);
-      expect(named.length).toBeGreaterThan(0);
-      expect(named.every((row) => row.framework_version !== "4.3")).toBe(true);
+    it("제품명에 eGovframe 이 든 제품은 그 낱말만으로도, 제품명 전체로도 찾는다", () => {
+      // 프레임워크 자체를 가리키는 낱말은 다른 검색어가 남을 때만 뺀다
+      const alone = compatible("eGovframe");
+      expect(alone.matchMode).toBe("all-terms");
+      expect(alone.terms).toEqual({ used: ["eGovframe"], ignored: [], dropped: [], required: 1 });
+      expect(alone.total).toBeGreaterThan(0);
+      expect(alone.rows.every((row) => /egovframe/i.test(`${row.product_name} ${row.description ?? ""}`))).toBe(true);
 
-      // 4.3 의 CMS Solution 행은 4.3·호환·CMS 세 검색어가 일치한다. 이름에 eGovFrame 과 CMS 가 든 행
-      // (세 검색어가 일치하고 그 가운데 둘이 이름에 있다)만 그보다 앞에 오고, 나머지 행은 모두 그 뒤다
-      const others = result.rows.filter((row) => !namedAfterFramework(row));
-      expect(others.slice(0, cms43.total).map(keyOf).sort()).toEqual(rowSet(cms43));
-      expect(result.rows.findIndex((row) => row.framework_version === "4.3")).toBeLessThanOrEqual(named.length);
+      const named = alone.rows.find((row) => row.product_name === "DL-WCMS for eGovframe");
+      expect(named).toBeDefined();
+      const full = compatible("DL-WCMS for eGovframe");
+      expect(full.matchMode).toBe("all-terms");
+      expect(full.terms).toEqual({ used: ["DL-WCMS"], ignored: [], dropped: ["for", "eGovframe"], required: 1 });
+      expect(full.rows.every((row) => row.product_name === "DL-WCMS for eGovframe")).toBe(true);
+      expect(full.total).toBeGreaterThan(0);
+    });
+
+    it('분류 이름 "WAS" 는 영어 기능어로 빼지 않는다', () => {
+      // 'was' 를 영어 기능어로 보면 분류 이름이 검색어에서 빠져, 남은 낱말만으로 찾게 된다
+      const was = compatible("WAS");
+      expect(was.total).toBeGreaterThan(0);
+      for (const query of ["국산 WAS", "WAS 추천해줘", "which WAS is compatible"]) {
+        const result = compatible(query);
+        expect(result.terms?.used, `query=${query}`).toEqual(["WAS"]);
+        expect(rowKeys(result), `query=${query}`).toEqual(rowKeys(was));
+      }
+      expect(compatible("which WAS is compatible").terms?.dropped).toEqual(["which", "is"]);
+
+      // 프레임워크 자체를 가리키는 낱말을 빼고 나면 4.3·호환·WAS 가 모두 든 행을 찾는다
+      const sentence = compatible("전자정부 4.3 호환 WAS");
+      expect(sentence.matchMode).toBe("all-terms");
+      expect(sentence.terms?.dropped).toEqual(["전자정부"]);
+      expect(sentence.total).toBeGreaterThan(0);
+      expect(sentence.rows.every((row) => row.framework_version === "4.3" && row.category === "WAS")).toBe(true);
     });
 
     it('"2025" 는 2025년에 확인된 행을 모두 돌려준다', () => {

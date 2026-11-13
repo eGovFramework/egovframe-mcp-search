@@ -335,6 +335,121 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     });
   });
 
+  describe("가려 주지 못하는 낱말 (영어 기능어, 프레임워크 자체를 가리키는 낱말)", () => {
+    const termsOf = (query: string) => sqlite.queryCompatibleSoftware({ query }).terms;
+
+    it("영어 기능어는 검색어로 쓰지 않는다", () => {
+      // 'the' 는 'OtherCMS' 의 가운데에 들어 있다. 검색어로 쓰면 JEUS 와 함께 든 행이 없어 대체 검색으로 넘어가고,
+      // 'the' 만 일치하는 OtherCMS 가 JEUS 두 행과 함께 나온다
+      const result = sqlite.queryCompatibleSoftware({ query: "the JEUS" });
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(result.matchMode).toBe("all-terms");
+      expect(result.terms).toEqual({ used: ["JEUS"], ignored: [], dropped: ["the"], required: 1 });
+    });
+
+    it("영어 문장으로 물어도 기능어가 제품명의 일부와 일치한 행이 섞이지 않는다", () => {
+      // on: 'CMS Solution' 의 끝 / as: 'WAS' 의 뒤쪽 / Is, with: 일치하는 행 없음. 넷 다 검색어로 쓰지 않는다.
+      // JEUS(2행)·4.3(2행)·WAS(3행) 가운데 둘 이상이 든 행은 JEUS 두 행이다 (compatible 은 어느 행에도 없다)
+      const result = sqlite.queryCompatibleSoftware({ query: "Is JEUS compatible with 4.3 on WAS?" });
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(result.matchMode).toBe("any-term");
+      expect(result.terms).toEqual({
+        used: ["JEUS", "4.3", "WAS"],
+        ignored: ["compatible"],
+        dropped: ["Is", "with", "on"],
+        required: 2,
+      });
+    });
+
+    it("프레임워크 자체를 가리키는 낱말은 검색어로 쓰지 않는다", () => {
+      // 목록의 모든 행이 이 프레임워크에 관한 것이다. 'eGovFrame' 을 검색어로 쓰면 어느 행에도 없어 대체 검색이 되고,
+      // 4.3 이나 CMS 하나만 일치하는 행까지 나온다
+      const result = sqlite.queryCompatibleSoftware({ query: "eGovFrame 4.3 CMS" });
+      expect(versionsOf(result.rows)).toEqual(["SampleCMS 1.0"]);
+      expect(result.matchMode).toBe("all-terms");
+      expect(result.terms).toEqual({ used: ["4.3", "CMS"], ignored: [], dropped: ["eGovFrame"], required: 2 });
+
+      // 대소문자를 가리지 않고, 한글 낱말도 같다
+      const cases: Array<[string, string[]]> = [
+        ["EGOVFRAMEWORK JEUS", ["EGOVFRAMEWORK"]],
+        ["egov JEUS", ["egov"]],
+        ["전자정부 표준프레임워크 JEUS", ["전자정부", "표준프레임워크"]],
+        ["전자정부표준프레임워크 전자정부프레임워크 JEUS", ["전자정부표준프레임워크", "전자정부프레임워크"]],
+      ];
+      for (const [query, dropped] of cases) {
+        expect(termsOf(query), `query=${query}`).toEqual({ used: ["JEUS"], ignored: [], dropped, required: 1 });
+      }
+    });
+
+    it("조사가 붙은 꼴도 같다", () => {
+      // 'eGovFrame에서' 는 조사를 떼면 'eGovFrame' 이다. 뺀 낱말은 query 에 적힌 꼴로 돌려준다
+      const result = sqlite.queryCompatibleSoftware({ query: "eGovFrame에서 표준프레임워크의 CMS" });
+      expect(versionsOf(result.rows)).toEqual(["SampleCMS 1.0", "OtherCMS 2.0"]);
+      expect(result.matchMode).toBe("all-terms");
+      expect(result.terms?.dropped).toEqual(["eGovFrame에서", "표준프레임워크의"]);
+    });
+
+    it("그런 낱말뿐이면 빼지 않고 그대로 찾는다", () => {
+      // '표준프레임워크' 는 여섯 행 모두의 설명에 들어 있다
+      const alone = sqlite.queryCompatibleSoftware({ query: "표준프레임워크" });
+      expect(alone.total).toBe(CATALOGUE.length);
+      expect(alone.terms).toEqual({ used: ["표준프레임워크"], ignored: [], dropped: [], required: 1 });
+
+      // 제품명에 그 낱말이 든 제품을 그 낱말만으로 찾을 수 있어야 한다
+      sqlite.addCompatibilitySoftwareBatch([
+        { ...CATALOGUE[5], product_name: "DL-WCMS for eGovframe", product_version: "DL-WCMS for eGovframe v1.0" },
+      ]);
+      const named = sqlite.queryCompatibleSoftware({ query: "eGovframe" });
+      expect(versionsOf(named.rows)).toEqual(["DL-WCMS for eGovframe v1.0"]);
+      expect(named.terms).toEqual({ used: ["eGovframe"], ignored: [], dropped: [], required: 1 });
+      // 다른 낱말과 함께 적으면 빼지만, 남은 낱말로 그 제품을 찾는다
+      const full = sqlite.queryCompatibleSoftware({ query: "DL-WCMS for eGovframe" });
+      expect(versionsOf(full.rows)).toEqual(["DL-WCMS for eGovframe v1.0"]);
+      expect(full.terms).toEqual({ used: ["DL-WCMS"], ignored: [], dropped: ["for", "eGovframe"], required: 1 });
+    });
+
+    it("목록에 없는 낱말(framework, 프레임워크, solution)과 공통컴포넌트 쪽 낱말은 빼지 않는다", () => {
+      // 'Framework Solution' 은 분류 이름이다. '프레임워크' 는 여섯 행 모두의 설명에 들어 있다
+      expect(termsOf("프레임워크 JEUS")).toEqual({ used: ["프레임워크", "JEUS"], ignored: [], dropped: [], required: 2 });
+      expect(termsOf("Solution CMS")).toEqual({ used: ["Solution", "CMS"], ignored: [], dropped: [], required: 2 });
+      // '컴포넌트' 와 'framework' 는 어느 행에도 없어 대체 검색에서 쓰지 않은 검색어(ignored)가 된다
+      expect(termsOf("컴포넌트 framework JEUS")).toEqual({
+        used: ["JEUS"],
+        ignored: ["컴포넌트", "framework"],
+        dropped: [],
+        required: 1,
+      });
+    });
+
+    it("분류 이름 WAS 는 영어 기능어(was)로 보지 않는다", () => {
+      // which, is: 영어 기능어 / compatible: 0행(제외). 'WAS' 를 빼면 남은 검색어로는 한 행도 찾지 못한다
+      const result = sqlite.queryCompatibleSoftware({ query: "which WAS is compatible" });
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "JEUS 8.5", "WebLogic 12c"]);
+      expect(result.terms).toEqual({ used: ["WAS"], ignored: ["compatible"], dropped: ["which", "is"], required: 1 });
+      expect(termsOf("was 4.3")).toEqual({ used: ["was", "4.3"], ignored: [], dropped: [], required: 2 });
+    });
+
+    it("다른 낱말과 기호로 이어 적힌 영어 기능어는 검색어로 쓴다", () => {
+      // 'on/off' 의 'on' 은 전치사가 아니다. 따로 적은 'on' 만 뺀다 ('on' 은 'CMS Solution' 의 끝에 들어 있다)
+      expect(termsOf("JEUS on/off")).toEqual({ used: ["JEUS", "on"], ignored: ["off"], dropped: [], required: 1 });
+      expect(termsOf("JEUS on")).toEqual({ used: ["JEUS"], ignored: [], dropped: ["on"], required: 1 });
+    });
+
+    it("한 글자라서 뺀 검색어와 함께 query 에 적힌 순서대로 dropped 에 싣는다", () => {
+      // Is, with: 영어 기능어 / 9: JEUS 와 함께 든 행이 없는 한 글자 검색어
+      const result = sqlite.queryCompatibleSoftware({ query: "Is JEUS 9 with eGovFrame" });
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(result.matchMode).toBe("all-terms");
+      expect(result.terms).toEqual({ used: ["JEUS"], ignored: [], dropped: ["Is", "9", "with", "eGovFrame"], required: 1 });
+    });
+
+    it("배열을 돌려주는 메서드도 같은 낱말을 뺀다", () => {
+      expect(versionsOf(sqlite.fullTextSearchCompatibility("eGovFrame 4.3 CMS"))).toEqual(["SampleCMS 1.0"]);
+      expect(sqlite.queryCompatibleSoftwareAllTerms("Is the JEUS")).toMatchObject({ total: 2 });
+      expect(sqlite.queryCompatibleSoftwareAllTerms("표준프레임워크")).toMatchObject({ total: CATALOGUE.length });
+    });
+  });
+
   describe("키워드 검색의 정렬", () => {
     it("이름(제품명·제품 버전 표기)에 일치한 검색어가 많은 행을 먼저 돌려준다", () => {
       // 분류에만 'CMS' 가 든 행은 확인일자가 가장 최근이어도 이름에 'CMS' 가 든 행 뒤에 온다
@@ -836,7 +951,8 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     });
 
     it("문장으로 물으면서 필터를 함께 줘도 뜻이 있는 검색어로 찾는다", () => {
-      // eGovFrame·에서·검증된·솔루션: 0행(제외) / 4.3: 2행(대상 안에 1행) / CMS: 2행(대상 안에 1행) → k=2
+      // eGovFrame: 프레임워크 자체를 가리키는 낱말(뺌) / 에서·검증된·솔루션: 0행(제외) /
+      // 4.3: 2행(대상 안에 1행) / CMS: 2행(대상 안에 1행) → k=2
       const result = sqlite.queryCompatibleSoftware({
         query: "eGovFrame 4.3 에서 검증된 CMS 솔루션",
         filters: { frameworkVersion: "4.3", category: "CMS Solution" },
@@ -844,6 +960,12 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(versionsOf(result.rows)).toEqual(["SampleCMS 1.0"]);
       expect(result.total).toBe(1);
       expect(result.matchMode).toBe("any-term");
+      expect(result.terms).toEqual({
+        used: ["4.3", "CMS"],
+        ignored: ["에서", "검증된", "솔루션"],
+        dropped: ["eGovFrame"],
+        required: 1,
+      });
     });
 
     it("많은 행에 든 검색어에 군말과 필터를 함께 줘도, 그 검색어만 줬을 때와 같은 행을 돌려준다", () => {

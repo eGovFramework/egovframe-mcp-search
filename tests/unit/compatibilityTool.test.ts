@@ -186,7 +186,8 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
     });
 
     it("문장으로 물으면서 필터를 함께 줘도 뜻이 있는 검색어로 찾는다", async () => {
-      // eGovFrame·에서·검증된·솔루션 은 어떤 행에도 없다. 이런 검색어까지 세면 일치 기준이 올라가 0건이 된다
+      // 에서·검증된·솔루션 은 어떤 행에도 없다. 이런 검색어까지 세면 일치 기준이 올라가 0건이 된다
+      // ('eGovFrame' 은 프레임워크 자체를 가리키는 낱말이라 검색어로 쓰지 않는다)
       const response = await searchCompatibleSoftware({
         query: "eGovFrame 4.3 에서 검증된 CMS 솔루션",
         frameworkVersion: "4.3",
@@ -323,8 +324,28 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       });
     });
 
+    it("영어 기능어와 프레임워크 자체를 가리키는 낱말도 뺀 검색어로 알린다", async () => {
+      // Is, with: 영어 기능어 / eGovFrame: 목록의 모든 행에 해당하는 낱말. JEUS 와 4.3 이 모두 든 JEUS 21 이 맨 앞이다
+      const sentence = await searchCompatibleSoftware({ query: "Is JEUS compatible with eGovFrame 4.3?" });
+      expect(sentence).toMatchObject({
+        matchMode: "any-term",
+        usedTerms: ["JEUS", "4.3"],
+        requiredMatches: 1,
+        ignoredTerms: ["compatible"],
+        droppedTerms: ["Is", "with", "eGovFrame"],
+      });
+      expect(sentence.software[0]).toMatchObject({ product_version: "JEUS 21" });
+
+      // 남은 검색어가 모두 일치한 행을 찾았으면 all-terms 다
+      const keywords = await searchCompatibleSoftware({ query: "eGovFrame 4.3 CMS" });
+      expect(versionsOf(keywords.software)).toEqual(["SampleCMS 1.0"]);
+      expect(keywords).toMatchObject({ matchMode: "all-terms", droppedTerms: ["eGovFrame"] });
+    });
+
     it("뺀 검색어가 없으면 싣지 않는다", async () => {
       for (const response of [
+        // 그런 낱말뿐이면 빼지 않는다
+        await searchCompatibleSoftware({ query: "표준프레임워크" }),
         // 한 글자 검색어까지 모두 일치한 행을 찾았다
         await searchCompatibleSoftware({ query: "JEUS 8" }),
         await searchCompatibleSoftware({ query: "JEUS" }),
