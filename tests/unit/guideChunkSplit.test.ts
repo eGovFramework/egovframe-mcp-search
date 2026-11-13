@@ -489,6 +489,20 @@ describe("chunkMarkdown — 코드 블록을 나눈 조각은 펜스를 닫고 �
       expect(chunks.map((c) => c.content)).toEqual([intro, block.join("\n")]);
     });
 
+    it("블록 밖에서만 끊으면 문단 안에서 끊는 횟수가 늘어날 때는 블록 안에서 한 번 끊는다 (줄 경계에서 끊은 횟수가 먼저다)", () => {
+      // 소개 문장과 코드 블록 둘(java 2줄, xml 5줄), 문단이 빈 줄 없이 이어진다. 블록의 밖에서만 끊으려면 두 군데
+      // (java 블록 뒤, xml 블록 뒤)에서 끊어 세 조각이 되고, xml 블록의 가운데 한 군데에서 끊으면 두 조각이다.
+      // 나누는 자리의 비용은 문단 안의 줄 경계에서 끊은 횟수를 블록 안에서 끊은 횟수보다 먼저 견준다
+      const java = ["```java", 'cache.put("key0", value0);', 'cache.put("key1", value1);', "```"];
+      const xml = Array.from({ length: 5 }, (_, i) => `<cache name="region${i}" size="${100 + i}" />`);
+      const tail = paragraph("설명", 4);
+      const chunks = chunk(doc("## 설정", "", "다음은 설정 예이다.", "", ...java, "```xml", ...xml, "```", tail));
+      expect(chunks.map((c) => c.content)).toEqual([
+        ["다음은 설정 예이다.", "", ...java, "```xml", ...xml.slice(0, 3), "```"].join("\n"),
+        ["```xml", ...xml.slice(3), "```", tail].join("\n"),
+      ]);
+    });
+
     it("한 조각에 들어가지 않는 코드 블록은 지금처럼 줄에서 나누고 펜스를 닫고 다시 연다", () => {
       const longCode = Array.from({ length: 24 }, (_, i) => `cache.region${i} = value${i}`);
       const chunks = chunk(doc("## 설정", ...steps(1, 2), "```ini", ...longCode, "```", ...steps(3, 4)));
