@@ -542,51 +542,95 @@ function listFilesRecursive(dirPath: string, extensions: string[]): string[] {
   return results.sort();
 }
 
-/**
- * 컴포넌트 소스 파일 내용 읽기
- * 보안: common-components-src 디렉토리 내부만 허용
- */
-export function readComponentSource(filePath: string): {
+/** readComponentSource 의 결과 */
+export interface ComponentSourceContent {
+  /** 소스 루트 기준 상대 경로 */
   filePath: string;
   content: string;
   language: string;
   size: number;
-} | null {
-  const srcRoot = getComponentSrcRoot();
-  
-  // 상대 경로를 절대 경로로 변환
-  const absolutePath = path.isAbsolute(filePath) 
-    ? filePath 
-    : path.resolve(srcRoot, filePath);
-  
-  // 보안: srcRoot 내부인지 검증
-  const normalizedPath = path.normalize(absolutePath);
-  const normalizedRoot = path.normalize(srcRoot);
-  if (!normalizedPath.startsWith(normalizedRoot)) {
+}
+
+/**
+ * 컴포넌트 소스 파일 내용 읽기
+ * 보안: common-components-src 디렉토리 내부만 허용
+ */
+export function readComponentSource(filePath: string): ComponentSourceContent | null {
+  return readSourceFileInRoot(getComponentSrcRoot(), filePath);
+}
+
+/** 소스 루트 안에서 해석한 파일 경로 */
+interface ResolvedSourcePath {
+  /** 심볼릭 링크를 모두 푼 실제 경로 */
+  realPath: string;
+  /** 실제 소스 루트 기준 상대 경로 */
+  relPath: string;
+}
+
+/**
+ * 호출자가 준 경로를 소스 루트 안의 실제 경로로 해석한다.
+ *
+ * 루트와 대상의 심볼릭 링크를 모두 푼 뒤 path.relative 로 포함 여부를 판정한다.
+ * 문자열 접두 비교와 달리, 이름만 루트를 접두어로 가진 형제 디렉토리(v-1 과 v-10)나
+ * 루트 밖을 가리키는 심볼릭 링크가 통과하지 못한다.
+ * 절대 경로 입력, 존재하지 않는 경로, 루트 밖의 경로, 루트 자신은 null.
+ */
+function resolveSourcePath(srcRoot: string, filePath: string): ResolvedSourcePath | null {
+  // 절대 경로는 받지 않는다 (sourceFiles 가 알려 주는 경로는 모두 상대 경로다)
+  if (typeof filePath !== 'string' || path.isAbsolute(filePath) || filePath.includes('\0')) {
     return null;
   }
-  
-  if (!fs.existsSync(normalizedPath) || !fs.statSync(normalizedPath).isFile()) {
+
+  let realRoot: string;
+  let realPath: string;
+  try {
+    realRoot = fs.realpathSync(srcRoot);
+    realPath = fs.realpathSync(path.resolve(realRoot, filePath));
+  } catch {
+    // 존재하지 않거나 따라갈 수 없는 경로
     return null;
   }
-  
+
+  const relPath = path.relative(realRoot, realPath);
+  const outsideRoot = relPath === '..' || relPath.startsWith(`..${path.sep}`) || path.isAbsolute(relPath);
+  if (relPath === '' || outsideRoot) {
+    return null;
+  }
+
+  return { realPath, relPath };
+}
+
+/**
+ * 소스 루트를 인자로 받는 readComponentSource 의 본체.
+ * 루트 밖의 파일은 읽지 않으며, 찾을 수 없거나 읽으면 안 되는 경로에는 null 을 돌려준다.
+ */
+export function readSourceFileInRoot(srcRoot: string, filePath: string): ComponentSourceContent | null {
+  // 보안: srcRoot 내부의 실제 경로인지 검증
+  const resolved = resolveSourcePath(srcRoot, filePath);
+  if (!resolved) return null;
+  const { realPath, relPath } = resolved;
+
+  if (!fs.statSync(realPath).isFile()) {
+    return null;
+  }
+
   // 바이너리 파일 제외
-  const ext = path.extname(normalizedPath).toLowerCase();
+  const ext = path.extname(realPath).toLowerCase();
   const binaryExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.svg', '.ico', '.class', '.jar', '.war'];
   if (binaryExtensions.includes(ext)) {
     return {
-      filePath: path.relative(srcRoot, normalizedPath),
+      filePath: relPath,
       content: `[바이너리 파일 - ${ext} 형식은 텍스트로 표시할 수 없습니다]`,
       language: 'binary',
-      size: fs.statSync(normalizedPath).size,
+      size: fs.statSync(realPath).size,
     };
   }
-  
-  const content = fs.readFileSync(normalizedPath, 'utf-8');
+
+  const content = fs.readFileSync(realPath, 'utf-8');
   const language = getLanguageFromExtension(ext);
-  
+
   return {
-    filePath: path.relative(srcRoot, normalizedPath),
+    filePath: relPath,
     content,
     language,
     size: content.length,
