@@ -87,41 +87,68 @@ interface FrontMatter {
   linkTitle?: string;
   description?: string;
   url?: string;
+  /** Hugo 의 draft: true — 사이트에 게시되지 않는 문서 (프론트매터가 없으면 undefined) */
+  draft?: boolean;
 }
 
 // ─── 프론트매터 파싱 ──────────────────────────────────────
 
+/** 값 양끝의 큰따옴표를 벗긴다 (한쪽만 있어도 벗긴다 — 원문에 닫는 따옴표만 남은 값이 있다). */
+function unquoteYamlValue(raw: string): string {
+  return raw.trim().replace(/^"/, '').replace(/"$/, '').trim();
+}
+
+/**
+ * YAML 블록에서 최상위 `key: value` 만 읽는다.
+ *
+ * - 블록 전체를 들여쓴 문서가 있어, 공통 들여쓰기를 걷어 낸 뒤 0열에서 시작하는 키만 본다.
+ *   그래야 중첩된 menu 하위 키(name, weight …)가 최상위 키로 읽히지 않는다.
+ * - `url : /path/` 처럼 콜론 앞에 공백이 있는 키도 유효한 YAML 이다.
+ * - 같은 키가 여러 번 나오면 처음 것을 쓴다.
+ */
+function parseTopLevelYaml(yaml: string): Map<string, string> {
+  const lines = yaml.split('\n');
+  const indents = lines
+    .filter((line) => line.trim() !== '')
+    .map((line) => line.length - line.trimStart().length);
+  const commonIndent = indents.length > 0 ? Math.min(...indents) : 0;
+
+  const values = new Map<string, string>();
+  for (const line of lines) {
+    const match = line.slice(commonIndent).match(/^(\w+)[ \t]*:(.*)$/);
+    if (match && !values.has(match[1])) {
+      values.set(match[1], unquoteYamlValue(match[2]));
+    }
+  }
+  return values;
+}
+
 /**
  * Hugo YAML 프론트매터 파싱 (경량 구현, 외부 의존성 없음)
+ *
+ * 줄 끝은 LF 로 맞춘다 (Windows 체크아웃의 CRLF 문서도 같은 결과가 나오도록). 돌려주는 body 도 LF 다.
  */
 export function parseFrontMatter(content: string): { frontmatter: FrontMatter; body: string } {
-  const fmMatch = content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
-  
+  const normalized = content.replace(/\r\n?/g, '\n');
+  const fmMatch = normalized.match(/^---[ \t]*\n([\s\S]*?)\n---[ \t]*(?:\n|$)([\s\S]*)$/);
+
   if (!fmMatch) {
     return {
       frontmatter: { title: '' },
-      body: content,
+      body: normalized,
     };
   }
 
-  const yamlStr = fmMatch[1];
+  const fm = parseTopLevelYaml(fmMatch[1]);
   const body = fmMatch[2];
-
-  // 간단한 YAML 파싱 (top-level key: value만)
-  const fm: Record<string, string> = {};
-  for (const line of yamlStr.split('\n')) {
-    const match = line.match(/^(\w+):\s*"?([^"]*)"?\s*$/);
-    if (match) {
-      fm[match[1]] = match[2].trim();
-    }
-  }
 
   return {
     frontmatter: {
-      title: fm.title || fm.linkTitle || '',
-      linkTitle: fm.linkTitle,
-      description: fm.description,
-      url: fm.url,
+      title: fm.get('title') || fm.get('linkTitle') || '',
+      linkTitle: fm.get('linkTitle'),
+      description: fm.get('description'),
+      url: fm.get('url'),
+      draft: (fm.get('draft') ?? '').toLowerCase() === 'true',
     },
     body,
   };
