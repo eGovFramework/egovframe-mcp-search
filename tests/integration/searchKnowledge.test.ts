@@ -420,6 +420,37 @@ describe("integration — egov_search_knowledge 공통컴포넌트 조회", () =
     expect(res.text).toContain("- `uap` 로그인정책관리");
   });
 
+  it("메타의 id 가 겹치던 컴포넌트를 각각 조회할 수 있다", async () => {
+    // templates/common-components.json 에서 id 가 겹치는 항목: 적재할 때 뒤 항목이 새 id 를 받는다
+    const expected: Array<[string, string]> = [
+      ["bbs", "게시판"],
+      ["blog-management", "블로그관리"],
+      ["cmt", "댓글관리"],
+      ["uss-cmt", "출퇴근관리"],
+      ["sim", "일정관리"],
+      ["syi-sim", "시스템연계관리"],
+      ["utl-sim", "시스템정보확인"],
+      ["prm", "프로그램관리"],
+      ["sys-prm", "프로세스 모니터링"],
+      ["com", "협업공통"],
+      ["sts-com", "통계공통"],
+    ];
+    for (const [componentId, name] of expected) {
+      const res = await search({ scope: "components", filters: { componentId } });
+      expect(res.isError, componentId).toBe(false);
+      expect(res.text.split("\n")[0], componentId).toBe(`## ${name}`);
+    }
+  });
+
+  it("동봉 DB 에는 메타에 적힌 컴포넌트가 모두 들어 있다", async () => {
+    const meta = JSON.parse(
+      fs.readFileSync(path.join(REPO_ROOT, "templates", "common-components.json"), "utf-8"),
+    ) as { totalComponents: number };
+    const res = await search({ scope: "components" });
+    expect(res.isError).toBe(false);
+    expect(res.text).toContain(`- **총 컴포넌트**: ${meta.totalComponents}개`);
+  });
+
   it("query 와 목록 필터를 함께 주면 두 조건을 모두 적용한다", async () => {
     const res = await search({ scope: "components", query: "login", filters: { categoryId: "로그인" }, limit: 10 });
     expect(res.isError).toBe(false);

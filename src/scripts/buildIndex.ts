@@ -49,7 +49,7 @@ import {
   MANIFEST_FILENAME,
 } from '../kb/snapshot.js';
 import { snapshotManifestUrl, snapshotFileUrl } from '../kb/sources.js';
-import { loadCompatibilityFromJson } from '../kb/sqliteLoaders.js';
+import { loadCompatibilityFromJson, loadCommonComponentsFromJson } from '../kb/sqliteLoaders.js';
 import { indexGuideDirectory } from '../kb/guideIndexer.js';
 import { probeReachable, downloadToFile } from '../utils/download.js';
 import { SCHEMA_VERSION, EMBEDDING_MODEL_ID, readStateFile, type StateFile } from '../utils/dataPaths.js';
@@ -715,35 +715,6 @@ async function loadCompatibilitySoftware(sqlite: SQLiteManager): Promise<number>
 /**
  * 공통컴포넌트 데이터 로드
  */
-interface ComponentJSON {
-  version: string;
-  totalCategories: number;
-  totalComponents: number;
-  categories: Array<{
-    id: string;
-    name: string;
-    nameEn: string;
-    description: string;
-    descriptionEn: string;
-    components: string[];
-  }>;
-  components: Array<{
-    id: string;
-    name: string;
-    nameEn: string;
-    categoryId: string;
-    categoryName: string;
-    packageName: string;
-    description: string;
-    descriptionEn: string;
-    dependencies: string[];
-    useTables: string[];
-    version: string;
-    hasWeb: boolean;
-    addedOptions: string;
-  }>;
-}
-
 async function loadCommonComponents(sqlite: SQLiteManager, srcReady: boolean) {
   console.error('\n📚 2/5 공통컴포넌트 인덱싱...');
 
@@ -753,58 +724,29 @@ async function loadCommonComponents(sqlite: SQLiteManager, srcReady: boolean) {
   }
 
   const componentsFile = path.join(TEMPLATES_DIR, 'common-components.json');
-  
+
   if (!await fs.pathExists(componentsFile)) {
     console.warn(`  ⚠️ 파일을 찾을 수 없습니다: ${componentsFile}`);
     return;
   }
 
-  const jsonData: ComponentJSON = await fs.readJSON(componentsFile);
-  console.error(`  📄 JSON 로드: ${jsonData.totalCategories}개 카테고리, ${jsonData.totalComponents}개 컴포넌트`);
+  // 카테고리·컴포넌트·의존성 적재와 FTS 재구축 (메타의 id 가 겹치면 고유한 id 로 바꿔 적재한다)
+  const result = await loadCommonComponentsFromJson(sqlite, componentsFile);
 
-  // 1. 카테고리 임포트
-  const categories = jsonData.categories.map(cat => ({
-    category_id: cat.id,
-    name: cat.name,
-    name_en: cat.nameEn,
-    description: cat.description,
-    description_en: cat.descriptionEn,
-  }));
-  sqlite.addComponentCategoriesBatch(categories);
-
-  // 2. 컴포넌트 임포트
-  const components = jsonData.components.map(comp => ({
-    component_id: comp.id,
-    name: comp.name,
-    name_en: comp.nameEn,
-    category_id: comp.categoryId,
-    package_name: comp.packageName,
-    description: comp.description,
-    description_en: comp.descriptionEn,
-    use_tables: JSON.stringify(comp.useTables),
-    version: comp.version,
-    has_web: comp.hasWeb,
-    added_options: comp.addedOptions,
-  }));
-  sqlite.addCommonComponentsBatch(components);
-
-  // 3. 의존성 임포트
-  const dependencies: Array<{ component_id: string; depends_on_package: string }> = [];
-  for (const comp of jsonData.components) {
-    for (const dep of comp.dependencies) {
-      dependencies.push({
-        component_id: comp.id,
-        depends_on_package: dep,
-      });
+  if (result.renamed.length > 0) {
+    console.error(`  ℹ️ 메타의 id 가 겹쳐 새 id 를 부여한 컴포넌트 ${result.renamed.length}개:`);
+    for (const entry of result.renamed) {
+      console.error(`     - ${entry.name}: ${entry.from} → ${entry.to}`);
     }
   }
-  sqlite.addComponentDependenciesBatch(dependencies);
-
-  // 과거 연결(recursive_triggers OFF)에서 REPLACE 가 남긴 FTS 드리프트 치유
-  sqlite.rebuildComponentsFts();
 
   const summary = sqlite.getComponentSummary();
-  console.error(`  ✓ ${categories.length}개 카테고리, ${summary.totalComponents}개 컴포넌트, ${dependencies.length}개 의존성 추가 완료`);
+  if (summary.totalComponents !== result.components) {
+    throw new Error(
+      `공통컴포넌트 적재 건수가 메타와 다릅니다 (메타 ${result.components}개, 적재 ${summary.totalComponents}개).`,
+    );
+  }
+  console.error(`  ✓ ${result.categories}개 카테고리, ${summary.totalComponents}개 컴포넌트, ${result.dependencies}개 의존성 추가 완료`);
 }
 
 interface DeveloperKnowledgeIndexStats {

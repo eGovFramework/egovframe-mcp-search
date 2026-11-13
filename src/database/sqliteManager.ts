@@ -161,13 +161,14 @@ export class SQLiteManager {
       );
 
       -- 공통컴포넌트 테이블
+      -- package_name 은 고유하지 않다: 게시판과 블로그관리처럼 한 패키지를 함께 쓰는 컴포넌트가 있다.
       CREATE TABLE IF NOT EXISTS common_components (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         component_id TEXT NOT NULL UNIQUE,
         name TEXT NOT NULL,
         name_en TEXT,
         category_id TEXT NOT NULL,
-        package_name TEXT UNIQUE,
+        package_name TEXT,
         description TEXT,
         description_en TEXT,
         use_tables TEXT,
@@ -751,6 +752,19 @@ export class SQLiteManager {
   clearCompatibilitySoftware(): void {
     this.db.exec('DELETE FROM compatibility_software;');
     console.error('🧹 호환성 SW 테이블 비움');
+  }
+
+  /**
+   * 공통컴포넌트 메타(의존성 → 컴포넌트 → 카테고리) 테이블 비움 — JSON 기준 deterministic 재적재용.
+   * (REPLACE 만으로는 원본에서 삭제되거나 id 가 바뀐 행이 남는다)
+   */
+  clearCommonComponents(): void {
+    this.db.transaction(() => {
+      this.db.exec('DELETE FROM component_dependencies;');
+      this.db.exec('DELETE FROM common_components;');
+      this.db.exec('DELETE FROM component_categories;');
+    })();
+    console.error('🧹 공통컴포넌트 테이블 비움');
   }
 
   /**

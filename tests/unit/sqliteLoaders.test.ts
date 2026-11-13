@@ -9,6 +9,7 @@ import { SQLiteManager } from '../../src/database/sqliteManager.js';
 import {
   parseCompatibilityJson,
   loadCompatibilityFromJson,
+  loadCommonComponentsFromJson,
 } from '../../src/kb/sqliteLoaders.js';
 
 const COMPAT_ROW = {
@@ -64,6 +65,105 @@ describe('sqliteLoaders', () => {
       const jsonPath = path.join(tmpDir, 'bad-row.json');
       await fs.writeJSON(jsonPath, [COMPAT_ROW, { product_name: '' }]);
       await expect(parseCompatibilityJson(jsonPath)).rejects.toThrow(/2번째 항목/);
+    });
+  });
+
+  describe('공통컴포넌트 (JSON)', () => {
+    const component = (id: string, name: string, packageName: string, extra: Record<string, unknown> = {}) => ({
+      id,
+      name,
+      nameEn: name,
+      categoryId: 'cat-a',
+      categoryName: '분류A',
+      packageName,
+      description: `${name} 설명`,
+      descriptionEn: '',
+      dependencies: [],
+      useTables: [],
+      version: '4.3.1',
+      hasWeb: true,
+      addedOptions: '',
+      ...extra,
+    });
+
+    const meta = (components: unknown[]) => ({
+      version: '5.0.0',
+      totalCategories: 1,
+      totalComponents: components.length,
+      categories: [{ id: 'cat-a', name: '분류A', nameEn: 'Category A', description: '', descriptionEn: '', components: [] }],
+      components,
+    });
+
+    async function writeMeta(components: unknown[]): Promise<string> {
+      const jsonPath = path.join(tmpDir, 'common-components.json');
+      await fs.writeJSON(jsonPath, meta(components));
+      return jsonPath;
+    }
+
+    it('id 가 겹치는 컴포넌트도 빠짐없이 적재하고 바뀐 id 를 알려 준다', async () => {
+      const jsonPath = await writeMeta([
+        component('bbs', '게시판', 'egovframework.com.cop.bbs', { nameEn: 'BBS' }),
+        component('bbs', '블로그관리', 'egovframework.com.cop.bbs', { nameEn: 'Blog Management' }),
+        component('sim', '일정관리', 'egovframework.com.cop.smt.sim'),
+        component('sim', '시스템정보확인', 'egovframework.com.utl.sim'),
+      ]);
+
+      const result = await loadCommonComponentsFromJson(sqlite, jsonPath);
+
+      expect(result.components).toBe(4);
+      expect(count('common_components')).toBe(4);
+      expect(result.renamed.map((r) => `${r.from}→${r.to}`)).toEqual(['bbs→blog-management', 'sim→utl-sim']);
+      expect(sqlite.getComponentById('bbs')?.name).toBe('게시판');
+      expect(sqlite.getComponentById('blog-management')?.name).toBe('블로그관리');
+      expect(sqlite.getComponentById('sim')?.name).toBe('일정관리');
+      expect(sqlite.getComponentById('utl-sim')?.name).toBe('시스템정보확인');
+    });
+
+    it('의존성은 컴포넌트마다 따로 적재한다 (id 가 겹쳐도 합쳐지지 않는다)', async () => {
+      const jsonPath = await writeMeta([
+        component('sim', '일정관리', 'egovframework.com.cop.smt.sim', { dependencies: ['egovframework.com.cmm'] }),
+        component('sim', '시스템정보확인', 'egovframework.com.utl.sim', { dependencies: ['egovframework.com.utl.fcc'] }),
+      ]);
+
+      const result = await loadCommonComponentsFromJson(sqlite, jsonPath);
+
+      expect(result.dependencies).toBe(2);
+      expect(sqlite.getComponentDependencies('sim')).toEqual(['egovframework.com.cmm']);
+      expect(sqlite.getComponentDependencies('utl-sim')).toEqual(['egovframework.com.utl.fcc']);
+    });
+
+    it('재적재하면 원본에서 사라진 컴포넌트와 의존성이 남지 않는다', async () => {
+      const first = await writeMeta([
+        component('uia', '일반로그인', 'egovframework.com.uat.uia', { dependencies: ['egovframework.com.cmm'] }),
+        component('old', '없어질컴포넌트', 'egovframework.com.old', { dependencies: ['egovframework.com.cmm'] }),
+      ]);
+      await loadCommonComponentsFromJson(sqlite, first);
+      expect(count('common_components')).toBe(2);
+
+      const second = await writeMeta([component('uia', '일반로그인', 'egovframework.com.uat.uia')]);
+      const result = await loadCommonComponentsFromJson(sqlite, second);
+
+      expect(result.components).toBe(1);
+      expect(count('common_components')).toBe(1);
+      expect(count('component_dependencies')).toBe(0);
+      expect(sqlite.getComponentById('old')).toBeUndefined();
+    });
+
+    it('적재한 컴포넌트는 키워드 검색으로 모두 찾을 수 있다', async () => {
+      const jsonPath = await writeMeta([
+        component('bbs', '게시판', 'egovframework.com.cop.bbs', { nameEn: 'BBS' }),
+        component('bbs', '블로그관리', 'egovframework.com.cop.bbs', { nameEn: 'Blog Management' }),
+      ]);
+      await loadCommonComponentsFromJson(sqlite, jsonPath);
+
+      expect(sqlite.searchComponents('게시판').map((c) => c.component_id)).toEqual(['bbs']);
+      expect(sqlite.searchComponents('블로그').map((c) => c.component_id)).toEqual(['blog-management']);
+    });
+
+    it('components 배열이 없는 파일은 거부한다', async () => {
+      const jsonPath = path.join(tmpDir, 'bad-components.json');
+      await fs.writeJSON(jsonPath, { categories: [] });
+      await expect(loadCommonComponentsFromJson(sqlite, jsonPath)).rejects.toThrow(/common-components\.json/);
     });
   });
 });
