@@ -28,10 +28,10 @@ knowledge-base/
 
 | `resources` 의 키 | 기록된 값 | 값의 출처 |
 |-------------------|-----------|-----------|
-| `developer_knowledge` | `version` 이 `2026-08-11.0`, `row_count` 가 17941 | 스냅샷의 `dataset_version`. Excel 에서 만든 스냅샷은 Excel 파일의 수정 날짜에 `.0` 을 붙인 값 |
+| `developer_knowledge` | `version` 이 `2026-08-11.0`, `row_count` 가 17941 | 스냅샷의 `dataset_version`. Excel 에서 만든 스냅샷은 Excel 파일 가운데 가장 늦은 수정 시각의 날짜(UTC 기준)에 `.0` 을 붙인 값 |
 | `guide` | `version` 이 `v5.0.0-ready-2026-contribution`, `chunk_count` 가 4625 | 가이드 원문 서브모듈의 git 태그 (체크아웃이 태그와 일치하지 않으면 `git describe` 의 결과) |
 | `common_components` | `source_version` 이 `v5.0.1`, `metadata_version` 이 `5.0.0` | 소스 서브모듈의 git 태그와 `templates/common-components.json` 의 최상위 `version` |
-| `compatibility` | `version` 이 `2026-07-20.0`, `row_count` 가 481 | 원본 JSON 파일의 수정 날짜에 `.0` 을 붙인 값 |
+| `compatibility` | `version` 이 `2026-07-20.0`, `row_count` 가 481 | 원본 JSON 파일을 수정한 시각의 날짜(UTC 기준)에 `.0` 을 붙인 값 |
 
 - 최상위에는 `schema_version`(1), `embedding_model.id`(`Xenova/multilingual-e5-small`), `generated_at`(구축 시각)이 있습니다. 리소스 항목에는 `origin`(동봉 파일은 모두 `bundled`)과 `applied_at` 이 함께 있고, 벡터를 가진 두 리소스에는 `embedding_model` 도 있습니다.
 - `developer_knowledge` 의 `row_count` 17,941 은 스냅샷(묻고답하기와 FAQ)의 행 수입니다. 테이블의 행 수 18,195 는 여기에 적용가이드 청크 254건을 더한 값입니다.
@@ -375,7 +375,7 @@ SQLite 의 테이블 네 개와 그 관계입니다. PK 는 기본 키, UK 는 U
 | `content` | `Utf8` | 본문. 묻고답하기·FAQ 는 `질문:` 단락과 `답변:` 단락, 적용가이드는 청크 본문 |
 | `context` | `Utf8` | 출처 구분 (`표준프레임워크 묻고답하기`, `표준프레임워크 FAQ`, `표준프레임워크 적용가이드 PDF`) |
 | `tags` | `List<Utf8>` | 태그. `egovframe`, `developer_knowledge` 와 출처 태그(`qa`, `faq`, 적용가이드는 `guide` 와 `pdf`) |
-| `relatedTo` | `List<Utf8>` | 관련 주제 키워드 |
+| `relatedTo` | `List<Utf8>` | 관련 주제 키워드. 동봉 데이터에서는 출처마다 고정된 값이며, 묻고답하기·FAQ 행은 `faq`, `qa`, `egovframe`, 적용가이드 청크는 `egovframe`, `application-guide` 임 |
 | `importance` | `Float64` | 중요도. 묻고답하기 3, FAQ 4, 적용가이드 5 |
 | `verified` | `Bool` | 검증 여부. 모든 행이 `true` |
 | `createdAt` | `Utf8` | 색인 시각 (ISO 8601). 게시글 작성일이 아님 |
@@ -416,13 +416,13 @@ SQLite 의 테이블 네 개와 그 관계입니다. PK 는 기본 키, UK 는 U
 | 컬럼 | 타입 | 설명 |
 |------|------|------|
 | `id` | `Utf8` | 청크 ID (UUID). 색인할 때 새로 만드는 값이라 지식베이스를 다시 구축하거나 갱신하면 바뀜 |
-| `title` | `Utf8` | 청크 제목. `문서 제목: 제목 경로` 형식이며, 첫 `##` 제목 앞의 도입부 청크는 문서 제목만 씀. 여러 조각으로 나뉜 절은 끝에 조각 번호 ` (k/n)` 이 붙음 (예: `MyBatis Configuration XML File: Configuration XML > Sample Configuration (2/8)`) |
+| `title` | `Utf8` | 청크 제목. `문서 제목: 제목 경로` 형식이며, 첫 `##` 제목 앞의 도입부 청크는 문서 제목만 씀 (도입부를 더 깊은 제목에서 나눈 청크는 `개요` 를 넣지 않은 `문서 제목: 소절`). 여러 조각으로 나뉜 절은 끝에 조각 번호 ` (k/n)` 이 붙음 (예: `MyBatis Configuration XML File: Configuration XML > Sample Configuration (2/8)`) |
 | `content` | `Utf8` | 청크 본문 (마크다운) |
 | `source` | `Utf8` | 원본 파일 경로. 가이드 원문 디렉토리 기준 상대 경로이고 구분자는 `/` (예: `egovframe-runtime/persistence-layer/dataaccess-configuration_xml.md`) |
 | `layer` | `Utf8` | 경로의 첫째 마디 (예: `egovframe-runtime`). 최상위 문서는 파일 이름이 그대로 들어감 (`gettingstarted.md`, `_index.md`) |
 | `category` | `Utf8` | 경로가 세 마디 이상일 때의 둘째 마디 (예: `persistence-layer`). 그 밖에는 빈 문자열 |
 | `section` | `Utf8` | 제목 경로. `##` 절은 절 제목, 더 깊은 제목에서 나눈 청크는 `절 > 소절`, 도입부 청크는 `개요`(도입부를 더 깊은 제목에서 나눈 청크는 `개요 > 소절`). 여러 조각으로 나뉜 절은 `title` 과 같은 조각 번호가 붙음 |
-| `docTitle` | `Utf8` | 문서 제목. 프론트매터의 `title`, 없으면 `linkTitle`, 그것도 없으면 파일 이름 |
+| `docTitle` | `Utf8` | 문서 제목. 프론트매터의 `title`, 없으면 `linkTitle`, 그것도 없으면 확장자 `.md` 를 뺀 파일 이름 |
 | `url` | `Utf8` | 프론트매터의 `url` (예: `/egovframe-runtime/persistence-layer/dataaccess-mybatis/dataaccess-configuration_xml/`). 없으면 빈 문자열 |
 | `vector` | `FixedSizeList[384]<Float32>` | 임베딩 벡터 |
 
@@ -436,7 +436,7 @@ SQLite 의 테이블 네 개와 그 관계입니다. PK 는 기본 키, UK 는 U
 - 한 문서에서 제목 경로가 같은 절이 둘 이상 조각으로 나뉘면 둘째부터 조각 번호 앞에 ` [2]`, ` [3]` 을 붙입니다(`iterate 연산 > Sample TestCase [2] (1/2)`).
 - `build-index` 와 갱신 CLI 모두 테이블을 새로 만들어 모든 청크를 다시 임베딩합니다.
 
-동봉 인덱스의 4,625행 가운데 조각 번호가 붙은 행은 1,946건(665개 절)이고, 본문이 50자 미만인 행은 없습니다. `url` 이 빈 행은 문서 3개(`_index.md`, `docs/directory-structure.md`, `egovframe-runtime/intro.md`)의 35건입니다. 이 가운데 뒤의 두 문서는 프론트매터가 없어서 `docTitle` 이 파일 이름입니다. 원문에 `## 개요` 절이 있는 문서도 그 절의 `section` 이 `개요` 이고, 이때 `title` 은 `문서 제목: 개요` 입니다. `section` 이 `개요` 인 350행 가운데 도입부 청크는 56건이고 나머지 294건이 `## 개요` 절의 청크입니다.
+동봉 인덱스의 4,625행 가운데 조각 번호가 붙은 행은 1,946건(665개 절)이고, 본문이 50자 미만인 행은 없습니다. `url` 이 빈 행은 문서 3개(`_index.md`, `docs/directory-structure.md`, `egovframe-runtime/intro.md`)의 35건입니다. 이 가운데 뒤의 두 문서는 프론트매터가 없어서 `docTitle` 이 확장자를 뺀 파일 이름(`directory-structure`, `intro`)입니다. 원문에 `## 개요` 절이 있는 문서도 그 절의 `section` 이 `개요` 이고, 이때 `title` 은 `문서 제목: 개요` 입니다. `section` 이 `개요` 인 350행 가운데 도입부 청크는 56건이고 나머지 294건이 `## 개요` 절의 청크입니다.
 
 서버는 `source` 와 `section` 의 조각 번호로 같은 절의 이웃 조각을 찾아, 검색 결과와 청크 읽기 응답에 이전 조각과 다음 조각의 `id` 를 함께 싣습니다.
 
