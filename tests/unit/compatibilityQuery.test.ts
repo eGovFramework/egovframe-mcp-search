@@ -92,14 +92,14 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     });
 
     it("검색어의 LIKE 와일드카드는 글자 그대로 비교한다", () => {
-      // '_' 가 와일드카드였다면 'WAS' 가 일치했을 것. 글자 그대로는 어느 행에도 없다
-      // ('_' 에서 나눈 조각 'W', 'S' 는 한 글자라 대체 검색에서도 쓰지 않는다)
+      // '_' 가 와일드카드였다면 'WAS' 가 일치했을 것. 글자 그대로는 어느 행에도 없고,
+      // 유연한 꼴('W S', 'WS')도 '_' 자리에 영문자가 온 'WAS' 와는 일치하지 않는다
       expect(sqlite.queryCompatibleSoftware({ query: "W_S" }).rows).toEqual([]);
-      // '티맥_소프트' 도 '티맥스소프트' 와 일치하지 않는다. 대체 검색이 '_' 에서 나눈 조각(티맥, 소프트)으로 찾을 뿐이다
-      const pieces = sqlite.queryCompatibleSoftware({ query: "티맥_소프트" });
-      expect(pieces.matchMode).toBe("any-term");
-      expect(pieces.terms?.used).toEqual(["티맥", "소프트"]);
-      // '%' 는 구분자라 검색어에 남지 않는다 ('맥', '소프트' → '소프트' 만 쓴다)
+      // '티맥_소프트' 도 '티맥스소프트' 와 일치하지 않는다 ('_' 자리에 한글 '스' 가 왔다)
+      const literal = sqlite.queryCompatibleSoftware({ query: "티맥_소프트" });
+      expect(literal.rows).toEqual([]);
+      expect(literal.terms).toEqual({ used: [], ignored: ["티맥_소프트"], dropped: [], required: 0 });
+      // '%' 는 구분자라 검색어에 남지 않는다 ('맥' 과 '소프트' 두 검색어가 되고, 둘 다 든 행은 JEUS 두 행이다)
       expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "맥%소프트" }).rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
     });
 
@@ -1024,7 +1024,7 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     });
   });
 
-  describe("2단계: 기호로 이은 검색어", () => {
+  describe("2단계: 기호로 이은 검색어 (유연한 꼴)", () => {
     /** 제품명을 띄어 쓴 제품과, 그 낱말 하나씩만 이름에 든 제품 */
     const named = (product_name: string, verified_date: string): SoftwareSeed => ({
       ...CATALOGUE[5],
@@ -1045,22 +1045,86 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
 
     const search = (query: string, filters = {}) => sqlite.queryCompatibleSoftware({ query, filters });
 
-    it("저장된 표기와 다른 기호로 이은 검색어는 기호에서 나눈 조각으로 찾는다", () => {
+    /** 쓸 수 있는 꼴이 하나도 없는 검색어 하나뿐인 query 의 결과 */
+    const nothingFor = (query: string) => ({
+      rows: [],
+      total: 0,
+      matchMode: "any-term",
+      terms: { used: [], ignored: [query], dropped: [], required: 0 },
+    });
+
+    it("저장된 표기와 다른 기호로 이은 검색어는 구분 기호의 자리를 유연하게 견줘 찾는다", () => {
       // 저장된 표기는 'K2Web Wizard' 다. 'K2Web-Wizard' 는 어느 행에도 부분 문자열로 들어 있지 않아 0건이었다
       for (const query of ["K2Web-Wizard", "K2Web_Wizard", "K2Web.Wizard", "k2web-wizard"]) {
         const result = search(query);
-        // 두 조각이 모두 든 행이 먼저고, 한 조각만 든 행이 뒤따른다
-        expect(versionsOf(result.rows), `query=${query}`).toEqual(["K2Web Wizard 1.0", "K2Web Lite 1.0"]);
+        // 두 낱말이 이어져 나오는 행만 찾는다. 'K2Web' 만 든 'K2Web Lite' 는 나오지 않는다
+        expect(versionsOf(result.rows), `query=${query}`).toEqual(["K2Web Wizard 1.0"]);
         expect(result.matchMode, `query=${query}`).toBe("any-term");
-        expect(result.terms?.used.map((term) => term.toLowerCase()), `query=${query}`).toEqual(["k2web", "wizard"]);
-        expect(result.terms?.ignored, `query=${query}`).toEqual([]);
+        // 쓴 검색어는 query 에 적힌 그대로 싣는다
+        expect(result.terms, `query=${query}`).toEqual({ used: [query], ignored: [], dropped: [], required: 1 });
       }
-      // 쓴 검색어는 조각으로 싣는다
-      expect(search("K2Web-Wizard").terms).toEqual({ used: ["K2Web", "Wizard"], ignored: [], dropped: [], required: 1 });
     });
 
-    it("검색어 그대로 일치하는 행이 있으면 나누지 않는다", () => {
-      // 'SCP-SmartUI' 는 제품명에 그대로 들어 있다. 나누면 'SmartUI' 만 든 'SmartUI Tool' 이 함께 나온다
+    it("구분 기호의 자리에 아무 글자도 없는 표기와도 일치한다", () => {
+      // 저장된 표기는 'WebLogic', 'SmartUI' 다
+      expect(versionsOf(search("Web-Logic").rows)).toEqual(["WebLogic 12c"]);
+      expect(versionsOf(search("Smart_UI").rows)).toEqual(["SmartUI Tool 1.0", "SCP-SmartUI 1.0"]);
+    });
+
+    it("조각으로 나눠 찾지 않는다 (낱말 하나만 든 행과는 일치하지 않는다)", () => {
+      // 'K2Web' 은 두 행에, 'JEUS' 도 두 행에, 'on' 은 'CMS Solution' 의 끝에 들어 있다.
+      // 기호에서 나눈 조각으로 찾던 때에는 조각 하나만 든 그 행들이 나왔다
+      for (const query of ["K2Web-NoSuch", "JEUS-on", "egov_JEUS", "없는말-다른말"]) {
+        expect(search(query), `query=${query}`).toEqual(nothingFor(query));
+      }
+      // 다른 검색어로는 찾는다 ('9.9' 는 어느 행에도 없고 유연한 자리도 없다)
+      expect(search("JEUS 9.9").terms).toEqual({ used: ["JEUS"], ignored: ["9.9"], dropped: [], required: 1 });
+      // 영문 뒤에 한글 1~3자가 붙은 꼴은 조사를 뗀 꼴이 먼저 일치한다 (조각으로 나눈 것이 아니다)
+      expect(search("K2Web-없는말").terms).toEqual({ used: ["K2Web"], ignored: [], dropped: [], required: 1 });
+    });
+
+    it("검색어의 첫 글자와 마지막 글자가 영문자이면 낱말의 처음과 끝에서 일치해야 한다", () => {
+      // 'S_CMS' 는 'S-CMS', 'SCMS' 와 일치하고, 다른 낱말의 일부인 'PlusS-CMS', 'S-CMSuite' 와는 일치하지 않는다.
+      // 일치하지 않는 두 행의 확인일자가 가장 최근이라, 이 조건이 없으면 그 두 행이 맨 앞에 온다
+      sqlite.addCompatibilitySoftwareBatch([
+        named("S-CMS", "2015-01-01"),
+        named("SCMS", "2016-01-01"),
+        named("PlusS-CMS", "2030-01-01"),
+        named("S-CMSuite", "2031-01-01"),
+      ]);
+      expect(versionsOf(search("S_CMS").rows)).toEqual(["SCMS 1.0", "S-CMS 1.0"]);
+    });
+
+    it("숫자 사이의 구분 문자는 글자 그대로 견준다", () => {
+      // 'JEUS-8.5' 는 '-' 의 자리만 유연하다. '.' 은 버전 표기의 일부라 'JEUS 85' 와는 일치하지 않는다
+      sqlite.addCompatibilitySoftwareBatch([named("JEUS 85", "2031-01-01")]);
+      const versioned = search("JEUS-8.5");
+      expect(versionsOf(versioned.rows)).toEqual(["JEUS 8.5"]);
+      expect(versioned.terms).toEqual({ used: ["JEUS-8.5"], ignored: [], dropped: [], required: 1 });
+      // 마지막 글자가 숫자이면 뒤 글자를 가리지 않는다: 'JEUS_8' 은 'JEUS 8.5' 와 'JEUS 85' 를 모두 찾는다
+      expect(versionsOf(search("JEUS_8").rows)).toEqual(["JEUS 85 1.0", "JEUS 8.5"]);
+      // 'JEUS-21' 은 'JEUS 21' 만 찾는다 ('JEUS' 만 든 다른 행은 나오지 않는다)
+      const exactVersion = search("JEUS-21");
+      expect(versionsOf(exactVersion.rows)).toEqual(["JEUS 21"]);
+      expect(exactVersion.terms).toEqual({ used: ["JEUS-21"], ignored: [], dropped: [], required: 1 });
+    });
+
+    it("숫자와 구분 문자뿐인 검색어에는 유연한 꼴이 없다", () => {
+      // 버전이나 날짜를 적은 검색어다. 구분 문자의 자리를 유연하게 견주면 '03-21' 이 '0321' 과, '12.5' 가 '12 5' 와,
+      // '21_0' 이 '210' 과 일치한다
+      sqlite.addCompatibilitySoftwareBatch([
+        named("Build 0321", "2018-01-01"),
+        named("Kit 12 5", "2018-01-02"),
+        named("Rev 210", "2018-01-03"),
+      ]);
+      for (const query of ["03-21", "12.5", "21_0", "2099-12-31"]) {
+        expect(search(query), `query=${query}`).toEqual(nothingFor(query));
+      }
+    });
+
+    it("검색어 그대로 일치하는 행이 있으면 유연한 꼴을 쓰지 않는다", () => {
+      // 'SCP-SmartUI' 는 제품명에 그대로 들어 있다. 유연한 꼴은 띄어 쓴 'SCP SmartUI Plus' 와도 일치한다
+      sqlite.addCompatibilitySoftwareBatch([named("SCP SmartUI Plus", "2031-01-01")]);
       const exact = search("SCP-SmartUI");
       expect(versionsOf(exact.rows)).toEqual(["SCP-SmartUI 1.0"]);
       expect(exact.matchMode).toBe("all-terms");
@@ -1068,109 +1132,85 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       const fallback = search("SCP-SmartUI 없는말");
       expect(versionsOf(fallback.rows)).toEqual(["SCP-SmartUI 1.0"]);
       expect(fallback.terms).toEqual({ used: ["SCP-SmartUI"], ignored: ["없는말"], dropped: [], required: 1 });
+      // 어느 행에도 그대로 들어 있지 않은 표기로 적으면 유연한 꼴로 두 표기를 모두 찾는다
+      expect(versionsOf(search("SCP_SmartUI").rows)).toEqual(["SCP SmartUI Plus 1.0", "SCP-SmartUI 1.0"]);
       // 버전처럼 '.' 이 든 검색어도 그대로 일치하면 그대로 쓴다
       expect(search("4.3 없는말").terms?.used).toEqual(["4.3"]);
     });
 
-    it("조사를 뗀 꼴이 일치하는 행이 있어도 나누지 않는다", () => {
+    it("조사를 뗀 꼴이 일치하는 행이 있어도 유연한 꼴을 쓰지 않는다", () => {
+      sqlite.addCompatibilitySoftwareBatch([named("SCP SmartUI Plus", "2031-01-01")]);
       const result = search("SCP-SmartUI는 없는말");
       expect(versionsOf(result.rows)).toEqual(["SCP-SmartUI 1.0"]);
       expect(result.terms).toEqual({ used: ["SCP-SmartUI"], ignored: ["없는말"], dropped: [], required: 1 });
     });
 
-    it("조각에도 조사를 뗀 꼴을 견준다", () => {
-      // 'K2Web-Wizard는' → 'K2Web', 'Wizard는' → 'Wizard'
+    it("조사를 뗀 꼴의 유연한 꼴도 견주고, 쓴 검색어는 뗀 꼴로 싣는다", () => {
       const result = search("K2Web-Wizard는");
-      expect(versionsOf(result.rows)).toEqual(["K2Web Wizard 1.0", "K2Web Lite 1.0"]);
-      expect(result.terms).toEqual({ used: ["K2Web", "Wizard"], ignored: [], dropped: [], required: 1 });
+      expect(versionsOf(result.rows)).toEqual(["K2Web Wizard 1.0"]);
+      expect(result.terms).toEqual({ used: ["K2Web-Wizard"], ignored: [], dropped: [], required: 1 });
     });
 
-    it("한 글자 조각과 일치하는 행이 없는 조각은 쓰지 않는다", () => {
-      // 'JEUS-8' → 'JEUS'(2행), '8'(한 글자) / 'JEUS-없는말' → 'JEUS', '없는말'(0행)
-      for (const query of ["JEUS-8", "JEUS_8", "JEUS.8", "JEUS-없는말"]) {
-        const result = search(query);
-        expect(versionsOf(result.rows), `query=${query}`).toEqual(["JEUS 21", "JEUS 8.5"]);
-        expect(result.terms, `query=${query}`).toEqual({ used: ["JEUS"], ignored: [], dropped: [], required: 1 });
-      }
-    });
-
-    it("쓸 수 있는 조각이 하나도 없으면 검색어 전체를 쓰지 않은 검색어로 돌려준다", () => {
-      expect(search("없는말-다른말")).toEqual({
-        rows: [],
-        total: 0,
-        matchMode: "any-term",
-        terms: { used: [], ignored: ["없는말-다른말"], dropped: [], required: 0 },
-      });
-      // 한 글자 조각뿐인 검색어 ('9.9' 는 어느 행에도 없다)
-      expect(search("JEUS 9.9").terms).toEqual({ used: ["JEUS"], ignored: ["9.9"], dropped: [], required: 1 });
-    });
-
-    it("숫자와 구분 문자뿐인 검색어는 나누지 않는다", () => {
-      // 버전이나 날짜를 적은 검색어다. 나누면 '21' 이 'JEUS 21' 과, '12' 가 'WebLogic 12c' 와 우연히 일치한다
-      for (const query of ["03-21", "12.5", "21_0", "2099-12-31"]) {
-        expect(search(query), `query=${query}`).toEqual({
-          rows: [],
-          total: 0,
-          matchMode: "any-term",
-          terms: { used: [], ignored: [query], dropped: [], required: 0 },
-        });
-      }
-      // 글자가 섞인 검색어는 나눈다: 'JEUS-21' → 'JEUS', '21'
-      const mixed = search("JEUS-21");
-      expect(versionsOf(mixed.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
-      expect(mixed.terms).toEqual({ used: ["JEUS", "21"], ignored: [], dropped: [], required: 1 });
-    });
-
-    it("영어 기능어나 프레임워크 자체를 가리키는 낱말인 조각은 쓰지 않는다", () => {
-      // 'on' 은 'CMS Solution' 의 끝에, 'as' 는 'WAS' 의 뒤쪽에 들어 있다. 조각으로 쓰면 그 행들이 섞여 나온다
-      const preposition = search("JEUS-on");
-      expect(versionsOf(preposition.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
-      expect(preposition.terms).toEqual({ used: ["JEUS"], ignored: [], dropped: [], required: 1 });
-      expect(search("egov_JEUS").terms).toEqual({ used: ["JEUS"], ignored: [], dropped: [], required: 1 });
-      // 그런 조각뿐이면 검색어 전체를 쓰지 않는다
-      expect(search("as-on")).toMatchObject({ total: 0, terms: { used: [], ignored: ["as-on"] } });
-    });
-
-    it("조각이 다른 검색어와 같으면 한 번만 쓴다", () => {
-      // 두 번 세면 k=3 이 되어 두 개 이상 일치해야 하고, 'K2Web' 하나만 든 'K2Web Lite' 가 빠진다
-      const result = search("K2Web K2Web-Wizard");
-      expect(versionsOf(result.rows)).toEqual(["K2Web Wizard 1.0", "K2Web Lite 1.0"]);
-      expect(result.terms).toEqual({ used: ["K2Web", "Wizard"], ignored: [], dropped: [], required: 1 });
-    });
-
-    it("나눈 조각도 일치한 검색어 수에 센다 (다른 검색어와 함께 절반 이상이 일치해야 한다)", () => {
-      // K2Web·Wizard·1.0·없는말 → k=3, 두 개 이상 일치해야 통과. '1.0' 은 넣은 네 행 모두의 버전 표기에 있다
-      const result = search("K2Web-Wizard 1.0 없는말");
-      expect(versionsOf(result.rows)).toEqual(["K2Web Wizard 1.0", "K2Web Lite 1.0"]);
-      expect(result.terms).toEqual({ used: ["K2Web", "Wizard", "1.0"], ignored: ["없는말"], dropped: [], required: 2 });
-    });
-
-    it("조각이 일치하는 행이 있는지는 필터를 적용한 대상 안에서 판단한다", () => {
-      // 넣은 네 행은 모두 'CMS Solution' 이다. WAS 안에는 'K2Web' 도 'Wizard' 도 없다
-      expect(search("K2Web-Wizard", { category: "WAS" }).terms).toEqual({
-        used: [],
-        ignored: ["K2Web-Wizard"],
-        dropped: [],
-        required: 0,
-      });
-      expect(versionsOf(search("K2Web-Wizard", { category: "CMS Solution" }).rows)).toEqual([
-        "K2Web Wizard 1.0",
-        "K2Web Lite 1.0",
+    it("검색어 그대로의 유연한 꼴을 조사를 뗀 꼴의 유연한 꼴보다 먼저 견준다", () => {
+      // 'K2Web Wizard는' 이 적힌 행이 있으면 'K2Web-Wizard는' 은 그 행만 찾는다. 조사를 뗀 꼴의 유연한 꼴을 먼저 견주면
+      // 'K2Web Wizard' 가 든 행이 모두 나오고 쓴 검색어도 'K2Web-Wizard' 가 된다
+      sqlite.addCompatibilitySoftwareBatch([
+        { ...named("Guide", "2031-01-01"), description: "K2Web Wizard는 저작 도구다" },
       ]);
+      const result = search("K2Web-Wizard는");
+      expect(versionsOf(result.rows)).toEqual(["Guide 1.0"]);
+      expect(result.terms).toEqual({ used: ["K2Web-Wizard는"], ignored: [], dropped: [], required: 1 });
     });
 
-    it("나눠 쓰는 조각은 query 전체에서 검색어 수 상한(16개)까지다", () => {
-      // 이름이 서로 다른 스무 제품과, 그 이름 스무 개를 '-' 로 이은 검색어
-      const names = Array.from({ length: 20 }, (_, index) => `Piece${String(index).padStart(2, "0")}`);
-      sqlite.addCompatibilitySoftwareBatch(names.map((name) => named(name, "2018-01-01")));
-      const result = search(names.join("-"));
-      expect(result.terms?.used).toEqual(names.slice(0, 16));
-      expect(result.total).toBe(16);
-      // 조각을 견주는 조회도 그만큼만 한다: 일치하는 행이 없는 조각 마흔 개를 이어도 조회 문 수는 늘지 않는다
+    it("이름이 아닌 검색 컬럼에서 일치한 행도 찾고, 이름 컬럼에서 일치한 행을 먼저 돌려준다", () => {
+      // 설명에만 'K2Web Wizard' 가 적힌 행은 확인일자가 더 최근이지만, 제품명에 든 행 뒤에 온다
+      sqlite.addCompatibilitySoftwareBatch([
+        { ...named("Addon", "2031-01-01"), description: "K2Web Wizard 와 함께 쓴다" },
+      ]);
+      expect(versionsOf(search("K2Web-Wizard").rows)).toEqual(["K2Web Wizard 1.0", "Addon 1.0"]);
+    });
+
+    it("유연한 꼴에는 프레임워크 버전과 확인일자를 견주는 조건을 두지 않는다", () => {
+      const rowSelects = (query: string) =>
+        statementsOf(sqlite, () => search(query)).filter((sql) => sql.endsWith("LIMIT ? OFFSET ?"));
+      const flexible = rowSelects("K2Web-Wizard");
+      expect(flexible).toHaveLength(1);
+      expect(flexible[0]).not.toContain("cs.framework_version = ?");
+      expect(flexible[0]).not.toContain("substr(cs.verified_date");
+      // 검색어 그대로 견주는 조회 문에는 프레임워크 버전을 견주는 조건이 있다
+      const exact = rowSelects("JEUS");
+      expect(exact).toHaveLength(1);
+      expect(exact[0]).toContain("cs.framework_version = ?");
+    });
+
+    it("같은 유연한 꼴이 되는 검색어는 한 번만 쓴다", () => {
+      // 두 번 세면 쓸 수 있는 검색어가 셋이 되어 두 개 이상 일치해야 하고, 'Tibero' 하나만 든 Tibero 7 이 빠진다
+      const result = search("K2Web-Wizard K2Web_Wizard Tibero");
+      expect(versionsOf(result.rows)).toEqual(["Tibero 7", "K2Web Wizard 1.0"]);
+      expect(result.terms).toEqual({ used: ["K2Web-Wizard", "Tibero"], ignored: [], dropped: [], required: 1 });
+    });
+
+    it("유연한 꼴로 쓴 검색어도 일치한 검색어 수에 센다", () => {
+      // K2Web-Wizard·1.0·없는말 → 쓸 수 있는 검색어는 둘이고 하나 이상 일치하면 통과한다.
+      // '1.0' 은 다섯 행의 버전 표기에 있고, 두 검색어가 모두 일치한 K2Web Wizard 가 맨 앞이다
+      const result = search("K2Web-Wizard 1.0 없는말");
+      expect(versionsOf(result.rows)[0]).toBe("K2Web Wizard 1.0");
+      expect(result.total).toBe(5);
+      expect(result.terms).toEqual({ used: ["K2Web-Wizard", "1.0"], ignored: ["없는말"], dropped: [], required: 1 });
+    });
+
+    it("유연한 꼴과 일치하는 행이 있는지는 필터를 적용한 대상 안에서 판단한다", () => {
+      // 넣은 네 행은 모두 'CMS Solution' 이다. WAS 안에는 'K2Web Wizard' 가 없다
+      expect(search("K2Web-Wizard", { category: "WAS" })).toEqual(nothingFor("K2Web-Wizard"));
+      expect(versionsOf(search("K2Web-Wizard", { category: "CMS Solution" }).rows)).toEqual(["K2Web Wizard 1.0"]);
+    });
+
+    it("구분 문자가 수백 개인 검색어도 오류 없이 처리하고, 조회 문 수가 늘지 않는다", () => {
+      // 조각마다 조회하던 때에는 구분 문자의 수만큼 조회가 늘었다. 유연한 꼴은 검색어 하나에 패턴 두 개다
+      const many = Array.from({ length: 300 }, (_, index) => `p${index}`).join("-");
+      expect(search(many)).toEqual(nothingFor(many));
       const statements = (query: string) => statementsOf(sqlite, () => search(query)).length;
-      const many = Array.from({ length: 40 }, (_, index) => `none${index}`).join("-");
-      const few = Array.from({ length: 16 }, (_, index) => `none${index}`).join("-");
-      expect(statements(many)).toBe(statements(few));
+      expect(statements(many)).toBe(statements("p0-p1"));
     });
   });
 
@@ -1268,17 +1308,17 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       });
     });
 
-    it("조사를 뗀 꼴과 기호에서 나눈 조각도 대체 검색과 같이 쓴다", () => {
+    it("조사를 뗀 꼴과 유연한 꼴도 대체 검색과 같이 쓴다", () => {
       const result = search("JEUS는 OR Tibero를 OR Web-Logic");
       expect(result.terms).toEqual({
-        used: ["JEUS", "Tibero", "Web", "Logic"],
+        used: ["JEUS", "Tibero", "Web-Logic"],
         ignored: [],
         dropped: [],
         required: 1,
         orQuery: true,
       });
-      // WebLogic 은 조각 둘이 일치해 맨 앞이다
-      expect(versionsOf(result.rows)).toEqual(["WebLogic 12c", "JEUS 21", "Tibero 7", "JEUS 8.5"]);
+      // 네 행 모두 검색어 하나씩과 일치한다 ('Web-Logic' 은 유연한 꼴로 'WebLogic' 과 일치한다)
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "Tibero 7", "JEUS 8.5", "WebLogic 12c"]);
     });
 
     it("필터를 함께 주면 필터를 적용한 대상 안에서 찾는다", () => {

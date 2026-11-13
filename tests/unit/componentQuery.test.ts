@@ -482,25 +482,42 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     });
   });
 
-  describe("2단계: 기호로 이은 검색어", () => {
+  describe("2단계: 기호로 이은 검색어 (유연한 꼴)", () => {
     /** 컴포넌트 ID 가 'sts-com' 인 컴포넌트 (ID 와 패키지명의 표기가 다르다) */
     const STS_COM = {
       ...extra("sts-com", "통계공통", "Common Statistics", "통계 패키지에서 공통으로 사용"),
       package_name: "egovframework.com.sts.com",
     };
 
-    it("저장된 표기와 다른 기호로 이은 검색어는 기호에서 나눈 조각으로 찾는다", () => {
-      sqlite.addCommonComponentsBatch([STS_COM]);
-      // 'sts_com' 은 어느 컬럼에도 그대로 들어 있지 않다. 조각 'sts' 는 sts-com 과 bst(패키지 …sts.bst)에 들어 있고,
-      // 조각 'com' 은 모든 패키지명(egovframework.com.…)에 든 흔한 낱말이라 그것만 일치한 컴포넌트는 나오지 않는다
-      const result = sqlite.queryComponents({ query: "sts_com" });
-      expect(idsOf(result.rows)).toEqual(["sts-com", "bst"]);
-      expect(result.total).toBe(2);
-      expect(result.matchMode).toBe("any-term");
-      expect(result.terms).toEqual({ used: ["sts", "com"], ignored: [], dropped: [], required: 1 });
+    /** 쓸 수 있는 꼴이 하나도 없는 검색어 하나뿐인 query 의 결과 */
+    const nothingFor = (query: string) => ({
+      rows: [],
+      total: 0,
+      matchMode: "any-term",
+      terms: { used: [], ignored: [query], dropped: [], required: 0 },
     });
 
-    it("컴포넌트 ID 나 패키지명 그대로 일치하면 나누지 않는다", () => {
+    it("저장된 표기와 다른 기호로 이은 검색어는 구분 기호의 자리를 유연하게 견줘 찾는다", () => {
+      sqlite.addCommonComponentsBatch([STS_COM]);
+      // 'sts_com' 은 어느 컬럼에도 그대로 들어 있지 않다. 유연한 꼴은 ID 'sts-com' 과 패키지명의 '…sts.com' 과 일치한다.
+      // 조각으로 나눠 찾던 때에는 'sts' 만 든 bst(패키지 …sts.bst)도 함께 나왔다
+      const result = sqlite.queryComponents({ query: "sts_com" });
+      expect(idsOf(result.rows)).toEqual(["sts-com"]);
+      expect(result.total).toBe(1);
+      expect(result.matchMode).toBe("any-term");
+      expect(result.terms).toEqual({ used: ["sts_com"], ignored: [], dropped: [], required: 1 });
+    });
+
+    it("이름·영문명·설명·패키지명에 띄어 쓰거나 다른 기호로 이은 표기와도 일치한다", () => {
+      const found = (query: string) => idsOf(sqlite.queryComponents({ query }).rows);
+      expect(found("General_Login")).toEqual(["uia"]); // name_en 'General Login'
+      expect(found("게시판-템플릿")).toEqual(["tpl"]); // name '게시판 템플릿'
+      expect(found("이중등록방지_메시지")).toEqual([]); // 설명 '이중등록방지 | 메시지' 는 사이에 세 글자가 있다
+      expect(found("egovframework-com-cop-bbs")).toEqual(["bbs"]); // package_name 'egovframework.com.cop.bbs'
+      expect(found("Authority.Management")).toEqual(["ram", "drm"]); // 두 컴포넌트가 함께 쓰는 영문명
+    });
+
+    it("컴포넌트 ID 나 패키지명 그대로 일치하면 유연한 꼴을 쓰지 않는다", () => {
       sqlite.addCommonComponentsBatch([STS_COM]);
       const byId = sqlite.queryComponents({ query: "sts-com" });
       expect(idsOf(byId.rows)).toEqual(["sts-com"]);
@@ -515,20 +532,18 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
       });
     });
 
-    it("목록의 모든 항목에 해당하는 낱말인 조각은 쓰지 않는다", () => {
-      // 없는 패키지명: egovframework(목록의 모든 항목에 해당) · com(여덟 컴포넌트 모두) · cop(bbs, tpl) · zzz(0행)
-      const result = sqlite.queryComponents({ query: "egovframework.com.cop.zzz" });
-      expect(idsOf(result.rows)).toEqual(["bbs", "tpl"]);
-      expect(result.terms).toEqual({ used: ["com", "cop"], ignored: [], dropped: [], required: 1 });
+    it("없는 패키지명과 낱말을 이어 적은 검색어를 조각으로 나눠 찾지 않는다", () => {
+      // 조각으로 나눠 찾던 때에는 'com'(여덟 컴포넌트 모두의 패키지명)과 'cop'(bbs, tpl)이 일치해 행이 나왔다
+      for (const query of ["egovframework.com.cop.zzz", "egovframework.com.zzz", "게시판-없는말", "없는-낱말_뿐"]) {
+        expect(sqlite.queryComponents({ query }), `query=${query}`).toEqual(nothingFor(query));
+      }
     });
 
-    it("쓸 수 있는 조각이 하나도 없으면 검색어 전체를 쓰지 않은 검색어로 돌려준다", () => {
-      expect(sqlite.queryComponents({ query: "없는-낱말_뿐" }).terms).toEqual({
-        used: [],
-        ignored: ["없는-낱말_뿐"],
-        dropped: [],
-        required: 0,
-      });
+    it("유연한 꼴과 일치하는 컴포넌트가 있는지는 필터를 적용한 대상 안에서 판단한다", () => {
+      sqlite.addCommonComponentsBatch([STS_COM]);
+      // sts-com 은 '공통' 카테고리다 (고정 데이터의 cmm 과 같은 카테고리)
+      expect(sqlite.queryComponents({ query: "sts_com", filters: { categoryId: "게시판" } })).toEqual(nothingFor("sts_com"));
+      expect(idsOf(sqlite.queryComponents({ query: "sts_com", filters: { categoryId: "공통" } }).rows)).toEqual(["sts-com"]);
     });
   });
 

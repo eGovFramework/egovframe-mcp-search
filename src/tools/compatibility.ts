@@ -292,8 +292,8 @@ export interface CompatibilitySearchResponse {
    */
   orQuery?: true;
   /**
-   * matchMode 가 any-term 일 때: 대체 검색에 쓴 검색어. 조사를 떼어 쓴 검색어는 뗀 꼴이고,
-   * '.', '-', '_' 에서 나눠 쓴 검색어는 조각이다 ('K2Web-Wizard' → 'K2Web', 'Wizard')
+   * matchMode 가 any-term 일 때: 대체 검색에 쓴 검색어. 조사를 떼어 쓴 검색어는 뗀 꼴이고, 저장된 표기와
+   * 구분 기호('.', '-', '_')가 달라도 일치한 검색어는 적힌 그대로다 ('K2Web-Wizard' 로 'K2Web Wizard' 를 찾는다)
    */
   usedTerms?: string[];
   /**

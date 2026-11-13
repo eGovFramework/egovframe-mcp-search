@@ -99,11 +99,19 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
       expect(idsOf(partial.suggestions)).toEqual(["bbs", "tpl"]);
     });
 
-    it("없는 패키지명을 넣으면 패키지명의 조각이 일치하는 컴포넌트를 후보로 돌려준다", () => {
-      // 'egovframework.com.cop.zzz' 는 어느 컴포넌트의 패키지도 아니다. 조각 'cop' 이 든 패키지의 컴포넌트가 후보다
-      const info = getComponentInfo("egovframework.com.cop.zzz");
-      expect(info.component).toBeNull();
-      expect(idsOf(info.suggestions)).toEqual(["bbs", "tpl"]);
+    it("없는 패키지명을 넣으면 패키지명의 조각만 일치하는 컴포넌트를 후보로 돌려주지 않는다", () => {
+      // 'egovframework.com.cop.zzz' 는 어느 컴포넌트의 패키지도 아니다. 조각으로 나눠 찾던 때에는 'com'(모든 패키지명)과
+      // 'cop'(bbs, tpl)이 일치해, 입력과 관계없는 컴포넌트가 "비슷한 컴포넌트" 로 붙었다
+      for (const input of ["egovframework.com.cop.zzz", "egovframework.com.zzz"]) {
+        const info = getComponentInfo(input);
+        expect(info.component, `input=${input}`).toBeNull();
+        expect(info.suggestions, `input=${input}`).toEqual([]);
+      }
+    });
+
+    it("구분 기호만 다르게 적은 패키지명과 영문명은 그 컴포넌트를 후보로 돌려준다", () => {
+      expect(idsOf(getComponentInfo("egovframework-com-cop-bbs").suggestions)).toEqual(["bbs"]);
+      expect(idsOf(getComponentInfo("General_Login").suggestions)).toEqual(["uia"]);
     });
 
     it("후보는 5건까지만 돌려주고, 없으면 빈 배열이다", () => {

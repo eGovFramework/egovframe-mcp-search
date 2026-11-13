@@ -14,6 +14,8 @@
  *   "eGovFrame 4.3 호환 CMS", "게시판 컴포넌트").
  * - 대체 검색이 흔한 낱말만 일치한 행으로 결과를 채웠다 ("티맥스 제품 목록", "게시판 기능 알려줘").
  * - 낱말을 저장된 표기와 다른 기호로 이으면 0건이었다 ("K2Web-Wizard", "sts_com", "JEUS-8").
+ * - 기호에서 나눈 조각으로 찾으면 조각이 다른 낱말의 일부와 일치해 결과가 부풀었다 ("egovframework.com.zzz" 가
+ *   전체 컴포넌트, "REST-API 게시판" 에서 게시판이 4위, 주소를 적은 query 가 여러 건).
  * - 두세 글자 영문 검색어가 다른 낱말 속에서 일치한 행이, 낱말로 일치한 행보다 앞에 왔다 ("ECM Solution", "ERS",
  *   컴포넌트 ID "ist").
  * - OR 로 이은 낱말이 모두 든 행만 돌려줬다 ("게시판 OR 댓글", "CMS OR Portal").
@@ -133,28 +135,65 @@ describe("동봉 지식베이스의 키워드 검색", () => {
     });
 
     it("기호로 이은 낱말이 저장된 표기와 달라도 찾는다", () => {
-      // 컴포넌트 ID 는 'sts-com', 'blog-management' 이고 이름은 'Web Messenger' 다. 다른 기호로 이으면 0건이었다
-      const cases: Array<[string, string, string[]]> = [
-        ["sts_com", "sts-com", ["sts", "com"]],
-        ["blog_management", "blog-management", ["blog", "management"]],
-        ["Web-Messenger", "msg", ["Web", "Messenger"]],
+      // 컴포넌트 ID 는 'sts-com', 'blog-management' 이고 이름은 'Web Messenger', '공통코드', '웹로그관리' 다.
+      // 다른 기호로 이으면 0건이었고, 기호에서 나눈 조각으로 찾던 때에는 조각 하나만 든 컴포넌트가 열 건 남짓 딸려 나왔다
+      const cases: Array<[string, string[]]> = [
+        ["sts_com", ["sts-com"]],
+        ["blog_management", ["blog-management"]],
+        ["Web-Messenger", ["msg"]],
+        ["공통-코드", ["cca", "ccc"]],
+        ["web_log", ["wlg"]],
       ];
-      for (const [query, id, pieces] of cases) {
+      for (const [query, ids] of cases) {
         const result = sqlite.queryComponents({ query });
         expect(result.matchMode, `query=${query}`).toBe("any-term");
-        expect(result.terms, `query=${query}`).toEqual({ used: pieces, ignored: [], dropped: [], required: 1 });
-        expect(idsOf(result.rows)[0], `query=${query}`).toBe(id);
+        // 쓴 검색어는 조각이 아니라 query 에 적힌 검색어다
+        expect(result.terms, `query=${query}`).toEqual({ used: [query], ignored: [], dropped: [], required: 1 });
+        expect(idsOf(result.rows), `query=${query}`).toEqual(ids);
       }
-      // 조각 'com' 은 모든 패키지명에 든 흔한 낱말이다. 그것만 일치한 컴포넌트는 나오지 않는다
-      const stats = sqlite.queryComponents({ query: "sts_com" });
-      expect(idsOf(stats.rows).sort()).toEqual(idsOf(sqlite.queryComponents({ query: "sts" }).rows).sort());
-      expect(stats.total).toBeLessThan(sqlite.queryComponents({ query: "com" }).total);
-      // 저장된 표기 그대로 적으면 나누지 않는다
+      // 저장된 표기 그대로 적으면 그대로 찾는다
       for (const id of ["sts-com", "blog-management"]) {
         const exact = sqlite.queryComponents({ query: id });
         expect(idsOf(exact.rows), `query=${id}`).toEqual([id]);
         expect(exact.matchMode, `query=${id}`).toBe("all-terms");
       }
+    });
+
+    it("기호로 이은 검색어를 조각으로 나눠 찾지 않는다", () => {
+      // 조각으로 나눠 찾던 때에는 'com'(모든 패키지명), 'REST'('Rest day', 'restrictions'), 'sign'('signature'),
+      // '없는'(설명의 한 구절)이 일치해 찾는 것과 무관한 컴포넌트가 나왔다 ("egovframework.com.zzz" 는 전체 컴포넌트였다)
+      for (const query of ["egovframework.com.zzz", "REST-API", "single-sign-on", "sign-in", "multi-file", "zzz-없는-컴포넌트"]) {
+        const result = sqlite.queryComponents({ query });
+        expect(result.total, `query=${query}`).toBe(0);
+        expect(result.terms, `query=${query}`).toEqual({ used: [], ignored: [query], dropped: [], required: 0 });
+      }
+
+      // 그런 검색어가 섞여도 나머지 검색어만으로 찾은 것과 행도 순서도 같다
+      const pairs: Array<[string, string, string]> = [
+        ["REST-API 게시판", "게시판", "REST-API"],
+        ["single-sign-on 로그인", "로그인", "single-sign-on"],
+      ];
+      for (const [query, keyword, ignored] of pairs) {
+        const expected = sqlite.queryComponents({ query: keyword });
+        const result = sqlite.queryComponents({ query });
+        expect(expected.total, `query=${keyword}`).toBeGreaterThan(1);
+        expect(idsOf(result.rows), `query=${query}`).toEqual(idsOf(expected.rows));
+        expect(result.terms, `query=${query}`).toEqual({ used: [keyword], ignored: [ignored], dropped: [], required: 1 });
+      }
+      expect(idsOf(sqlite.queryComponents({ query: "REST-API 게시판" }).rows)[0]).toBe("bbs");
+    });
+
+    it("유연한 꼴로 쓴 검색어는 OR 와 필터 안에서도 그 표기의 컴포넌트하고만 일치한다", () => {
+      // "sts_com OR 게시판": 조각 'com' 이 모든 컴포넌트와 일치하던 때에는 전체 컴포넌트가 나왔다
+      const board = sqlite.queryComponents({ query: "게시판" });
+      const either = sqlite.queryComponents({ query: "sts_com OR 게시판" });
+      expect(either.terms).toEqual({ used: ["sts_com", "게시판"], ignored: [], dropped: [], required: 1, orQuery: true });
+      expect(idsOf(either.rows).sort()).toEqual([...idsOf(board.rows), "sts-com"].sort());
+      expect(either.total).toBeLessThan(sqlite.queryComponents().total);
+      // sts-com 은 게시판 카테고리가 아니다
+      const filtered = sqlite.queryComponents({ query: "sts_com", filters: { categoryId: "게시판" } });
+      expect(filtered.total).toBe(0);
+      expect(filtered.terms).toEqual({ used: [], ignored: ["sts_com"], dropped: [], required: 0 });
     });
 
     it("컴포넌트 ID 로도 찾는다 (패키지명과 다른 ID)", () => {
@@ -367,19 +406,62 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       expect(stored.total).toBeGreaterThan(0);
       const joined = compatible("K2Web-Wizard");
       expect(joined.matchMode).toBe("any-term");
-      expect(joined.terms).toEqual({ used: ["K2Web", "Wizard"], ignored: [], dropped: [], required: 1 });
-      // 두 조각이 모두 든 행(K2Web Wizard)이 앞에 오고, 한 조각만 든 행이 뒤따른다
-      expect(rowKeys(joined).slice(0, stored.total).sort()).toEqual(rowSet(stored));
+      // 쓴 검색어는 조각이 아니라 query 에 적힌 검색어다
+      expect(joined.terms).toEqual({ used: ["K2Web-Wizard"], ignored: [], dropped: [], required: 1 });
+      // 띄어 쓴 표기로 찾은 것과 행도 순서도 같다. 조각으로 나눠 찾던 때에는 'Wizard' 만 든 다른 제품이 딸려 나왔다
+      expect(rowKeys(joined)).toEqual(rowKeys(stored));
+      expect(joined.rows.every((row) => row.product_name === "K2Web Wizard")).toBe(true);
 
       // 'SCP-SmartUI' 를 다른 기호로 이어도 같은 행을 찾는다
-      expect(rowSet(compatible("SCP_SmartUI"))).toEqual(rowSet(compatible("SCP-SmartUI")));
-      // 한 글자 조각은 쓰지 않는다: 'JEUS-8' 은 JEUS 행들이다
-      const jeus = compatible("JEUS");
-      for (const query of ["JEUS-8", "JEUS_8", "JEUS.8"]) {
-        const result = compatible(query);
-        expect(rowKeys(result), `query=${query}`).toEqual(rowKeys(jeus));
-        expect(result.terms?.used, `query=${query}`).toEqual(["JEUS"]);
+      expect(rowKeys(compatible("SCP_SmartUI"))).toEqual(rowKeys(compatible("SCP-SmartUI")));
+      expect(compatible("SCP_SmartUI").total).toBeGreaterThan(0);
+
+      // 저장된 표기가 기호로 이은 꼴이거나('MC@CMS', 'S-CMS', 'U-CMS', 'in_S', 'I-ON') 붙여 쓴 꼴('WebSquare')이어도 찾는다
+      const names = (query: string) => [...new Set(compatible(query).rows.map((row) => row.product_name))].sort();
+      expect(names("MC-CMS")).toEqual(["MC@CMS eGov"]);
+      expect(names("Crownix-Report")).toEqual(["Crownix Report & ERS"]);
+      expect(names("U_CMS")).toEqual(["U-CMS"]);
+      expect(names("i_Portal")).toEqual(["i-Portal Platform(ContentNavigator)"]);
+      expect(names("e_Biz")).toEqual(["e-Biz Portal"]);
+      expect(names("in-S")).toEqual(["in_S"]);
+      expect(names("I_ON")).toEqual(["I-ON Content Server"]);
+      expect(names("Web-Square")).toEqual(["WebSquare AI", "WebSquare5"]);
+      // 'S_CMS' 는 'S-CMS' 와 'SCMS' 다. 조각 'CMS' 로 찾던 때에는 CMS 가 든 300건 남짓이 나왔다
+      for (const query of ["S_CMS", "S.CMS"]) {
+        expect(names(query), `query=${query}`).toEqual(["S-CMS", "SCMS"]);
       }
+    });
+
+    it("기호로 이은 제품명과 버전은 그 버전의 행만 찾는다", () => {
+      // 조각으로 나눠 찾던 때에는 한 글자 조각 '8' 을 쓰지 않아 JEUS 의 모든 버전이 나왔다
+      const versions = (query: string) => compatible(query).rows.map((row) => row.product_version).sort();
+      for (const query of ["JEUS-8", "JEUS_8", "JEUS.8"]) {
+        expect(versions(query), `query=${query}`).toEqual(["JEUS 8", "JEUS 8.5"]);
+        expect(compatible(query).terms, `query=${query}`).toEqual({ used: [query], ignored: [], dropped: [], required: 1 });
+      }
+      // 숫자 사이의 '.' 은 글자 그대로 견준다
+      expect(versions("JEUS-8.5")).toEqual(["JEUS 8.5"]);
+      expect(compatible("JEUS-8").total).toBeLessThan(compatible("JEUS").total);
+    });
+
+    it("기호로 이은 검색어를 조각으로 나눠 찾지 않는다", () => {
+      // 조각으로 나눠 찾던 때에는 'JE'('JEUS'), 'go'('Google', 'category'), 'co', 'com' 이 일치해 행이 나왔다
+      const absent = ["JE_S", "Tibero-7", "a-b", "www.egovframe.go.kr", "tmaxsoft.com", "open-source"];
+      for (const query of absent) {
+        const result = compatible(query);
+        expect(result.total, `query=${query}`).toBe(0);
+        expect(result.terms, `query=${query}`).toEqual({ used: [], ignored: [query], dropped: [], required: 0 });
+      }
+      // 주소를 적은 query 도 0건이다 (':', '/', '@' 는 구분자라 낱말이 둘로 나뉜다)
+      expect(compatible("https://www.iacts.co.kr")).toMatchObject({ total: 0, terms: { used: [] } });
+      expect(compatible("admin@example.com")).toMatchObject({ total: 0, terms: { used: [] } });
+
+      // "open-source DBMS" 는 분류가 DBMS 인 행들이다. 조각 'open' 이 제품명의 일부와 일치한 행이 앞에 서지 않는다
+      const dbms = compatible("DBMS");
+      const result = compatible("open-source DBMS");
+      expect(rowKeys(result)).toEqual(rowKeys(dbms));
+      expect(result.terms).toEqual({ used: ["DBMS"], ignored: ["open-source"], dropped: [], required: 1 });
+      expect(result.rows.every((row) => row.category === "DBMS")).toBe(true);
     });
 
     it('"ECM Solution" 은 분류가 ECM Solution 인 행을 맨 앞에 돌려준다', () => {

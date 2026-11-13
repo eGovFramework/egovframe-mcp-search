@@ -9,7 +9,7 @@
  * - 검색어로 쓰지 않는 낱말의 목록과 판정: ENGLISH_FUNCTION_WORDS, COMPATIBILITY_GENERIC_WORDS,
  *   COMPONENT_GENERIC_WORDS, isGenericTerm, dropGenericTerms
  * - 조사가 붙은 검색어를 조사 없는 꼴로 바꿔 보는 후보: particleStrippedForms
- * - 기호로 이은 검색어를 나눈 조각: splitAtSeparators
+ * - 기호로 이은 검색어를 저장된 표기와 구분 기호가 달라도 견주는 패턴 (유연한 꼴): flexibleForm
  * - 영문 검색어가 낱말의 처음에서 일치했는지를 가리는 패턴: isEnglishTerm, wordStartGlobPattern
  */
 
@@ -273,21 +273,6 @@ export function trimEdgeSeparators(candidate: string): string {
 }
 
 /**
- * 검색어를 안쪽의 `.` `-` `_` 에서 나눈 조각을 차례대로 돌려준다 ('K2Web-Wizard' → 'K2Web', 'Wizard').
- * 구분 문자가 이어져 있어도 빈 조각은 만들지 않는다. 구분 문자가 없는 검색어는 나눌 것이 없어 빈 배열을 돌려준다.
- *
- * extractSearchTerms 는 식별자('4.3', 'spring-boot')를 한 검색어로 지키려고 이 문자들을 검색어 안에 남긴다.
- * 그 검색어가 저장된 표기와 달라('K2Web Wizard') 어떤 행과도 일치하지 않을 때, 키워드 검색이 이 조각으로 다시 찾는다.
- * 조각의 길이는 가리지 않는다 (한 글자 조각을 쓸지는 호출부가 정한다).
- */
-export function splitAtSeparators(term: string): string[] {
-  if (!/[._-]/.test(term)) {
-    return [];
-  }
-  return term.split(/[._-]+/).filter((piece) => piece !== '');
-}
-
-/**
  * 영문 검색어인지: ASCII 영문자와 숫자로만 되어 있고 영문자가 하나 이상 든 검색어 ('ECM', 'K2Web', 'R6').
  * 한글이나 기호(검색어 안쪽의 `.` `-` `_` 포함)가 든 검색어, 숫자뿐인 검색어('7', '2025'), 빈 문자열은 아니다.
  *
@@ -332,6 +317,101 @@ function globLiteral(char: string): string {
  */
 export function wordStartGlobPattern(term: string): string {
   return `*[^A-Za-z]${Array.from(term, globLiteral).join('')}*`;
+}
+
+/** ASCII 숫자 한 글자인지 (문자열의 범위를 벗어난 자리의 undefined 는 아니다) */
+function isAsciiDigit(char: string | undefined): boolean {
+  return char !== undefined && char >= '0' && char <= '9';
+}
+
+/**
+ * 검색어를 유연한 자리에서 나눈 부분을 차례대로 돌려준다 ('K2Web-Wizard' → 'K2Web', 'Wizard').
+ *
+ * 유연한 자리는 검색어 안쪽의 `.` `-` `_` 가 이어진 묶음 가운데, 양옆 글자가 모두 ASCII 숫자인 것을 뺀 나머지다.
+ * 숫자 사이의 묶음은 버전이나 날짜의 일부라 부분 안에 글자 그대로 둔다 ('JEUS-8.5' → 'JEUS', '8.5').
+ * 유연한 자리가 없으면 검색어 전체가 부분 하나다. term 은 양끝에 구분 문자가 없어야 한다.
+ */
+function flexibleParts(term: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let index = 0;
+  while (index < term.length) {
+    if (!isEdgeSeparator(term[index])) {
+      current += term[index];
+      index += 1;
+      continue;
+    }
+    let end = index;
+    while (end < term.length && isEdgeSeparator(term[end])) {
+      end += 1;
+    }
+    if (isAsciiDigit(term[index - 1]) && isAsciiDigit(term[end])) {
+      current += term.slice(index, end);
+    } else {
+      parts.push(current);
+      current = '';
+    }
+    index = end;
+  }
+  parts.push(current);
+  return parts;
+}
+
+/** 유연한 자리에 올 수 있는 글자 하나를 견주는 GLOB 조각: ASCII 영문자도 숫자도 한글 음절도 아닌 글자 (공백이나 기호) */
+const FLEXIBLE_SEPARATOR_GLOB = '[^0-9A-Za-z가-힣]';
+
+/** 기호로 이은 검색어의 유연한 꼴 (flexibleForm 의 결과) */
+export interface FlexibleForm {
+  /**
+   * 검색어를 유연한 자리에서 나눈 부분 (둘 이상, 빈 문자열 없음). 유연한 꼴과 일치하는 값에는 이 부분들이 이 순서로
+   * 들어 있다 (부분과 부분 사이에는 글자가 하나 있거나 없다). 호출부가 패턴을 견주기 전에 값을 미리 거르는 데 쓴다
+   */
+  parts: string[];
+  /** 유연한 꼴을 견주는 GLOB 패턴: [모든 유연한 자리에 글자 하나가 온 꼴, 모든 유연한 자리가 붙은 꼴] */
+  patterns: [string, string];
+}
+
+/**
+ * 기호로 이은 검색어의 "유연한 꼴" 을 만든다: 견줄 SQLite GLOB 패턴 두 개와, 검색어를 유연한 자리에서 나눈 부분.
+ * 유연한 자리가 없는 검색어는 null 이다.
+ *
+ * extractSearchTerms 는 식별자('4.3', 'spring-boot')를 한 검색어로 지키려고 `.` `-` `_` 를 검색어 안에 남긴다.
+ * 그 검색어가 저장된 표기와 구분 기호만 달라도 부분 문자열로는 일치하지 않는다 ('K2Web-Wizard' 와 'K2Web Wizard',
+ * 'sts_com' 과 'sts-com', 'Web-Square' 와 'WebSquare'). 유연한 꼴은 그 자리를 너그럽게 견준다.
+ *
+ * 1) 유연한 자리는 검색어 안쪽의 `.` `-` `_` 묶음 가운데 양옆 글자가 모두 ASCII 숫자인 것을 뺀 나머지다
+ *    (flexibleParts). '8.5', '03-21' 의 구분 문자는 글자 그대로 견준다. 유연한 자리가 없으면 유연한 꼴도 없다
+ *    ('4.3', '10.1', 'JEUS').
+ * 2) 검색어를 유연한 자리에서 나눈 부분들이 순서대로 이어져 나오는 값과 일치한다. 유연한 자리에는
+ *    (가) ASCII 영문자도 숫자도 한글 음절도 아닌 글자 하나가 오거나 (나) 아무 글자도 오지 않는다.
+ *    모든 자리에 (가)를 적용한 패턴과 모든 자리에 (나)를 적용한 패턴, 두 가지만 만든다 (자리마다 섞지 않는다).
+ *    부분을 따로 찾지 않으므로, 부분 하나만 든 값과는 일치하지 않는다.
+ * 3) 검색어의 첫 글자가 ASCII 영문자이면 일치한 자리의 바로 앞 글자가, 마지막 글자가 ASCII 영문자이면 바로 뒤
+ *    글자가 ASCII 영문자가 아니어야 한다. 'S_CMS' 가 'TransCMS' 의 일부나 'S-CMSuite' 와 일치하지 않게 한다.
+ *    첫 글자나 마지막 글자가 숫자나 한글이면 그쪽에는 조건을 두지 않는다 ('JEUS-8' 은 'JEUS 8.5' 와 일치한다).
+ * 4) ASCII 영문자의 대소문자는 가리지 않는다 (wordStartGlobPattern 과 같은 방법).
+ *
+ * 패턴은 값의 앞뒤에 공백 한 칸씩을 붙인 문자열과 견준다: `(' ' || 컬럼 || ' ') GLOB ?`. 붙인 공백이 값의 맨 앞과
+ * 맨 끝을 "영문자가 아닌 글자" 로 만들어, 3)의 조건을 패턴 하나로 가린다. 두 패턴 가운데 하나라도 일치하면 일치다.
+ *
+ * 패턴은 조회 문에 끼워 넣지 않고 바인딩 값으로 넘긴다. GLOB 에서 뜻이 있는 문자는 글자 그대로 견준다 (globLiteral).
+ * 검색어는 길어야 MAX_KEYWORD_QUERY_LENGTH 자다. 패턴이 가장 길어지는 것은 영문자와 구분 문자가 번갈아 나올 때이고
+ * (두 글자마다 23바이트), 그때도 약 23,000바이트라 SQLite 의 패턴 길이 한도(50,000바이트)를 넘지 않는다.
+ * 양끝의 구분 문자는 없는 것으로 본다 (extractSearchTerms 가 추출한 검색어에는 없다).
+ */
+export function flexibleForm(term: string): FlexibleForm | null {
+  const trimmed = trimEdgeSeparators(term);
+  const parts = flexibleParts(trimmed);
+  if (parts.length < 2) {
+    return null;
+  }
+  const head = /^[A-Za-z]/.test(trimmed) ? '*[^A-Za-z]' : '*';
+  const tail = /[A-Za-z]$/.test(trimmed) ? '[^A-Za-z]*' : '*';
+  const literals = parts.map((part) => Array.from(part, globLiteral).join(''));
+  return {
+    parts,
+    patterns: [`${head}${literals.join(FLEXIBLE_SEPARATOR_GLOB)}${tail}`, `${head}${literals.join('')}${tail}`],
+  };
 }
 
 /** 영문·숫자·`.`·`-`·`_` 로만 된 앞부분 뒤에 한글 음절 1~3자가 붙은 꼴 ('JEUS는', '4.3에서') */

@@ -132,7 +132,8 @@ export function getComponentInfo(componentId: string): {
  *   true 로 있다 (matchMode 는 any-term, requiredMatches 는 1). 이 필드가 없는 any-term 결과는 모든 검색어가 일치하는
  *   컴포넌트가 없어 대체 검색으로 넘어간 것이다.
  * - usedTerms, requiredMatches: matchMode 가 any-term 일 때만 있다. 대체 검색에 쓴 검색어(조사를 떼어 쓴
- *   검색어는 뗀 꼴, '.', '-', '_' 에서 나눠 쓴 검색어는 조각)와, 결과의 컴포넌트마다 일치한 검색어의 최소 수다
+ *   검색어는 뗀 꼴. 저장된 표기와 구분 기호 '.', '-', '_' 가 달라도 일치한 검색어는 적힌 그대로)와,
+ *   결과의 컴포넌트마다 일치한 검색어의 최소 수다
  *   (쓴 검색어의 절반을 올림한 수에서 시작해, 그 기준을 채운 컴포넌트가 없으면 1 까지 낮춘 값. 쓴 검색어가 없으면 0).
  * - ignoredTerms: 일치하는 컴포넌트가 없어 검색에 쓰지 않은 검색어 (query 에 적힌 꼴). 그런 검색어가 없으면 없다.
  * - droppedTerms: 일치하는 컴포넌트가 있는지와 관계없이 검색에서 뺀 검색어 (query 에 적힌 꼴, 적힌 순서대로).

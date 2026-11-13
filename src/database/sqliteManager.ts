@@ -11,15 +11,13 @@ import { getSQLiteDBPath } from '../utils/projectPath.js';
 import {
   COMPATIBILITY_GENERIC_WORDS,
   COMPONENT_GENERIC_WORDS,
-  MAX_SEARCH_TERMS,
   codePointLength,
   dropGenericTerms,
   extractSearchTerms,
+  flexibleForm,
   isEnglishTerm,
-  isGenericTerm,
   parseKeywordQuery,
   particleStrippedForms,
-  splitAtSeparators,
   wordStartGlobPattern,
   type KeywordQuery,
 } from '../utils/fts5Query.js';
@@ -462,15 +460,17 @@ export class SQLiteManager {
    * 들어 있다는 뜻이다 (LIKE. ASCII 영문자는 대소문자를 가리지 않는다). FTS5 인덱스는 쓰지 않는다:
    * 낱말 단위 접두 일치로는 한국어 복합어의 뒤쪽이나 가운데에 든 낱말('공통코드' 의 '코드')을 찾지 못하고,
    * 두 표 모두 수백 행이라 전체를 훑어도 느리지 않다.
-   * 부분 문자열로 견주면 안 되는 컬럼은 대상이 따로 정한 조건(termConditions)으로 견준다. 일치 판정은
-   * 아래의 모든 단계가 termMatcher 가 만든 조건 하나를 쓴다.
+   * 부분 문자열로 견주면 안 되는 컬럼은 대상이 따로 정한 조건(termConditions)으로 견준다. 검색어 그대로의
+   * 일치 판정은 아래의 모든 단계가 termMatcher 가 만든 조건 하나를 쓴다. 대체 검색은 그대로는 일치하는 행이 없는
+   * 검색어를 조사를 뗀 꼴과 유연한 꼴(구분 기호의 자리를 너그럽게 견주는 flexibleTermMatcher)로도 견준다.
    *
    * 0) 행을 가려 주지 못하는 낱말을 검색어에서 뺀다 (dropGenericTerms): 영어 기능어와, 대상의 모든 항목에
    *    해당하는 낱말(target.genericTerms). 다른 검색어가 남을 때만 뺀다.
    * 1) 모든 검색어가 일치하는 행을 찾는다 (allTermsStage). 한 글자 검색어도 쓰고, 그렇게 해서 찾은 행이 없을
    *    때만 한 글자 검색어를 빼고 다시 찾는다.
    * 2) 필터까지 적용한 결과가 0건이면 한 글자 검색어를 뺀 채로(dropSingleCharacterTerms) 대체 검색
-   *    (anyTermSearch)으로 넘어간다: 일치하는 행이 있는 검색어만 남기고, 그 절반 이상이 일치하는 행을 찾는다.
+   *    (anyTermSearch)으로 넘어간다: 일치하는 행이 있는 검색어만 남기고(그대로, 조사를 뗀 꼴, 유연한 꼴 가운데
+   *    일치하는 행이 있는 첫 꼴을 쓴다), 그 절반 이상이 일치하는 행을 찾는다.
    *    그런 행이 없으면 일치 기준을 낮춰 가며 찾는다. 대상 행의 절반 넘게 일치하는 흔한 검색어만 일치한 행은
    *    돌려주지 않는다.
    *    0건인지는 페이지가 아니라 전체 건수로 판단한다 (offset 이 끝을 넘었다고 검색 방식을 바꾸지 않는다).
@@ -635,9 +635,9 @@ export class SQLiteManager {
    * 일치 기준은 처음부터 1 이고, 흔한 검색어만 일치한 행도 거르지 않는다. 호출자가 낱말을 OR 로 이어 어느 것이든
    * 든 행을 달라고 한 것이라, 절반 이상이 일치한 행이 있다고 나머지를 빼거나 흔한 낱말이라고 거르지 않는다.
    *
-   * 결과의 terms.used 는 쓸 수 있는 검색어(조사를 떼어 쓴 것은 뗀 꼴, 나눠 쓴 것은 조각), terms.ignored 는 쓰지 않은 검색어,
-   * terms.required 는 실제로 적용한 일치 기준이다 (k 가 0 이면 0). 검색에서 뺀 검색어(dropped)와 OR 로 찾았다는
-   * 표시(orQuery)는 호출부가 채운다.
+   * 결과의 terms.used 는 쓸 수 있는 검색어(조사를 떼어 쓴 것은 뗀 꼴, 유연한 꼴로 쓴 것은 그 꼴을 만든 검색어 그대로),
+   * terms.ignored 는 쓰지 않은 검색어, terms.required 는 실제로 적용한 일치 기준이다 (k 가 0 이면 0).
+   * 검색에서 뺀 검색어(dropped)와 OR 로 찾았다는 표시(orQuery)는 호출부가 채운다.
    */
   private anyTermSearch<Row>(
     target: KeywordSearchTarget,
@@ -669,87 +669,62 @@ export class SQLiteManager {
   /**
    * 대체 검색에 쓸 수 있는 검색어를 고른다: 필터를 적용한 대상 안에 일치하는 행이 있는 검색어.
    *
-   * 검색어마다 다음을 차례로 견줘, 일치하는 행이 있는 첫 꼴을 쓴다.
-   * 1) 검색어 그대로.
-   * 2) 조사를 뗀 꼴 (particleStrippedForms). 조사가 붙은 제품명('JEUS는', '티맥스는')으로도 찾게 한다.
-   * 3) 검색어 안쪽의 '.', '-', '_' 에서 나눈 조각 (splitAtSeparators). 낱말을 기호로 이어 적은 검색어가 저장된
-   *    표기와 다를 때('K2Web-Wizard' 와 'K2Web Wizard', 'sts_com' 과 'sts-com')에도 찾게 한다.
-   *    조각마다 1)과 2)를 견줘 일치하는 행이 있는 것을 모두 쓴다. 한 글자 조각과 행을 가려 주지 못하는 낱말
-   *    (isGenericTerm)인 조각은 쓰지 않는다: 부분 문자열로 견주면 찾는 것과 무관한 행과 일치한다.
-   *    숫자와 구분 문자뿐인 검색어('10.1', '03-21')는 나누지 않는다. 낱말을 이은 것이 아니라 버전이나 날짜를
-   *    적은 것이고, 나눈 숫자는 다른 값의 숫자와 우연히 일치한다 ('03-21' 의 '21' 이 'JEUS 21' 과).
-   *
-   * 어느 꼴도 일치하는 행이 없는 검색어는 쓰지 않는다 (ignored). 쓰는 꼴이 다른 검색어와 같으면 한 번만 쓴다.
-   *
-   * 나눠서 견주는 조각은 query 전체에서 MAX_SEARCH_TERMS 개까지고, 쓰는 검색어도 모두 합쳐 그만큼까지다.
-   * 조각마다 조회가 필요하고 검색어 하나가 수백 조각으로 나뉠 수 있어, 조회 횟수와 조회 문의 크기를 묶어 둔다.
+   * 검색어마다 일치하는 행이 있는 첫 꼴을 쓰고(firstMatchingForm), 어느 꼴도 일치하는 행이 없는 검색어는 쓰지
+   * 않는다 (ignored). 쓰는 꼴이 다른 검색어와 같으면 한 번만 쓴다 ('JEUS JEUS는' 의 'JEUS', 'K2Web-Wizard
+   * K2Web_Wizard' 의 유연한 꼴). 같은 꼴인지는 견주는 조건의 키(TermMatcher.key)로 가린다.
    */
   private usableTerms(
     target: KeywordSearchTarget,
     terms: string[],
     filter: SqlCondition,
   ): { usable: UsableTerm[]; ignored: string[] } {
-    /** term 그대로와 조사를 뗀 꼴 가운데, 필터를 적용한 대상 안에 일치하는 행이 있는 첫 꼴. 없으면 null */
-    const firstMatchingForm = (term: string): UsableTerm | null => {
-      for (const form of [term, ...particleStrippedForms(term)]) {
-        const matcher = termMatcher(target, form);
-        // 견줄 조건을 만들 수 없는 값은 어떤 행과도 일치하지 않는다
-        const rows = matcher === null ? 0 : this.countInScope(target, matcher.matches, filter);
-        if (matcher !== null && rows > 0) {
-          return { form, matcher, rows };
-        }
-      }
-      return null;
-    };
-
     const usable: UsableTerm[] = [];
     const ignored: string[] = [];
-    // 쓰는 꼴이 다른 검색어와 같으면 한 번만 센다 (LIKE 처럼 영문자의 대소문자는 가리지 않는다)
     const usedKeys = new Set<string>();
-    /** 쓸 수 있는 꼴 하나를 더한다 (이미 쓰는 꼴이거나 쓰는 검색어 수가 상한에 닿았으면 더하지 않는다) */
-    const use = (match: UsableTerm): void => {
-      const key = match.form.toLowerCase();
-      if (!usedKeys.has(key) && usable.length < MAX_SEARCH_TERMS) {
-        usedKeys.add(key);
-        usable.push(match);
-      }
-    };
-
-    // 나눠서 견줄 수 있는 조각의 남은 수 (query 전체에서 센다)
-    let pieceBudget = MAX_SEARCH_TERMS;
     for (const term of terms) {
-      const whole = firstMatchingForm(term);
-      if (whole !== null) {
-        use(whole);
-        continue;
-      }
-
-      // 그대로도 조사를 뗀 꼴로도 일치하는 행이 없을 때만 조각으로 나눠 본다
-      let usedPiece = false;
-      for (const piece of NUMBER_LIKE_TERM.test(term) ? [] : splitAtSeparators(term)) {
-        if (codePointLength(piece) < 2 || isGenericTerm(piece, target.genericTerms)) {
-          continue;
-        }
-        if (usedKeys.has(piece.toLowerCase())) {
-          // 이미 쓰는 검색어와 같은 조각은 다시 견주지 않는다
-          usedPiece = true;
-          continue;
-        }
-        if (pieceBudget === 0) {
-          break;
-        }
-        pieceBudget -= 1;
-        const match = firstMatchingForm(piece);
-        if (match !== null) {
-          use(match);
-          usedPiece = true;
-        }
-      }
-      if (!usedPiece) {
+      const match = this.firstMatchingForm(target, term, filter);
+      if (match === null) {
         ignored.push(term);
+      } else if (!usedKeys.has(match.matcher.key)) {
+        usedKeys.add(match.matcher.key);
+        usable.push(match);
       }
     }
     return { usable, ignored };
+  }
+
+  /**
+   * 검색어의 꼴 가운데, 필터를 적용한 대상 안에 일치하는 행이 있는 첫 꼴을 고른다. 없으면 null 이다.
+   *
+   * 다음 순서로 견준다.
+   * 1) 검색어 그대로.
+   * 2) 조사를 뗀 꼴 (particleStrippedForms). 조사가 붙은 제품명('JEUS는', '티맥스는')으로도 찾게 한다.
+   * 3) 검색어 그대로의 유연한 꼴 (flexibleTermMatcher). 낱말을 기호로 이어 적은 검색어가 저장된 표기와 구분 기호만
+   *    다를 때('K2Web-Wizard' 와 'K2Web Wizard', 'sts_com' 과 'sts-com', 'Web-Square' 와 'WebSquare')에도 찾게 한다.
+   * 4) 조사를 뗀 꼴의 유연한 꼴 ('K2Web-Wizard는').
+   *
+   * 기호에서 나눈 조각으로는 찾지 않는다. 조각은 다른 낱말의 일부와 일치해 결과를 부풀린다: 없는 패키지명
+   * 'egovframework.com.zzz' 의 'com' 이 모든 컴포넌트와, 'REST-API' 의 'REST' 가 'restrictions' 와 일치한다.
+   *
+   * 돌려주는 form 은 쓴 꼴의 표기다. 유연한 꼴로 쓴 것은 그 꼴을 만든 검색어 그대로다 (3은 query 에 적힌 검색어,
+   * 4는 조사를 뗀 꼴).
+   */
+  private firstMatchingForm(target: KeywordSearchTarget, term: string, filter: SqlCondition): UsableTerm | null {
+    const forms = [term, ...particleStrippedForms(term)];
+    for (const matcherOf of [termMatcher, flexibleTermMatcher]) {
+      for (const form of forms) {
+        const matcher = matcherOf(target, form);
+        // 견줄 조건을 만들 수 없는 꼴은 어떤 행과도 일치하지 않는다
+        if (matcher === null) {
+          continue;
+        }
+        const rows = this.countInScope(target, matcher.matches, filter);
+        if (rows > 0) {
+          return { form, matcher, rows };
+        }
+      }
+    }
+    return null;
   }
 
   /**
@@ -1400,9 +1375,15 @@ interface KeywordSearchTarget {
 
 /** 검색어 하나를 행과 견주는 조건 */
 interface TermMatcher {
+  /**
+   * 같은 조건인지를 가리는 키. 대체 검색이 같은 꼴이 되는 검색어를 한 번만 쓰는 데 쓴다.
+   * 검색어 그대로 견주는 조건은 소문자로 바꾼 검색어이고(LIKE 처럼 ASCII 영문자의 대소문자를 가리지 않는다),
+   * 유연한 꼴은 GLOB 패턴이다 ('*' 로 시작하므로 검색어의 키와 겹치지 않는다)
+   */
+  key: string;
   /** 검색어가 행과 일치한다 */
   matches: SqlExpression;
-  /** 검색어가 이름 컬럼(nameColumns)에 부분 문자열로 들어 있다 */
+  /** 검색어가 이름 컬럼(nameColumns)에서 일치한다 (matches 와 같은 방법으로 견준다) */
   inName: SqlExpression;
   /**
    * 검색어가 낱말의 처음에서 일치한다: 검색 컬럼(searchColumns) 가운데 하나에서 값의 맨 앞이거나 바로 앞 글자가
@@ -1414,7 +1395,7 @@ interface TermMatcher {
 
 /** 대체 검색이 쓰기로 한 검색어 하나 */
 interface UsableTerm {
-  /** 검색에 쓰는 꼴 (조사를 떼어 쓰면 뗀 꼴, 기호에서 나눠 쓰면 조각) */
+  /** 검색에 쓰는 꼴의 표기 (조사를 떼어 쓰면 뗀 꼴. 유연한 꼴로 쓰면 그 꼴을 만든 검색어 그대로) */
   form: string;
   /** 그 꼴을 행과 견주는 조건 */
   matcher: TermMatcher;
@@ -1446,7 +1427,8 @@ function countOf(conditions: SqlExpression[]): SqlExpression {
  *
  * 검색어는 searchColumns 가운데 하나에 부분 문자열로 들어 있거나 대상이 따로 정한 조건(termConditions)
  * 가운데 하나를 채우면 일치한다. 키워드 검색의 모든 단계(all-terms, any-term, 일치하는 행이 있는 검색어인지의
- * 판정)가 이 조건을 쓰므로, 일치 규칙을 바꿀 때는 여기만 바꾼다.
+ * 판정)가 검색어 그대로와 조사를 뗀 꼴을 이 조건으로 견주므로, 일치 규칙을 바꿀 때는 여기만 바꾼다.
+ * (구분 기호의 자리를 너그럽게 견주는 유연한 꼴의 조건은 flexibleTermMatcher 가 따로 만든다.)
  *
  * 영문 검색어(isEnglishTerm)에는 낱말의 처음에서 일치했는지를 가리는 조건(startsWord)도 만든다.
  * 정렬에만 쓰고, 행이 일치하는지는 바꾸지 않는다 (selectByMatchedTerms).
@@ -1461,14 +1443,48 @@ function termMatcher(target: KeywordSearchTarget, term: string): TermMatcher | n
     return null;
   }
   return {
+    key: term.toLowerCase(),
     matches: anyOf([likeAnyColumn(target.searchColumns, pattern), ...(target.termConditions?.(term) ?? [])]),
     inName: likeAnyColumn(target.nameColumns, pattern),
     startsWord: isEnglishTerm(term) ? wordStartAnyColumn(target.searchColumns, wordStartGlobPattern(term)) : null,
   };
 }
 
-/** 숫자와 '.', '-', '_' 뿐인 검색어: 버전이나 날짜를 적은 것 ('4.3', '10.1', '03-21', '2024-11') */
-const NUMBER_LIKE_TERM = /^[0-9._-]+$/;
+/**
+ * 검색어의 유연한 꼴을 대상의 행과 견주는 조건을 만든다. 유연한 자리가 없는 검색어는 null 이다.
+ *
+ * 유연한 꼴은 검색어 안쪽의 '.', '-', '_' 의 자리에 다른 기호나 공백이 오거나 아무것도 오지 않은 표기와도 일치한다
+ * (규칙은 utils/fts5Query 의 flexibleForm). 대체 검색이 쓸 꼴을 고를 때만 쓴다 (firstMatchingForm).
+ *
+ * 검색 컬럼(searchColumns) 가운데 하나에서 두 패턴 가운데 하나와 일치하면 그 검색어가 일치한 것이고,
+ * 이름 컬럼에서 일치했는지(inName)도 같은 패턴을 nameColumns 에 견준다.
+ * 대상이 따로 정한 조건(termConditions)과 낱말의 처음 조건(startsWord)은 두지 않는다. 프레임워크 버전과
+ * 확인일자는 검색어 그대로일 때만 견주고, 유연한 꼴은 낱말의 처음과 끝에서만 일치하도록 패턴이 이미 가린다.
+ *
+ * GLOB 패턴마다 LIKE 패턴 하나를 짝지어 먼저 견준다 (prefilteredGlobAnyColumn). 유연한 자리에 글자 하나가 온 꼴은
+ * 부분 사이를 '_'(아무 글자 하나)로 이은 패턴, 붙은 꼴은 부분을 그대로 이은 패턴이다. GLOB 과 일치하는 값은 반드시
+ * 그 LIKE 와도 일치하므로 결과는 달라지지 않는다. 대부분의 값이 LIKE 에서 걸러져, 동봉 데이터에서 유연한 꼴 하나를
+ * 호환 소프트웨어 표 전체에 견주는 시간이 1.7ms 남짓에서 0.2ms 남짓으로 줄어든다.
+ */
+function flexibleTermMatcher(target: KeywordSearchTarget, term: string): TermMatcher | null {
+  const form = flexibleForm(term);
+  if (form === null) {
+    return null;
+  }
+  const [spaced, joined] = form.patterns;
+  const escapedParts = form.parts.map(escapeLikePattern);
+  const inAnyOf = (columns: string[]): SqlExpression =>
+    anyOf([
+      prefilteredGlobAnyColumn(columns, `%${escapedParts.join('_')}%`, spaced),
+      prefilteredGlobAnyColumn(columns, `%${escapedParts.join('')}%`, joined),
+    ]);
+  return {
+    key: spaced,
+    matches: inAnyOf(target.searchColumns),
+    inName: inAnyOf(target.nameColumns),
+    startsWord: null,
+  };
+}
 
 /** 확인일자와 견줄 수 있는 검색어의 꼴: YYYY, YYYY-MM, YYYY-MM-DD */
 const DATE_PREFIX_TERM = /^\d{4}(?:-\d{2}(?:-\d{2})?)?$/;
@@ -1584,6 +1600,26 @@ function wordStartAnyColumn(columns: string[], pattern: string): SqlExpression {
   return {
     sql: `(${columns.map((column) => `(' ' || ${column}) GLOB ?`).join(' OR ')})`,
     params: columns.map(() => pattern),
+  };
+}
+
+/**
+ * 컬럼 가운데 하나라도 유연한 꼴의 GLOB 패턴(flexibleForm 이 만든 것)과 일치한다는 조건.
+ * 두 패턴은 컬럼마다 한 번씩, LIKE 패턴과 GLOB 패턴의 순서로 바인딩한다.
+ *
+ * GLOB 은 값의 앞뒤에 공백 한 칸씩을 붙여 견준다. 값의 맨 앞과 맨 끝도 "영문자가 아닌 글자" 옆이 되어, 패턴이 낱말의
+ * 처음과 끝을 한 가지 꼴로 가린다. 값이 NULL 인 컬럼은 일치하지 않는다.
+ *
+ * likePattern 은 GLOB 과 일치하는 값이라면 반드시 일치하는 느슨한 패턴이다 (`LIKE ? ESCAPE '\'`). GLOB 보다 먼저
+ * 견줘, 일치할 수 없는 값에는 공백을 붙이지도 GLOB 을 견주지도 않는다. 문자 집합으로 시작하는 GLOB 패턴은 값의
+ * 글자마다 처음부터 다시 견줘야 해서, 첫 글자를 찾아 건너뛰는 LIKE 보다 훨씬 느리다.
+ */
+function prefilteredGlobAnyColumn(columns: string[], likePattern: string, globPattern: string): SqlExpression {
+  return {
+    sql: `(${columns
+      .map((column) => `(${column} LIKE ? ESCAPE '\\' AND (' ' || ${column} || ' ') GLOB ?)`)
+      .join(' OR ')})`,
+    params: columns.flatMap(() => [likePattern, globPattern]),
   };
 }
 

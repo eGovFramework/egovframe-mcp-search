@@ -15,13 +15,13 @@ import {
   MAX_SEARCH_TERMS,
   dropGenericTerms,
   extractSearchTerms,
+  flexibleForm,
   hasOrOperator,
   isEnglishTerm,
   isGenericTerm,
   joinedTermKeys,
   parseKeywordQuery,
   particleStrippedForms,
-  splitAtSeparators,
   trimEdgeSeparators,
   wordStartGlobPattern,
 } from "../../src/utils/fts5Query.js";
@@ -393,34 +393,185 @@ describe("extractSearchTerms 가 읽는 query 의 길이", () => {
   });
 });
 
-describe("splitAtSeparators", () => {
-  it("검색어 안쪽의 '.', '-', '_' 에서 나눈 조각을 차례대로 돌려준다", () => {
-    expect(splitAtSeparators("K2Web-Wizard")).toEqual(["K2Web", "Wizard"]);
-    expect(splitAtSeparators("sts_com")).toEqual(["sts", "com"]);
-    expect(splitAtSeparators("egovframework.com.cop.bbs")).toEqual(["egovframework", "com", "cop", "bbs"]);
-    expect(splitAtSeparators("spring-boot_starter.web")).toEqual(["spring", "boot", "starter", "web"]);
+describe("flexibleForm", () => {
+  // 패턴이 SQLite 의 GLOB 에서 실제로 어떻게 견줘지는지를 본다 (키워드 검색은 값의 앞뒤에 공백 한 칸씩을 붙여 견준다)
+  const db = new Database(":memory:");
+  afterAll(() => {
+    db.close();
   });
 
-  it("구분 문자가 이어져 있어도 빈 조각은 만들지 않는다", () => {
-    expect(splitAtSeparators("a.-_b")).toEqual(["a", "b"]);
-    expect(splitAtSeparators("게시판--템플릿")).toEqual(["게시판", "템플릿"]);
-  });
+  /** 검색어의 유연한 꼴을 견주는 GLOB 패턴 두 개. 유연한 꼴이 없으면 null */
+  const patternsOf = (term: string): [string, string] | null => flexibleForm(term)?.patterns ?? null;
 
-  it("조각의 길이는 가리지 않는다 (한 글자 조각을 쓸지는 호출부가 정한다)", () => {
-    expect(splitAtSeparators("JEUS-8")).toEqual(["JEUS", "8"]);
-    expect(splitAtSeparators("4.3")).toEqual(["4", "3"]);
-  });
-
-  it("구분 문자가 없는 검색어는 나눌 것이 없어 빈 배열을 돌려준다", () => {
-    expect(splitAtSeparators("JEUS")).toEqual([]);
-    expect(splitAtSeparators("게시판")).toEqual([]);
-    expect(splitAtSeparators("")).toEqual([]);
-  });
-
-  it("아주 긴 검색어도 100ms 안에 나눈다", () => {
-    for (const term of [`${"a-".repeat(999)}a`, `a${".".repeat(1998)}a`, "a".repeat(2000)]) {
-      expect(elapsedMs(() => splitAtSeparators(term))).toBeLessThan(100);
+  /** 값(value)이 검색어(term)의 유연한 꼴과 일치하는지: 두 패턴 가운데 하나라도 일치하면 일치다 */
+  const matchesFlexibly = (value: string, term: string): boolean => {
+    const patterns = patternsOf(term);
+    if (patterns === null) {
+      throw new Error(`유연한 꼴이 없는 검색어: ${term}`);
     }
+    return patterns.some((pattern) => {
+      const row = db.prepare("SELECT (' ' || ? || ' ') GLOB ? AS hit").get(value, pattern) as { hit: number };
+      return row.hit === 1;
+    });
+  };
+
+  it("검색어를 유연한 자리에서 나눈 부분과 GLOB 패턴 두 개를 돌려준다", () => {
+    expect(flexibleForm("K2Web-Wizard")).toEqual({
+      parts: ["K2Web", "Wizard"],
+      patterns: [
+        "*[^A-Za-z][Kk]2[Ww][Ee][Bb][^0-9A-Za-z가-힣][Ww][Ii][Zz][Aa][Rr][Dd][^A-Za-z]*",
+        "*[^A-Za-z][Kk]2[Ww][Ee][Bb][Ww][Ii][Zz][Aa][Rr][Dd][^A-Za-z]*",
+      ],
+    });
+    // 숫자 사이의 구분 문자는 부분 안에 그대로 남고, 숫자나 한글로 시작하거나 끝나는 쪽에는 조건이 붙지 않는다
+    expect(flexibleForm("공통-8.5")).toEqual({
+      parts: ["공통", "8.5"],
+      patterns: ["*공통[^0-9A-Za-z가-힣]8.5*", "*공통8.5*"],
+    });
+    expect(flexibleForm("egovframework.com.cop-bbs")?.parts).toEqual(["egovframework", "com", "cop", "bbs"]);
+  });
+
+  it("유연한 자리마다 기호나 공백 하나가 온 값과 일치한다", () => {
+    // 유연한 자리: 검색어 안쪽의 '.', '-', '_' 묶음. 값에는 ASCII 영문자도 숫자도 한글 음절도 아닌 글자 하나가 올 수 있다
+    for (const term of ["K2Web-Wizard", "K2Web_Wizard", "K2Web.Wizard"]) {
+      for (const value of ["K2Web Wizard", "K2Web-Wizard", "K2Web_Wizard", "K2Web.Wizard", "K2Web@Wizard", "K2Web/Wizard", "K2Web&Wizard"]) {
+        expect(matchesFlexibly(value, term), `${value} / ${term}`).toBe(true);
+      }
+    }
+    expect(matchesFlexibly("MC@CMS eGov", "MC-CMS")).toBe(true);
+    expect(matchesFlexibly("in_S v1.0", "in-S")).toBe(true);
+  });
+
+  it("유연한 자리에 아무 글자도 오지 않은 값과도 일치한다", () => {
+    expect(matchesFlexibly("K2WebWizard", "K2Web-Wizard")).toBe(true);
+    expect(matchesFlexibly("WebSquare5 v5.0", "Web-Square")).toBe(true);
+    expect(matchesFlexibly("SCMS 1.0", "S_CMS")).toBe(true);
+    expect(matchesFlexibly("공통코드", "공통-코드")).toBe(true);
+  });
+
+  it("유연한 자리에 영문자, 숫자, 한글 음절이 오거나 글자가 둘 이상 오면 일치하지 않는다", () => {
+    for (const value of ["K2WebXWizard", "K2Web7Wizard", "K2Web가Wizard", "K2Web  Wizard", "K2Web - Wizard", "K2Web Lite", "Wizard K2Web"]) {
+      expect(matchesFlexibly(value, "K2Web-Wizard"), value).toBe(false);
+    }
+    // '공통의코드', '공통분류코드' 는 두 부분 사이에 한글이 들어 있다
+    expect(matchesFlexibly("공통의코드", "공통-코드")).toBe(false);
+    expect(matchesFlexibly("공통분류코드", "공통-코드")).toBe(false);
+  });
+
+  it("모든 자리에 글자 하나가 온 값이거나 모든 자리가 붙은 값이어야 한다 (자리마다 섞이지 않는다)", () => {
+    expect(matchesFlexibly("web log tool", "web-log-tool")).toBe(true);
+    expect(matchesFlexibly("web.log_tool", "web-log-tool")).toBe(true);
+    expect(matchesFlexibly("weblogtool", "web-log-tool")).toBe(true);
+    expect(matchesFlexibly("web logtool", "web-log-tool")).toBe(false);
+    expect(matchesFlexibly("weblog tool", "web-log-tool")).toBe(false);
+  });
+
+  it("구분 문자가 이어져 있어도 유연한 자리 하나다", () => {
+    expect(patternsOf("K2Web-_.Wizard")).toEqual(patternsOf("K2Web-Wizard"));
+    expect(matchesFlexibly("K2Web Wizard", "K2Web--Wizard")).toBe(true);
+  });
+
+  it("양옆이 모두 ASCII 숫자인 구분 문자는 글자 그대로 견준다", () => {
+    // 'JEUS-8.5': '-' 는 유연한 자리이고, 숫자 사이의 '.' 은 버전 표기의 일부다
+    expect(matchesFlexibly("JEUS 8.5", "JEUS-8.5")).toBe(true);
+    for (const value of ["JEUS 8 5", "JEUS 85", "JEUS 8-5", "JEUS 8", "JEUS 8,5"]) {
+      expect(matchesFlexibly(value, "JEUS-8.5"), value).toBe(false);
+    }
+    expect(matchesFlexibly("Tool 2024-03-21 build", "Tool_2024-03-21")).toBe(true);
+    expect(matchesFlexibly("Tool 2024 03 21 build", "Tool_2024-03-21")).toBe(false);
+    // 한쪽만 숫자이면 유연한 자리다
+    expect(matchesFlexibly("JEUS 8", "JEUS-8")).toBe(true);
+    expect(matchesFlexibly("v7 Tibero", "v7-Tibero")).toBe(true);
+  });
+
+  it("유연한 자리가 없는 검색어에는 유연한 꼴이 없다", () => {
+    // 구분 문자가 없거나, 구분 문자가 모두 숫자 사이에 있다 (버전, 날짜)
+    for (const term of ["JEUS", "게시판", "8", "", "4.3", "10.1", "4.3.0", "03-21", "2099-12-31", "21_0", "1.2-3_4", "v1_0"]) {
+      expect(patternsOf(term), JSON.stringify(term)).toBeNull();
+    }
+  });
+
+  it("검색어의 첫 글자가 ASCII 영문자이면 일치한 자리의 바로 앞 글자가 ASCII 영문자가 아니어야 한다", () => {
+    for (const value of ["S-CMS V1.0", "SCMS 1.0", "(S-CMS)", "가S-CMS", "7S-CMS", "x S CMS"]) {
+      expect(matchesFlexibly(value, "S_CMS"), value).toBe(true);
+    }
+    for (const value of ["OS-CMS", "XSCMS", "xS CMS", "Trans-CMS"]) {
+      expect(matchesFlexibly(value, "S_CMS"), value).toBe(false);
+    }
+    // 낱말의 가운데에서 일치한 자리를 지나, 그 뒤에 조건을 채운 자리가 있으면 일치한다
+    expect(matchesFlexibly("OS-CMS 와 S-CMS", "S_CMS")).toBe(true);
+  });
+
+  it("검색어의 마지막 글자가 ASCII 영문자이면 일치한 자리의 바로 뒤 글자가 ASCII 영문자가 아니어야 한다", () => {
+    for (const value of ["S-CMS", "S-CMS2", "S-CMS관리", "S-CMS.", "S CMS x"]) {
+      expect(matchesFlexibly(value, "S_CMS"), value).toBe(true);
+    }
+    for (const value of ["S-CMSX", "SCMSolution", "S CMSx"]) {
+      expect(matchesFlexibly(value, "S_CMS"), value).toBe(false);
+    }
+    // 'JE_S' 는 'JEUS' 와도 'JE Solution' 과도 일치하지 않는다
+    expect(matchesFlexibly("JEUS 8", "JE_S")).toBe(false);
+    expect(matchesFlexibly("JE Solution", "JE_S")).toBe(false);
+  });
+
+  it("첫 글자나 마지막 글자가 숫자나 한글이면 그쪽에는 조건을 두지 않는다", () => {
+    // 마지막 글자가 숫자: 'JEUS-8' 은 'JEUS 8.5', 'JEUS 85', 'JEUS 8x' 와도 일치한다
+    for (const value of ["JEUS 8", "JEUS 8.5", "JEUS 85", "JEUS 8x"]) {
+      expect(matchesFlexibly(value, "JEUS-8"), value).toBe(true);
+    }
+    expect(matchesFlexibly("xJEUS 8", "JEUS-8")).toBe(false);
+    // 첫 글자가 숫자: 앞 글자가 영문자여도 된다
+    expect(matchesFlexibly("v8 bit", "8-bit")).toBe(true);
+    expect(matchesFlexibly("v8 bits", "8-bit")).toBe(false);
+    // 한글: 복합어의 가운데에서도 일치한다
+    expect(matchesFlexibly("내부공통코드관리", "공통-코드")).toBe(true);
+    expect(matchesFlexibly("A공통 코드B", "공통-코드")).toBe(true);
+  });
+
+  it("ASCII 영문자의 대소문자를 가리지 않는다", () => {
+    for (const [value, term] of [
+      ["k2web wizard", "K2Web-Wizard"],
+      ["K2WEB WIZARD", "k2web_wizard"],
+      ["sts-com", "STS_COM"],
+      ["Web Messenger", "web-messenger"],
+    ]) {
+      expect(matchesFlexibly(value, term), `${value} / ${term}`).toBe(true);
+    }
+  });
+
+  it("양끝의 구분 문자는 없는 것으로 본다", () => {
+    expect(patternsOf("-K2Web-Wizard_")).toEqual(patternsOf("K2Web-Wizard"));
+    expect(patternsOf("-JEUS-")).toBeNull();
+  });
+
+  it("GLOB 에서 뜻이 있는 문자(*, ?, [, ])는 글자 그대로 견준다", () => {
+    // 키워드 검색이 넘기는 검색어에는 이런 문자가 없지만, 어떤 검색어를 넘겨도 와일드카드로 읽히지 않아야 한다
+    expect(matchesFlexibly("a* b", "a*-b")).toBe(true);
+    expect(matchesFlexibly("axx b", "a*-b")).toBe(false);
+    expect(matchesFlexibly("a? b", "a?-b")).toBe(true);
+    expect(matchesFlexibly("ax b", "a?-b")).toBe(false);
+    expect(matchesFlexibly("[a] b", "[a]-b")).toBe(true);
+    expect(matchesFlexibly("a b", "[a]-b")).toBe(false);
+  });
+
+  it("아주 긴 검색어의 패턴도 SQLite 의 패턴 길이 한도(50,000바이트) 안에 든다", () => {
+    // 검색어는 길어야 2,000자(MAX_KEYWORD_QUERY_LENGTH)다. 글자와 구분 문자가 번갈아 나올 때 패턴이 가장 길다
+    const longest = `${"a-".repeat(MAX_KEYWORD_QUERY_LENGTH / 2 - 1)}ab`;
+    expect(longest).toHaveLength(MAX_KEYWORD_QUERY_LENGTH);
+    for (const term of [longest, `${"가_".repeat(999)}가나`, `a${".".repeat(1998)}a`, `${"ab_".repeat(666)}ab`]) {
+      expect(elapsedMs(() => patternsOf(term))).toBeLessThan(100);
+      const patterns = patternsOf(term);
+      expect(patterns).toHaveLength(2);
+      for (const pattern of patterns ?? []) {
+        expect(Buffer.byteLength(pattern, "utf8")).toBeLessThan(50_000);
+      }
+    }
+    // 그 패턴으로 견줘도 오류가 없고, 같은 꼴의 값과 일치한다
+    const value = `${"A ".repeat(MAX_KEYWORD_QUERY_LENGTH / 2 - 1)}AB`;
+    let hit = false;
+    expect(elapsedMs(() => (hit = matchesFlexibly(value, longest)))).toBeLessThan(100);
+    expect(hit).toBe(true);
+    expect(matchesFlexibly("a b c", longest)).toBe(false);
   });
 });
 
