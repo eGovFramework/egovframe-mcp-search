@@ -372,6 +372,43 @@ describe("chunkMarkdown — 코드 블록을 나눈 조각은 펜스를 닫고 �
     expect(chunks.map((c) => c.content)).toEqual([`${before}\n\n${intro}`, block]);
   });
 
+  describe("빈 줄이 없는 글 (목록 안에 코드 블록이 바로 이어지는 문서)", () => {
+    // 문단 경계가 없어 어디에서 끊든 줄 경계다. 그 가운데 코드 블록의 밖에 있는 줄 경계를 먼저 고른다
+    const steps = (from: number, to: number) =>
+      Array.from({ length: to - from + 1 }, (_, i) => `${from + i}. 설정의 ${from + i}번째 단계를 진행한다.`);
+    const code = Array.from({ length: 7 }, (_, i) => `cache.region${i} = value${i}`);
+
+    it("한 조각에 들어가는 코드 블록은 중간에서 자르지 않는다 (조각의 크기가 덜 고르더라도)", () => {
+      // 블록의 가운데에서 끊으면 두 조각의 크기가 더 고르다. 그래도 블록이 끝난 뒤에서 끊는다
+      const chunks = chunk(doc("## 설정", ...steps(1, 3), "```ini", ...code, "```", ...steps(4, 6)));
+      expect(chunks.map((c) => c.content)).toEqual([
+        [...steps(1, 3), "```ini", ...code, "```"].join("\n"),
+        steps(4, 6).join("\n"),
+      ]);
+    });
+
+    it("코드 블록을 소개하는 목록 항목 앞에서 끊어, 블록의 첫 줄만 앞 조각에 남기지 않는다", () => {
+      const chunks = chunk(doc("## 설정", ...steps(1, 5), "```ini", ...code, "```", ...steps(6, 6)));
+      expect(chunks.map((c) => c.content)).toEqual([
+        steps(1, 4).join("\n"),
+        [...steps(5, 5), "```ini", ...code, "```", ...steps(6, 6)].join("\n"),
+      ]);
+    });
+
+    it("한 조각에 들어가지 않는 코드 블록은 지금처럼 줄에서 나누고 펜스를 닫고 다시 연다", () => {
+      const longCode = Array.from({ length: 24 }, (_, i) => `cache.region${i} = value${i}`);
+      const chunks = chunk(doc("## 설정", ...steps(1, 2), "```ini", ...longCode, "```", ...steps(3, 4)));
+      expect(chunks.length).toBeGreaterThan(2);
+      for (const c of chunks) {
+        expect(fenceLines(c.content) % 2, c.title).toBe(0);
+        expect(estimateGuideChunkTokens(c), c.title).toBeLessThanOrEqual(SMALL.tokenBudget!);
+      }
+      for (const line of longCode) {
+        expect(chunks.filter((c) => c.content.split("\n").includes(line)), line).toHaveLength(1);
+      }
+    });
+  });
+
   it("여는 펜스 바로 뒤나 닫는 펜스 바로 앞에서는 나누지 않는다 (빈 코드 블록을 만들지 않는다)", () => {
     const chunks = chunk(doc("## 설정", "", paragraph("도입", 11), "", "```xml", ...codeLines.slice(0, 12), "```"));
     expect(chunks.length).toBeGreaterThan(2);
@@ -463,6 +500,15 @@ describe("chunkMarkdown — 표를 나눈 조각에는 머리 행과 구분 행�
     const table = [...head, ...rows.slice(0, 5)].join("\n");
     const chunks = chunk(doc("## 속성", "", before, "", intro, "", table));
     expect(chunks.map((c) => c.content)).toEqual([before, `${intro}\n\n${table}`]);
+  });
+
+  it("한 조각에 들어가는 표는 빈 줄이 없는 글에서도 중간에서 자르지 않는다 (표 밖의 줄 경계를 먼저 고른다)", () => {
+    // 목록 안에 표가 빈 줄 없이 이어진다. 표의 가운데에서 끊으면 두 조각의 크기가 더 고르지만 표가 끝난 뒤에서 끊는다
+    const steps = (from: number, to: number) =>
+      Array.from({ length: to - from + 1 }, (_, i) => `${from + i}. 설정의 ${from + i}번째 단계를 진행한다.`);
+    const table = [...head, ...Array.from({ length: 7 }, (_, i) => `| name${i} | ${i}번째 값 |`)];
+    const chunks = chunk(doc("## 설정", ...steps(1, 3), ...table, ...steps(4, 6)));
+    expect(chunks.map((c) => c.content)).toEqual([[...steps(1, 3), ...table].join("\n"), steps(4, 6).join("\n")]);
   });
 
   it("머리 행과 구분 행 사이, 구분 행과 첫 행 사이에서는 나누지 않는다", () => {

@@ -353,6 +353,8 @@ interface Atom {
   boundary: 0 | 1 | 2;
   /** 앞 원자가 보통 글이고 이 원자가 코드 블록이나 표의 첫 줄인지 (앞의 글이 이 블록을 소개하는 자리) */
   introduced: boolean;
+  /** 앞 원자와 같은 코드 블록이나 표에 든 줄인지 (이 원자 앞에서 끊으면 블록의 안에서 끊는 것이다) */
+  insideBlock: boolean;
   /** 이 원자에서 조각이 시작할 때 앞에 다시 넣는 줄 (펜스를 다시 열거나 표 머리를 다시 넣는다) */
   lead: string;
   /** lead 의 추정 토큰 */
@@ -437,6 +439,7 @@ type SplitCost = [
   inlineCuts: number,
   shortPieces: number,
   lineCuts: number,
+  blockCuts: number,
   introCuts: number,
   pieces: number,
   squares: number,
@@ -456,9 +459,11 @@ function costLess(a: SplitCost, b: SplitCost): boolean {
  *   1. 줄 안에서 끊은 횟수. 한 줄이 상한보다 길 때만 생긴다
  *   2. 짧은 조각(minPieceChars 미만)의 수
  *   3. 문단 안의 줄 경계에서 끊은 횟수. 문단 경계에서 끊을 수 있으면 문단을 쪼개지 않는다
- *   4. 코드 블록이나 표와 그것을 소개하는 앞의 글 사이에서 끊은 횟수. 블록이 설명 없이 조각의 처음에 오지 않게 한다
- *   5. 조각 수
- *   6. 조각 크기의 제곱합. 조각 수가 같으면 크기를 고르게 맞춘다 (마지막 조각만 짧게 남기지 않는다)
+ *   4. 그 가운데 코드 블록이나 표의 안에서 끊은 횟수. 빈 줄 없이 이어진 글(목록 안의 코드 블록 등)에서도
+ *      블록의 밖에 있는 줄 경계를 먼저 골라, 한 조각에 들어가는 블록을 쪼개지 않는다
+ *   5. 코드 블록이나 표와 그것을 소개하는 앞의 글 사이에서 끊은 횟수. 블록이 설명 없이 조각의 처음에 오지 않게 한다
+ *   6. 조각 수
+ *   7. 조각 크기의 제곱합. 조각 수가 같으면 크기를 고르게 맞춘다 (마지막 조각만 짧게 남기지 않는다)
  *
  * 끊지 않는 자리: 여는 펜스 바로 뒤와 닫는 펜스 바로 앞(빈 코드 블록이 생긴다), 표의 머리 행·구분 행·첫 행 사이,
  * 제목 줄 바로 뒤(제목이 그 내용과 떨어진다. 제목 줄은 짧은 소절을 이웃에 붙인 묶음을 나눌 때만 여기에 온다).
@@ -550,6 +555,8 @@ function splitIntoPieces(
         cuttable: index > 0 ? true : cuttable,
         boundary: index > 0 ? 2 : blankBefore ? 0 : 1,
         introduced: index === 0 && previousRole === 'text' && (role === 'open' || role === 'thead'),
+        // 코드 줄과 닫는 펜스, 표의 구분 행과 본문 행은 언제나 같은 블록의 줄 뒤에 온다
+        insideBlock: index === 0 && (role === 'code' || role === 'close' || role === 'tdelim' || role === 'trow'),
         lead,
         leadTokens,
         closeBefore: closesFence ? close : '',
@@ -588,7 +595,7 @@ function splitIntoPieces(
   const solve = (keepUncuttable: boolean): Array<[first: number, last: number]> | null => {
     const best: Array<SplitCost | null> = new Array(count + 1).fill(null);
     const cutFrom = new Int32Array(count + 1).fill(-1);
-    best[0] = [0, 0, 0, 0, 0, 0];
+    best[0] = [0, 0, 0, 0, 0, 0, 0];
     for (let j = 1; j <= count; j++) {
       if (keepUncuttable && j < count && !atoms[j].cuttable) continue;
       const cutKind = j < count ? atoms[j].boundary : -1;
@@ -604,9 +611,10 @@ function splitIntoPieces(
           before[0] + (cutKind === 2 ? 1 : 0),
           before[1] + (pieceChars(i, j - 1) < minPieceChars ? 1 : 0),
           before[2] + (cutKind === 1 ? 1 : 0),
-          before[3] + (j < count && atoms[j].introduced ? 1 : 0),
-          before[4] + 1,
-          before[5] + tokens * tokens,
+          before[3] + (cutKind === 1 && atoms[j].insideBlock ? 1 : 0),
+          before[4] + (j < count && atoms[j].introduced ? 1 : 0),
+          before[5] + 1,
+          before[6] + tokens * tokens,
         ];
         const current = best[j];
         if (current === null || costLess(candidate, current)) {
