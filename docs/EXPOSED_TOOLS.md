@@ -21,15 +21,17 @@
 |------|-----|
 | `name` | `egov_search_knowledge` |
 | `title` | `eGovFrame Knowledge Search` |
+| `description` | 이미 있는 참조 자료를 찾아 주는 읽기 전용 검색·조회 도구이고, 새 스키마를 만들거나 무언가를 저장하지 않는다는 설명 |
 | `annotations` | `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, `openWorldHint: false` |
+| `execution` | `taskSupport: "forbidden"` (MCP SDK 가 붙이는 값) |
 | `inputSchema` | 아래 여섯 개의 최상위 속성. 필수 속성은 없습니다. |
 
 | 파라미터 | 타입 | 설명 |
 |----------|------|------|
-| `query` | string | 검색 질문 또는 키워드. `guide`, `knowledge`, `all` 검색에서는 필요합니다. |
+| `query` | string | 검색 질문 또는 키워드 (최대 10,000자). `guide`, `knowledge`, `all` 검색에서는 필요합니다. |
 | `scope` | string (enum) | `auto`, `guide`, `knowledge`, `components`, `compatibility`, `all`. 생략하면 `auto` 입니다. |
 | `action` | string (enum) | `components` 의 세부 조회 동작. `get`, `info`, `dependencies`, `sourceFiles`, `readSource`, `ddl`, `dml` |
-| `filters` | object | scope 별 필터. 예: `componentId`, `dbType`, `frameworkVersion` |
+| `filters` | object | scope 별 필터. 예: `componentId`, `dbType`, `frameworkVersion`. 정의된 키만 받습니다. |
 | `limit` | integer | 최대 결과 수 (1~200) |
 | `strictScope` | boolean | 효과가 없습니다. 기존 호출과의 호환을 위해 받기만 합니다. |
 
@@ -39,12 +41,12 @@
 
 | scope | 설명 |
 |-------|------|
-| `auto` | `action` 과 `filters` 를 보고 출처를 고릅니다. 단서가 없으면 `query` 가 있을 때 통합 검색을, 없을 때 공통컴포넌트 카테고리 개요를 돌려줍니다. |
+| `auto` | `action` 과 `filters` 를 보고 출처를 고릅니다. 출처를 가리키는 값이 없으면 `query` 가 있을 때 통합 검색을 실행하고, 없을 때 공통컴포넌트 조회로 처리해 목록 필터가 없으면 카테고리 개요를 돌려줍니다. |
 | `guide` | 공식 가이드(eGovFrame Developer Guide) 의미 검색 |
 | `knowledge` | 개발자 지식(전자정부 표준프레임워크 포털의 묻고답하기, FAQ, 적용가이드) 의미 검색 |
-| `components` | 공통컴포넌트의 목록, 상세, 의존성, 소스 파일, DDL, DML 조회 |
-| `compatibility` | 표준프레임워크 버전별 호환 소프트웨어 조회 |
-| `all` | 위 네 출처의 통합 검색 |
+| `components` | 공통컴포넌트의 목록, 키워드 검색, 상세, 의존성, 소스 파일, DDL, DML 조회 |
+| `compatibility` | 표준프레임워크 버전별 호환 소프트웨어 조회와 키워드 검색 |
+| `all` | 위 네 출처의 통합 검색. 출처마다 기본 5건, 최대 10건을 싣습니다. |
 
 ### 예시
 
