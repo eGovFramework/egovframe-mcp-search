@@ -117,14 +117,21 @@ function charWeight(code: number): number {
 }
 
 /**
- * text 의 추정 토큰 수를 돌려준다. sums 를 주면 앞 i 글자까지의 값을 sums[i] 에 채운다 (길이 text.length + 1).
+ * text 의 [from, to) 구간의 추정 토큰 수를 돌려준다. 구간의 처음부터 새로 센다 (from 을 낱말이 시작하는 자리로 본다).
+ * sums 를 주면 구간의 앞 i 글자까지의 값을 sums[i] 에 채운다. limit 를 주면 누적값이 그 값을 넘은 글자까지만 센다.
  */
-function accumulateTokens(text: string, sums?: Float64Array): number {
+function accumulateTokens(
+  text: string,
+  sums?: Float64Array | number[],
+  from = 0,
+  to = text.length,
+  limit = Infinity,
+): number {
   let total = 0;
   let afterSpace = true;
   let previous = -1;
   let run = 0;
-  for (let i = 0; i < text.length; i++) {
+  for (let i = from; i < to && total <= limit; i++) {
     const code = text.charCodeAt(i);
     run = code === previous ? run + 1 : 1;
     previous = code;
@@ -138,7 +145,7 @@ function accumulateTokens(text: string, sums?: Float64Array): number {
       total += run > RULE_RUN_START && isRuleCode(code) ? TOKEN_WEIGHTS.ruleRun : charWeight(code);
     }
     if (sums) {
-      sums[i + 1] = total;
+      sums[i - from + 1] = total;
     }
   }
   return total;
@@ -371,42 +378,61 @@ const SENTENCE_END_PATTERN = /[.!?。]["'”’)\]]?(?=\s)/g;
 /** 낱말 사이의 공백이 시작하는 자리 */
 const WORD_GAP_PATTERN = /\S(?=\s)/g;
 
+/** 누적값의 차로 구한 크기가 상한과 이만큼 안에서 다르면 처음부터 다시 세어 판정한다 (부동소수점 오차의 여유) */
+const SUM_TOLERANCE = 1e-6;
+
 /**
  * 상한보다 긴 줄을 줄 안에서 나눈다. 토막의 크기를 고르게 맞추고, 자르는 자리는 문장 끝, 공백, 임의 위치 순으로 고른다.
  * 공백에서 자르면 그 공백은 어느 토막에도 넣지 않는다.
+ *
+ * 걸리는 시간은 줄 길이에 비례한다. 줄 전체의 누적값은 한 번만 계산하고, 토막마다 그 토막이 들어갈 수 있는 구간
+ * (누적값이 상한을 넘는 글자까지)만 다시 본다. 토막마다 남은 줄 전체를 다시 세면 길이의 제곱에 비례한다.
  *
  * @param avail 토막 하나의 추정 토큰 상한
  * @returns 토막의 구간 (text 기준 위치)
  */
 function splitLongLine(text: string, avail: number): Array<{ start: number; end: number }> {
   const segments: Array<{ start: number; end: number }> = [];
+  const length = text.length;
+  const lineSums = cumulativeTokens(text);
+  /** 토막이 시작하는 자리에서 새로 센 누적값 (그 토막이 들어갈 수 있는 구간만큼) */
+  const sums: number[] = [0];
   let offset = 0;
 
-  while (offset < text.length) {
-    const rest = text.slice(offset);
-    const sums = cumulativeTokens(rest);
-    const total = sums[rest.length];
-    if (total <= avail) {
-      segments.push({ start: offset, end: text.length });
-      break;
+  while (offset < length) {
+    // 남은 줄을 이 자리에서 새로 센 크기. 줄의 처음부터 센 값과는 처음 몇 글자의 값만 다를 수 있으므로
+    // (낱말이 시작하는 자리에 더하는 값, 이어진 구분선 기호의 앞 글자들) 그 글자들만 새로 세고 나머지는 누적값의 차로 구한다
+    const resync = Math.min(offset + RULE_RUN_START, length);
+    let total = accumulateTokens(text, undefined, offset, resync) + (lineSums[length] - lineSums[resync]);
+    if (total <= avail + SUM_TOLERANCE) {
+      // 상한에 걸친 값은 누적값의 차에 든 부동소수점 오차로 판정이 바뀔 수 있다. 남은 줄을 처음부터 세어 정한다
+      total = accumulateTokens(text, undefined, offset, length);
+      if (total <= avail) {
+        segments.push({ start: offset, end: length });
+        break;
+      }
     }
 
-    // 남은 줄을 같은 크기로 나눈다고 할 때 이번 토막이 끝날 자리(target)와, 상한 안에서 가장 먼 자리(max)
+    // 이번 토막이 들어갈 수 있는 구간: 누적값이 상한을 넘는 글자까지 센다
+    sums.length = 1;
+    accumulateTokens(text, sums, offset, length, avail);
+    const scanned = sums.length - 1;
+    // 상한 안에서 가장 먼 자리(max)와, 남은 줄을 같은 크기로 나눈다고 할 때 이번 토막이 끝날 자리(target)
+    const maxIndex = sums[scanned] > avail ? Math.max(1, scanned - 1) : scanned;
     const target = total / Math.ceil(total / avail);
-    let maxIndex = 1;
-    while (maxIndex < rest.length && sums[maxIndex + 1] <= avail) maxIndex += 1;
     let targetIndex = 1;
     while (targetIndex < maxIndex && sums[targetIndex] < target) targetIndex += 1;
     let minIndex = 1;
     while (minIndex < targetIndex && sums[minIndex] < target / 2) minIndex += 1;
 
-    // minIndex 이상 maxIndex 이하에서 target 에 가장 가까운 자리를 고른다
+    // minIndex 이상 maxIndex 이하에서 target 에 가장 가까운 자리를 고른다. 구간 밖은 보지 않는다
+    // (자르는 자리 뒤의 공백 한 글자까지가 구간이다)
+    const window = text.slice(offset, offset + maxIndex + 1);
     const nearest = (pattern: RegExp): number => {
       let best = -1;
       pattern.lastIndex = 0;
-      for (let match = pattern.exec(rest); match !== null; match = pattern.exec(rest)) {
+      for (let match = pattern.exec(window); match !== null; match = pattern.exec(window)) {
         const at = match.index + match[0].length;
-        if (at > maxIndex) break;
         if (at >= minIndex && (best < 0 || Math.abs(sums[at] - target) < Math.abs(sums[best] - target))) {
           best = at;
         }
@@ -419,16 +445,16 @@ function splitLongLine(text: string, avail: number): Array<{ start: number; end:
     if (cut < 0) {
       cut = targetIndex;
       // 서로게이트 쌍(이모지 등)의 가운데에서는 자르지 않는다
-      const lastKept = rest.charCodeAt(cut - 1);
+      const lastKept = text.charCodeAt(offset + cut - 1);
       if (lastKept >= 0xd800 && lastKept <= 0xdbff) {
         cut = cut > 1 ? cut - 1 : cut + 1;
       }
     }
 
     segments.push({ start: offset, end: offset + cut });
-    let next = cut;
-    while (next < rest.length && isSpaceCode(rest.charCodeAt(next))) next += 1;
-    offset += next;
+    let next = offset + cut;
+    while (next < length && isSpaceCode(text.charCodeAt(next))) next += 1;
+    offset = next;
   }
 
   return segments;

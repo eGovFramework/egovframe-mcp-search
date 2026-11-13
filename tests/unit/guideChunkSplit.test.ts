@@ -322,6 +322,74 @@ describe("chunkMarkdown — 제목이 없으면 문단, 그다음 줄 경계에�
     }
   });
 
+  describe("아주 긴 한 줄", () => {
+    /** 가장 빨랐던 실행의 시간(ms). 다른 작업의 영향을 줄이려고 여러 번 재서 가장 작은 값을 쓴다 */
+    const fastest = (run: () => void, times = 5) => {
+      let best = Infinity;
+      for (let i = 0; i < times; i++) {
+        const started = performance.now();
+        run();
+        best = Math.min(best, performance.now() - started);
+      }
+      return best;
+    };
+
+    it("처리 시간이 줄 길이에 비례한다 (줄이 네 배가 되어도 시간이 여덟 배가 되지 않는다)", () => {
+      // 토막마다 남은 줄 전체를 다시 세면 시간이 길이의 제곱에 비례해, 줄이 네 배면 열여섯 배가 걸린다
+      for (const unit of ["가나다라마바사아자차", "A1b2C3d4", "낱말과 공백으로 된 문장입니다. "]) {
+        const line = (length: number) => unit.repeat(Math.ceil(length / unit.length)).slice(0, length);
+        const short = doc("## 데이터", "", line(200_000));
+        const long = doc("## 데이터", "", line(800_000));
+        chunkMarkdown(short, FRONTMATTER, DOC_PATH); // 준비 실행
+        const shortMs = fastest(() => chunkMarkdown(short, FRONTMATTER, DOC_PATH));
+        const longMs = fastest(() => chunkMarkdown(long, FRONTMATTER, DOC_PATH));
+        expect(longMs / Math.max(shortMs, 1), `${unit}: ${shortMs.toFixed(1)}ms → ${longMs.toFixed(1)}ms`).toBeLessThan(8);
+        // 80만 자 한 줄이 1초 안에 끝난다 (제곱에 비례하던 구현은 3초가 넘었다)
+        expect(longMs, unit).toBeLessThan(1000);
+      }
+    }, 120_000);
+
+    it("나눈 조각을 이으면 줄이 그대로 나오고, 모든 조각이 상한 안에 든다", () => {
+      // 문장과 공백, 공백 없는 구간, 길게 이어진 구분선 기호, 넓은 공백이 섞인 10만 자 남짓의 한 줄
+      const parts = [
+        paragraph("긴줄", 2000),
+        "가나다라마바사아자차".repeat(1500),
+        "-".repeat(20_000),
+        `${"=".repeat(3000)} ${"_".repeat(3000)}`,
+        Array.from({ length: 800 }, (_, i) => `config.get("key${i}")`).join("   "),
+        "😀漢字".repeat(1500),
+      ];
+      const line = parts.join(" ");
+      expect(line.length).toBeGreaterThan(100_000);
+      const result = sections(doc("## 데이터", "", line), {});
+      expect(result).toHaveLength(1);
+      expect(result[0].pieces.length).toBeGreaterThan(50);
+      expectLossless(result[0]);
+      for (const c of chunkMarkdown(doc("## 데이터", "", line), FRONTMATTER, DOC_PATH)) {
+        expect(estimateGuideChunkTokens(c), c.title).toBeLessThanOrEqual(GUIDE_CHUNK_TOKEN_BUDGET);
+      }
+      // 공백에서 끊은 자리의 공백만 빠진다: 공백을 뺀 글자는 그대로다
+      const joined = result[0].pieces.map((piece) => piece.content).join("");
+      expect(joined.replace(/\s+/g, "")).toBe(line.replace(/\s+/g, ""));
+    });
+
+    it("상한에 꼭 맞는 줄은 나누지 않고, 한 글자라도 넘으면 나눈다", () => {
+      // 숫자는 글자마다 추정 토큰 1 이다. 조각 본문의 몫을 구해 그 길이에 맞춘 줄을 만든다
+      const whole = chunk(doc("## 데이터", "", "1".repeat(50)));
+      expect(whole).toHaveLength(1);
+      const room = Math.floor(SMALL.tokenBudget! - estimateGuideChunkTokens({ ...whole[0], content: "" }));
+      // 낱말 하나(0.55)와 숫자 n 개: 0.55 + n 이 몫 안에 드는 가장 큰 n
+      const fit = "1".repeat(Math.floor(room - 0.55));
+      expect(chunk(doc("## 데이터", "", fit))).toHaveLength(1);
+      const over = chunk(doc("## 데이터", "", `${fit}11`));
+      expect(over.length).toBeGreaterThan(1);
+      expect(over.map((c) => c.content).join("")).toBe(`${fit}11`);
+      for (const c of over) {
+        expect(estimateGuideChunkTokens(c), c.title).toBeLessThanOrEqual(SMALL.tokenBudget!);
+      }
+    });
+  });
+
   it("줄 안에서 나눌 때 서로게이트 쌍(이모지)을 쪼개지 않는다", () => {
     const emojiLine = "😀".repeat(400);
     const chunks = chunk(doc("## 설정", "", emojiLine));
