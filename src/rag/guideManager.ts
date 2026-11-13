@@ -362,9 +362,13 @@ export class GuideSearchManager {
       filters.push(`category = '${category}'`);
     }
 
-    // 벡터 검색
+    // 벡터 검색 — 인덱스를 건너뛰고 전수 검색한다.
+    // 동봉 테이블의 IVF_PQ 인덱스는 기본 설정으로 일부 파티션만 훑어, 필터(where)에 맞는 청크가
+    // 있어도 빠뜨리고 손상된 인덱스 항목 때문에 엉뚱한 문서를 돌려준다. 수천 행 규모에서는
+    // 전수 검색이 인덱스 검색과 지연 시간이 같다. where 는 사전 필터라 조건에 맞는 청크 안에서 limit 건을 채운다.
     let searchQuery = this.table
       .vectorSearch(Array.from(queryVector))
+      .bypassVectorIndex()
       .limit(limit);
 
     if (filters.length > 0) {

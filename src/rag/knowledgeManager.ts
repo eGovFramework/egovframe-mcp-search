@@ -317,9 +317,13 @@ export class DeveloperKnowledgeManager {
       filters.push(`verified = true`);
     }
     
-    // 벡터 검색 쿼리
+    // 벡터 검색 쿼리 — 인덱스를 건너뛰고 전수 검색한다.
+    // 동봉 테이블의 IVF_PQ 인덱스는 기본 설정으로 일부 파티션만 훑어, 필터(where)에 맞는 행이
+    // 있어도 0건이나 limit 미만을 돌려주고 가장 가까운 행을 놓친다. 약 1.8만 행 규모에서는
+    // 전수 검색이 인덱스 검색과 지연 시간이 같다. where 는 사전 필터라 조건에 맞는 행 안에서 limit 건을 채운다.
     let searchQuery = this.table
       .vectorSearch(Array.from(queryVector))
+      .bypassVectorIndex()
       .limit(limit * 2); // 태그 필터링을 위해 더 많이 가져옴
     
     if (filters.length > 0) {
