@@ -122,11 +122,11 @@ export function getComponentInfo(componentId: string): {
 /**
  * 컴포넌트 검색 (키워드 검색)
  *
- * 모든 검색어가 일치하는 컴포넌트를 먼저 찾고, 없으면 일부 검색어만 일치하는 컴포넌트를 찾는다.
+ * 모든 검색어가 접두 일치하는 컴포넌트를 먼저 찾고, 없으면 부분 일치 대체 검색으로 찾는다.
  * filters(categoryId, hasWeb, version, keyword)를 주면 검색 결과에 함께(AND) 적용한다.
  * - total: 일치하는 전체 건수 (results 는 그 가운데 앞에서부터 limit 건)
- * - matchMode: 결과를 찾은 방식 (all-terms: 모든 검색어 일치, any-term: 일부 검색어만 일치).
- *   검색어가 하나도 추출되지 않으면 없다.
+ * - matchMode: 결과를 찾은 방식 (all-terms: 모든 검색어 접두 일치, any-term: 부분 일치 대체 검색.
+ *   일부 검색어만 일치하는 컴포넌트가 포함될 수 있다). 검색어가 하나도 추출되지 않으면 없다.
  */
 export function searchComponents(
   query: string,
@@ -144,7 +144,7 @@ export function searchComponents(
   }
 
   // 조회 중 예상하지 못한 오류는 다른 검색으로 바꾸지 않고 그대로 던진다.
-  // (검색어 일부만 일치하는 결과로 대체하는 일은 queryComponents 가 matchMode 와 함께 처리한다.)
+  // (부분 일치 결과로 대체하는 일은 queryComponents 가 matchMode 와 함께 처리한다.)
   const found = getDB().queryComponents({ query, filters, limit });
 
   return {
@@ -212,7 +212,7 @@ export function formatCategoryList(
  * 두 표 형식 모두 첫 열에 컴포넌트 ID 를 싣는다. 상세 조회·의존성·소스·DDL/DML 조회에 넣는 값이다.
  * 결과가 없으면 제목 아래에 '검색 결과가 없습니다.' 를 적는다.
  * - options.total: 조건에 맞는 전체 건수. 표시하는 건수보다 크면 제목에 'N개 중 M개 표시' 를 적는다.
- * - options.matchMode: 'any-term' 이면 일부 검색어만 일치한 결과임을 제목 아래에 적는다.
+ * - options.matchMode: 'any-term' 이면 부분 일치 대체 검색으로 찾은 결과임을 제목 아래에 적는다.
  */
 export function formatComponentList(
   components: CommonComponent[],
@@ -229,8 +229,11 @@ export function formatComponentList(
     return `${output}검색 결과가 없습니다.\n`;
   }
 
+  // any-term 은 접두 일치로 찾지 못했다는 뜻일 뿐이다. 검색어가 하나뿐이거나 모든 검색어가 부분 문자열로
+  // 일치한 결과도 여기에 들므로, 일부 검색어만 일치했다고 단정하지 않는다.
   if (options.matchMode === 'any-term') {
-    output += '> 모든 검색어가 일치하는 컴포넌트가 없어, 일부 검색어만 일치하는 컴포넌트를 표시합니다.\n\n';
+    output +=
+      '> 낱말 접두 일치로는 찾지 못해 부분 일치로 찾은 결과입니다 (일부 검색어만 일치하는 항목이 포함될 수 있습니다).\n\n';
   }
 
   if (groupByCategory) {

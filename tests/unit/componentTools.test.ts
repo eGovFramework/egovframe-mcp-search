@@ -437,16 +437,29 @@ describe("공통컴포넌트 도구 — 결과 포맷", () => {
       expect(formatComponentList([uia, sec], false)).toContain("## 공통컴포넌트 목록 (2개)");
     });
 
-    it("일부 검색어만 일치한 결과(any-term)이면 그 사실을 적는다", () => {
-      const text = formatComponentList([uia, sec], false, { matchMode: "any-term" });
-      expect(text).toContain("## 공통컴포넌트 목록 (2개)");
-      expect(text).toContain("일부 검색어만 일치");
+    it("부분 일치 대체 검색으로 찾은 결과(any-term)이면 그 사실을 제목 아래에 적는다", () => {
+      // any-term 은 '접두 일치로는 찾지 못했다' 는 뜻일 뿐이다. 검색어가 하나뿐이거나 모든 검색어가
+      // 부분 문자열로 일치한 결과도 any-term 이므로, 일부 검색어만 일치했다고 단정하지 않는다
+      for (const groupByCategory of [true, false]) {
+        const lines = formatComponentList([uia, sec], groupByCategory, { matchMode: "any-term" }).split("\n");
+        expect(lines.slice(0, 4), `groupByCategory=${groupByCategory}`).toEqual([
+          "## 공통컴포넌트 목록 (2개)",
+          "",
+          "> 낱말 접두 일치로는 찾지 못해 부분 일치로 찾은 결과입니다 (일부 검색어만 일치하는 항목이 포함될 수 있습니다).",
+          "",
+        ]);
+      }
     });
 
-    it("모든 검색어가 일치했거나 matchMode 를 주지 않으면 적지 않는다", () => {
-      expect(formatComponentList([uia, sec], false, { matchMode: "all-terms" })).not.toContain("일부 검색어만");
-      expect(formatComponentList([uia, sec], false)).not.toContain("일부 검색어만");
-      expect(formatComponentList([uia, sec])).not.toContain("일부 검색어만");
+    it("모든 검색어가 접두 일치했거나 matchMode 를 주지 않으면 적지 않는다", () => {
+      for (const text of [
+        formatComponentList([uia, sec], false, { matchMode: "all-terms" }),
+        formatComponentList([uia, sec], false),
+        formatComponentList([uia, sec]),
+      ]) {
+        expect(text).not.toContain("부분 일치");
+        expect(text).not.toContain("일부 검색어만");
+      }
     });
   });
 });

@@ -238,7 +238,8 @@ export async function searchCompatibleSoftware(args: {
   const filters = normalizeFilters(args);
 
   // 키워드와 필터를 한 번의 조회로 처리한다 (필터는 SQL 에서 LIMIT 보다 먼저 적용된다).
-  // matchMode 는 키워드 검색이 결과를 찾은 방식이다 (all-terms: 모든 검색어 일치, any-term: 일부만 일치).
+  // matchMode 는 키워드 검색이 결과를 찾은 방식이다 (all-terms: 모든 검색어 접두 일치,
+  // any-term: 부분 일치 대체 검색. 일부 검색어만 일치하는 행이 포함될 수 있다).
   const { rows: results, total, matchMode } = sqlite.queryCompatibleSoftware({
     query: args.query?.trim(),
     filters,
