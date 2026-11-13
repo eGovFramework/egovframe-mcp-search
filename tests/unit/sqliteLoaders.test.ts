@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs-extra';
 import path from 'node:path';
 import os from 'node:os';
+import Database from 'better-sqlite3';
 import { SQLiteManager } from '../../src/database/sqliteManager.js';
 import {
   parseCompatibilityJson,
@@ -249,6 +250,47 @@ describe('sqliteLoaders', () => {
         expect(useTablesOf('cca')).toEqual(['COMTNCOMMUTE']);
         expect(result.tableSources).toBeNull();
       });
+    });
+
+    it('이전 스키마(package_name 고유)로 만들어진 DB 에도 한 패키지를 함께 쓰는 컴포넌트를 모두 적재한다', async () => {
+      // 예전 서버가 만든 DB 를 흉내 낸다: SQLiteManager 가 열기 전에 옛 정의로 테이블을 만들어 둔다
+      const legacyPath = path.join(tmpDir, 'legacy.db');
+      const raw = new Database(legacyPath);
+      raw.exec(`
+        CREATE TABLE component_categories (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, category_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+          name_en TEXT, description TEXT, description_en TEXT
+        );
+        CREATE TABLE common_components (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, component_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+          name_en TEXT, category_id TEXT NOT NULL, package_name TEXT UNIQUE, description TEXT,
+          description_en TEXT, use_tables TEXT, version TEXT DEFAULT '4.3.1', has_web INTEGER DEFAULT 1,
+          added_options TEXT
+        );
+        INSERT INTO component_categories (category_id, name) VALUES ('old-cat', '옛분류');
+        INSERT INTO common_components (component_id, name, category_id, package_name)
+          VALUES ('old', '옛컴포넌트', 'old-cat', 'egovframework.com.old');
+      `);
+      raw.close();
+
+      const legacy = new SQLiteManager(legacyPath);
+      try {
+        const jsonPath = await writeMeta([
+          component('bbs', '게시판', 'egovframework.com.cop.bbs', { nameEn: 'BBS', dependencies: ['egovframework.com.cmm'] }),
+          component('bbs', '블로그관리', 'egovframework.com.cop.bbs', { nameEn: 'Blog Management' }),
+        ]);
+
+        const result = await loadCommonComponentsFromJson(legacy, jsonPath);
+
+        expect(result.components).toBe(2);
+        expect(legacy.getComponentById('bbs')?.name).toBe('게시판');
+        expect(legacy.getComponentById('blog-management')?.name).toBe('블로그관리');
+        expect(legacy.getComponentDependencies('bbs')).toEqual(['egovframework.com.cmm']);
+        expect(legacy.getComponentById('old')).toBeUndefined();
+        expect(legacy.searchComponents('블로그').map((c) => c.component_id)).toEqual(['blog-management']);
+      } finally {
+        legacy.close();
+      }
     });
 
     it('components 배열이 없는 파일은 거부한다', async () => {

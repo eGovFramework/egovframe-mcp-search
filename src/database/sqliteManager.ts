@@ -797,16 +797,27 @@ export class SQLiteManager {
   }
 
   /**
-   * 공통컴포넌트 메타(의존성 → 컴포넌트 → 카테고리) 테이블 비움 — JSON 기준 deterministic 재적재용.
-   * (REPLACE 만으로는 원본에서 삭제되거나 id 가 바뀐 행이 남는다)
+   * 공통컴포넌트 메타(의존성, 컴포넌트, 카테고리, FTS 인덱스) 테이블을 지우고 현재 정의로 다시 만든다
+   * — JSON 기준 deterministic 재적재용. (REPLACE 만으로는 원본에서 삭제되거나 id 가 바뀐 행이 남는다)
+   *
+   * 행만 지우지 않고 테이블째 다시 만드는 이유: CREATE TABLE IF NOT EXISTS 는 이미 있는 테이블의
+   * 정의를 바꾸지 않으므로, 이전 스키마(package_name 고유 제약)로 만들어진 DB 에는 한 패키지를
+   * 함께 쓰는 컴포넌트를 적재할 수 없다. FTS 인덱스가 본 테이블과 어긋나 있는 DB 에서도 안전하다.
    */
   clearCommonComponents(): void {
     this.db.transaction(() => {
-      this.db.exec('DELETE FROM component_dependencies;');
-      this.db.exec('DELETE FROM common_components;');
-      this.db.exec('DELETE FROM component_categories;');
+      this.db.exec(`
+        DROP TRIGGER IF EXISTS components_ai;
+        DROP TRIGGER IF EXISTS components_ad;
+        DROP TRIGGER IF EXISTS components_au;
+        DROP TABLE IF EXISTS components_fts;
+        DROP TABLE IF EXISTS component_dependencies;
+        DROP TABLE IF EXISTS common_components;
+        DROP TABLE IF EXISTS component_categories;
+      `);
+      this.initializeTables();
     })();
-    console.error('🧹 공통컴포넌트 테이블 비움');
+    console.error('🧹 공통컴포넌트 테이블을 다시 만듦');
   }
 
   /**
