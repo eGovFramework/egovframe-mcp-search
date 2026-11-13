@@ -336,7 +336,7 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     it("배열을 돌려주는 기존 메서드는 id 를 유지한다 (id 로 중복을 걸러 내는 호출부가 있다)", () => {
       expect(sqlite.searchCompatibleSoftware({ category: "WAS" })[0]).toHaveProperty("id");
       expect(sqlite.fullTextSearchCompatibility("JEUS")[0]).toHaveProperty("id");
-      expect(sqlite.fullTextSearchCompatibility("오라클")[0]).toHaveProperty("id");
+      expect(sqlite.fullTextSearchCompatibility("티맥스 Tibero")[0]).toHaveProperty("id");
     });
   });
 
@@ -359,9 +359,40 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
   });
 
   describe("fullTextSearchCompatibility (배열을 돌려주는 기존 메서드)", () => {
-    it("같은 규칙으로 찾은 행을 배열로 돌려준다", () => {
-      expect(versionsOf(sqlite.fullTextSearchCompatibility("오라클"))).toEqual(["WebLogic 12c"]);
-      expect(versionsOf(sqlite.fullTextSearchCompatibility("맥스 JEUS", 2))).toEqual(["JEUS 21", "JEUS 8.5"]);
+    it("모든 검색어가 접두 일치하는 행을 배열로 돌려준다", () => {
+      expect(versionsOf(sqlite.fullTextSearchCompatibility("JEUS")).sort()).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(versionsOf(sqlite.fullTextSearchCompatibility("티맥스 Tibero"))).toEqual(["Tibero 7"]);
+      expect(sqlite.fullTextSearchCompatibility("표준프레임워크", 2)).toHaveLength(2);
+    });
+
+    it("접두 일치 결과가 없으면 부분 일치 대체 검색 결과를 돌려주지 않는다", () => {
+      // 이 메서드는 결과를 찾은 방식(matchMode)을 알릴 수 없다. 대체 검색 결과를 섞어 돌려주면
+      // 통합 검색의 호출부가 관련성이 낮은 제품을 아무 표시 없이 싣게 된다.
+      for (const query of ["오라클", "맥스 JEUS", "JEUS 호환 여부"]) {
+        const fallback = sqlite.queryCompatibleSoftware({ query });
+        expect(fallback.matchMode, `query=${query}`).toBe("any-term");
+        expect(fallback.rows.length, `query=${query}`).toBeGreaterThan(0);
+
+        expect(sqlite.fullTextSearchCompatibility(query), `query=${query}`).toEqual([]);
+      }
+    });
+
+    it("FTS5 가 MATCH 식을 해석하지 못하면 빈 배열을 돌려준다", () => {
+      const db = (sqlite as any).db;
+      const prepare = db.prepare.bind(db);
+      vi.spyOn(db, "prepare").mockImplementation((sql: unknown) => {
+        if (String(sql).includes("MATCH")) {
+          throw new Database.SqliteError('fts5: syntax error near "?"', "SQLITE_ERROR");
+        }
+        return prepare(sql);
+      });
+
+      expect(sqlite.fullTextSearchCompatibility("JEUS")).toEqual([]);
+    });
+
+    it("FTS5 질의 오류가 아닌 오류는 그대로 던진다", () => {
+      (sqlite as any).db.exec("DROP TABLE compatibility_fts");
+      expect(() => sqlite.fullTextSearchCompatibility("JEUS")).toThrow(/compatibility_fts/);
     });
 
     it("검색어가 하나도 추출되지 않으면 빈 배열을 돌려준다", () => {

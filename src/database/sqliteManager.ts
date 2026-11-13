@@ -304,16 +304,20 @@ export class SQLiteManager {
   }
 
   /**
-   * 전체 텍스트 검색 — 키워드로 찾은 행을 배열로 돌려준다. 행에는 id 와 created_at 도 들어 있다.
-   * 검색 규칙은 queryCompatibleSoftware 와 같다. 단, 검색어가 하나도 추출되지 않으면
-   * 전체 목록이 아니라 빈 배열을 돌려준다.
+   * 전체 텍스트 검색 — 모든 검색어가 접두 일치하는 행을 배열로 돌려준다. 행에는 id 와 created_at 도 들어 있다.
+   *
+   * queryCompatibleSoftware 와 달리 부분 일치 대체 검색으로 넘어가지 않는다. 배열만 돌려주는 이 메서드는
+   * 결과를 찾은 방식(matchMode)을 알릴 수 없어, 대체 검색 결과를 돌려주면 호출부가 관련성이 낮은 행을
+   * 아무 표시 없이 쓰게 된다. 접두 일치 결과가 없거나 검색어가 하나도 추출되지 않으면 빈 배열을 돌려준다.
    */
   fullTextSearchCompatibility(query: string, limit: number = 20): CompatibilitySoftware[] {
-    if (extractSearchTerms(query).length === 0) {
+    const terms = extractSearchTerms(query);
+    if (terms.length === 0) {
       return [];
     }
-    return this.selectCompatibleSoftware<CompatibilitySoftware>(COMPATIBILITY_SEARCH_ALL_COLUMNS, { query, limit })
-      .rows;
+    const page: SqlPage = { limit: toSqlLimit(limit), offset: 0 };
+    const found = this.allTermsSearch<CompatibilitySoftware>(COMPATIBILITY_SEARCH_ALL_COLUMNS, terms, NO_FILTER, page);
+    return found ? found.rows : [];
   }
 
   /**
@@ -408,7 +412,7 @@ export class SQLiteManager {
   /**
    * 키워드 검색 (호환성 소프트웨어와 공통컴포넌트가 함께 쓴다).
    *
-   * 1) 모든 검색어를 접두 일치 AND 로 묶은 FTS5 MATCH 로 찾는다.
+   * 1) 모든 검색어를 접두 일치 AND 로 묶은 FTS5 MATCH 로 찾는다 (allTermsSearch).
    * 2) 필터까지 적용한 결과가 0건이면 부분 일치 대체 검색(partialTermSearch)으로 넘어간다.
    *    0건인지는 페이지가 아니라 전체 건수로 판단한다 (offset 이 끝을 넘었다고 검색 방식을 바꾸지 않는다).
    */
@@ -418,36 +422,56 @@ export class SQLiteManager {
     filter: SqlCondition,
     page: SqlPage,
   ): { rows: Row[]; total: number; matchMode: KeywordMatchMode } {
+    const allTerms = this.allTermsSearch<Row>(target, terms, filter, page);
+    if (allTerms) {
+      return { ...allTerms, matchMode: 'all-terms' };
+    }
+    return { ...this.partialTermSearch<Row>(target, terms, filter, page), matchMode: 'any-term' };
+  }
+
+  /**
+   * 접두 일치 AND 검색: 모든 검색어가 낱말의 앞부분과 일치하는 행을 FTS5 MATCH 로 찾는다.
+   *
+   * 필터까지 적용한 결과가 0건이거나 FTS5 가 MATCH 식을 해석하지 못하면 null 을 돌려준다.
+   * 그 밖의 오류(잠금, 손상, 테이블 없음 등)는 결과 없음으로 가리지 않고 그대로 던진다.
+   */
+  private allTermsSearch<Row>(
+    target: KeywordSearchTarget,
+    terms: string[],
+    filter: SqlCondition,
+    page: SqlPage,
+  ): { rows: Row[]; total: number } | null {
     const match = buildFts5MatchQuery(terms);
-    if (match) {
-      const from = `FROM ${target.ftsTable} fts
-             JOIN ${target.table} ON ${target.rowid} = fts.rowid
-             ${target.joins ?? ''}
-             WHERE ${target.ftsTable} MATCH ?${filter.sql}`;
-      try {
-        const total = (
-          this.db.prepare(`SELECT COUNT(*) AS count ${from}`).get(match, ...filter.params) as { count: number }
-        ).count;
-        if (total > 0) {
-          const rows = this.db
-            .prepare(
-              `SELECT ${target.columns} ${from}
-               ORDER BY rank, ${target.rowid}
-               LIMIT ? OFFSET ?`,
-            )
-            .all(match, ...filter.params, page.limit, page.offset) as Row[];
-          return { rows, total, matchMode: 'all-terms' };
-        }
-      } catch (error) {
-        // MATCH 식을 FTS5 가 해석하지 못한 경우에만 부분 일치 검색으로 넘어간다.
-        // 그 밖의 오류(잠금, 손상, 테이블 없음 등)는 다른 검색으로 가리지 않고 그대로 던진다.
-        if (!isFts5QueryError(error)) {
-          throw error;
-        }
-      }
+    if (!match) {
+      return null;
     }
 
-    return { ...this.partialTermSearch<Row>(target, terms, filter, page), matchMode: 'any-term' };
+    const from = `FROM ${target.ftsTable} fts
+           JOIN ${target.table} ON ${target.rowid} = fts.rowid
+           ${target.joins ?? ''}
+           WHERE ${target.ftsTable} MATCH ?${filter.sql}`;
+    try {
+      const total = (
+        this.db.prepare(`SELECT COUNT(*) AS count ${from}`).get(match, ...filter.params) as { count: number }
+      ).count;
+      if (total === 0) {
+        return null;
+      }
+      const rows = this.db
+        .prepare(
+          `SELECT ${target.columns} ${from}
+             ORDER BY rank, ${target.rowid}
+             LIMIT ? OFFSET ?`,
+        )
+        .all(match, ...filter.params, page.limit, page.offset) as Row[];
+      return { rows, total };
+    } catch (error) {
+      // MATCH 식을 FTS5 가 해석하지 못한 경우에만 결과 없음으로 본다.
+      if (!isFts5QueryError(error)) {
+        throw error;
+      }
+      return null;
+    }
   }
 
   /**
@@ -1085,6 +1109,9 @@ interface SqlCondition {
   sql: string;
   params: unknown[];
 }
+
+/** 덧붙일 조건이 없는 경우 */
+const NO_FILTER: SqlCondition = { sql: '', params: [] };
 
 /** 키워드 검색 대상 하나를 기술하는 SQL 조각. */
 interface KeywordSearchTarget {
