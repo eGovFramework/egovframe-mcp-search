@@ -61,6 +61,34 @@ export function relativeGuidePath(
 }
 
 /**
+ * 가이드 문서 하나를 색인할 청크로 나눈다. 색인하지 않을 문서면 null.
+ *
+ * 건너뛰는 문서:
+ * - 프론트매터에 draft: true 가 있는 문서 — Hugo 가 사이트에 게시하지 않는 초안이다.
+ *   공식 가이드로 내보내면 게시된 문서와 내용이 겹치는 청크가 결과 자리를 차지한다.
+ * - 본문이 너무 짧은 문서 (목차만 있는 _index.md 등)
+ *
+ * @param relativePath 가이드 디렉토리 기준 상대 경로 (relativeGuidePath 참고)
+ */
+export function chunkGuideDocument(
+  content: string,
+  relativePath: string,
+): Omit<GuideChunk, 'id' | 'vector'>[] | null {
+  const { frontmatter, body } = parseFrontMatter(content);
+
+  if (frontmatter.draft) {
+    return null;
+  }
+
+  const cleanBody = body.replace(/^#\s+.*\n?/, '').trim();
+  if (cleanBody.length < 50) {
+    return null;
+  }
+
+  return chunkMarkdown(body, frontmatter, relativePath);
+}
+
+/**
  * guideDir 하위 md 전체를 (이미 초기화된) 매니저의 테이블로 전량 인덱싱한다.
  * 호출 전에 테이블을 비워 두는 것은 호출자 책임 (clearAll 또는 새 디렉토리).
  */
@@ -83,18 +111,14 @@ export async function indexGuideDirectory(
     const relativePath = relativeGuidePath(guideDir, filePath);
     const content = await fs.readFile(filePath, 'utf-8');
 
-    // 프론트매터 파싱
-    const { frontmatter, body } = parseFrontMatter(content);
-
-    // 본문이 너무 짧은 파일 건너뛰기 (인덱스 파일 등)
-    const cleanBody = body.replace(/^#\s+.*\n?/, '').trim();
-    if (cleanBody.length < 50) {
+    // 프론트매터 파싱 + 청킹 (초안·본문이 너무 짧은 파일은 건너뛴다)
+    const chunks = chunkGuideDocument(content, relativePath);
+    if (!chunks) {
       skippedFiles++;
       continue;
     }
 
-    // 청킹
-    allChunks.push(...chunkMarkdown(body, frontmatter, relativePath));
+    allChunks.push(...chunks);
   }
 
   console.error(`  📊 총 ${allChunks.length}개 청크 생성 (${skippedFiles}개 파일 건너뜀)`);
