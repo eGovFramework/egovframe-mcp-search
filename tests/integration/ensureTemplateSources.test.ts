@@ -39,6 +39,8 @@ function initRepo(dir: string): void {
   git(dir, "config", "user.email", "test@example.com");
   git(dir, "config", "user.name", "tester");
   git(dir, "config", "commit.gpgsign", "false");
+  // 전역 설정에 태그 서명이 켜져 있으면 메시지 없는 git tag 가 실패한다
+  git(dir, "config", "tag.gpgsign", "false");
 }
 
 /** 마커 파일 내용을 갱신하고 커밋. tag 를 주면 그 커밋에 태깅. */
