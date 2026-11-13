@@ -284,33 +284,40 @@ describe("integration — egov_search_knowledge 가이드 검색 결과의 형�
       return rows.reduce((longest, row) => (row.content.length > longest.content.length ? row : longest));
     }
 
-    it("chunkId 를 주면 query 없이 그 청크의 본문을 offset 부터 돌려주고 다음 offset 을 알려 준다", async () => {
+    // 청크의 길이는 동봉 인덱스를 만든 청킹에 따라 다르다 (긴 절을 조각으로 나누는 청킹에서는 6,000자를 넘는 청크가 없다).
+    // 여기서는 실제 청크의 길이에 맞는 안내가 나오는지를 보고, 구간을 나눠 읽는 규칙 자체는
+    // tests/unit/guideGateway.test.ts 가 고정 데이터로 확인한다.
+    it("chunkId 를 주면 query 없이 그 청크의 본문을 돌려주고, 표시한 범위를 알려 준다", async () => {
       const chunk = await longestChunk();
-      expect(chunk.content.length).toBeGreaterThan(20_000);
+      const total = chunk.content.length;
 
       const first = await search({ scope: "guide", filters: { chunkId: chunk.id } });
       expect(first.isError).toBe(false);
       expect(first.text).toContain(chunk.title);
-      expect(first.text).toMatch(/전체 [\d,]+자 중 1~6,000자/);
-      expect(first.text).toContain("filters.offset: 6000");
-
-      const middle = await search({ scope: "guide", filters: { chunkId: chunk.id, offset: 12000 } });
-      expect(middle.isError).toBe(false);
-      expect(middle.text).toMatch(/전체 [\d,]+자 중 12,001~18,000자/);
-      // 원문에서 그 자리에 있는 문장이 응답에 들어 있다 (제목·구분선이 아닌 평범한 줄을 고른다)
+      const firstEnd = Math.min(total, 6000);
+      expect(first.text).toContain(`전체 ${total.toLocaleString("en-US")}자 중 1~${firstEnd.toLocaleString("en-US")}자를 표시했습니다`);
+      if (total > 6000) {
+        expect(first.text).toContain("filters.offset: 6000");
+      } else {
+        expect(first.text).toContain("(청크의 끝)");
+      }
+      // 원문의 첫 부분에 있는 문장이 응답에 들어 있다 (제목·구분선이 아닌 평범한 줄을 고른다)
       const plainLine = chunk.content
-        .substring(12000, 18000)
+        .substring(0, firstEnd)
         .split("\n")
         .find((line) => line.trim().length > 20 && !/^\s*(#|-{3,}|`{3,}|\|)/.test(line));
       expect(plainLine).toBeDefined();
-      expect(middle.text).toContain(plainLine!.trim());
+      expect(first.text).toContain(plainLine!.trim());
     });
 
-    it("scope 를 생략해도 chunkId 만으로 가이드 청크를 읽는다", async () => {
+    it("scope 를 생략해도 chunkId 만으로 가이드 청크를 읽고, filters.offset 부터 이어 읽는다", async () => {
       const chunk = await longestChunk();
-      const res = await search({ filters: { chunkId: chunk.id, offset: 6000 } });
+      const total = chunk.content.length;
+      const offset = Math.floor(total / 2);
+
+      const res = await search({ filters: { chunkId: chunk.id, offset } });
       expect(res.isError).toBe(false);
-      expect(res.text).toMatch(/전체 [\d,]+자 중 6,001~12,000자/);
+      expect(res.text).toContain(`전체 ${total.toLocaleString("en-US")}자 중 ${(offset + 1).toLocaleString("en-US")}~`);
     });
 
     it("청크를 이어 읽을 때 함께 준 query 와 limit 은 쓰이지 않았다고 알린다", async () => {
@@ -329,20 +336,25 @@ describe("integration — egov_search_knowledge 가이드 검색 결과의 형�
       expect(res.text).toContain("다시 검색");
     });
 
-    it.skipIf(!hasEmbeddingModel())("검색 결과의 본문이 잘리면 이어 읽는 방법을 chunkId 와 함께 알려 준다", async () => {
+    it.skipIf(!hasEmbeddingModel())("검색 결과가 알려 준 chunkId 로 그 청크를 읽을 수 있다", async () => {
+      // 본문이 잘린 결과에는 이어 읽는 안내가, 조각으로 나뉜 절의 결과에는 조각 줄이 chunkId 를 싣는다.
+      // 어느 쪽이 나오는지는 동봉 인덱스의 청킹에 따라 다르므로, 응답에 실린 chunkId 가운데 하나를 읽어 본다.
       const res = await search({
         scope: "guide",
         query: "받은쪽지함관리 컴포넌트의 배포파일명과 포함 테이블",
         limit: 5,
       });
       expect(res.isError).toBe(false);
-      const note = res.text.match(/전체 ([\d,]+)자 중 1~1,500자를 표시했습니다[^\n]*filters\.chunkId: "([0-9a-f-]{36})"[^\n]*filters\.offset: 1500/);
-      expect(note).not.toBeNull();
       expect(res.text).not.toContain("... (truncated)");
 
-      const next = await search({ scope: "guide", filters: { chunkId: note![2], offset: 1500 } });
+      const chunkIds = [...res.text.matchAll(/chunkId: "([0-9a-f-]{36})"/g)].map((match) => match[1]);
+      if (chunkIds.length === 0) {
+        // 모든 결과가 나뉘지 않은 짧은 절이면 실을 chunkId 가 없다
+        return;
+      }
+      const next = await search({ scope: "guide", filters: { chunkId: chunkIds[0] } });
       expect(next.isError).toBe(false);
-      expect(next.text).toMatch(/전체 [\d,]+자 중 1,501~/);
+      expect(next.text).toMatch(/전체 [\d,]+자 중 1~/);
     });
   });
 

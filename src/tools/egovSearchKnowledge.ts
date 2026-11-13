@@ -7,6 +7,8 @@
  */
 
 import { getInitializedGuideManager, resetGuideManager } from "../rag/guideManager.js";
+import { parseSectionPart } from "../rag/guideChunking.js";
+import { MAX_VECTOR_SEARCH_LIMIT } from "../utils/lanceFilter.js";
 import { getHybridManager, resetHybridManager } from "../database/hybridManager.js";
 import { GUIDE_SITE_BASE_URL } from "../kb/guideSite.js";
 import { UserFacingError, isIndexReadFailure, toUserMessage } from "../utils/errors.js";
@@ -475,6 +477,54 @@ const GUIDE_CHUNK_PAGE_CHARS = 6000;
 /** 중복 청크를 걸러 낸 뒤에도 limit 건을 채울 수 있게 더 가져오는 건수. */
 const GUIDE_DEDUPE_EXTRA = 10;
 
+/** 가이드 매니저에 한 번에 요청할 수 있는 후보 건수의 상한 (벡터 검색의 limit 상한). */
+const GUIDE_CANDIDATE_MAX = MAX_VECTOR_SEARCH_LIMIT;
+
+/** 한 절의 조각이 후보를 모두 차지했을 때, 그 조각들을 빼고 후보를 다시 가져오는 횟수의 상한 (첫 조회 포함). */
+const GUIDE_SEARCH_PASSES = 3;
+
+/** 한 결과 아래에 chunkId 와 함께 적는 "같은 절의 다른 조각" 의 최대 수. */
+const GUIDE_OTHER_PARTS_SHOWN = 3;
+
+/**
+ * 조각으로 나뉜 절에서 한 청크의 자리: 몇 번째 조각인지와 이웃 조각의 chunkId.
+ * 긴 절은 색인할 때 여러 조각으로 나뉘고 section 끝에 " (k/n)" 이 붙는다 (rag/guideChunking).
+ */
+interface GuidePartPosition {
+  part: number;
+  count: number;
+  previousId?: string;
+  nextId?: string;
+}
+
+/** 한 문서(source)의 한 절(조각 번호를 뗀 section)을 가리키는 키. */
+function guideSectionKey(source: string, sectionBase: string): string {
+  return `${source}\u0000${sectionBase}`;
+}
+
+/**
+ * 청크가 조각으로 나뉜 절에 속하면 그 자리를 구한다. 나뉘지 않은 절의 청크이면 undefined.
+ * 같은 절의 조각 목록은 응답 하나를 만드는 동안 한 번만 읽도록 cache 에 담아 둔다.
+ */
+async function locateGuidePart(
+  guideManager: Awaited<ReturnType<typeof getInitializedGuideManager>>,
+  chunk: { source: string; section: string },
+  cache: Map<string, Array<{ id: string; part: number; count: number }>>,
+): Promise<GuidePartPosition | undefined> {
+  const parsed = parseSectionPart(chunk.section);
+  if (!parsed) {
+    return undefined;
+  }
+  const key = guideSectionKey(chunk.source, parsed.base);
+  let parts = cache.get(key);
+  if (!parts) {
+    parts = await guideManager.getSectionParts(chunk.source, parsed.base);
+    cache.set(key, parts);
+  }
+  const idOf = (part: number) => parts.find((entry) => entry.count === parsed.count && entry.part === part)?.id;
+  return { part: parsed.part, count: parsed.count, previousId: idOf(parsed.part - 1), nextId: idOf(parsed.part + 1) };
+}
+
 /**
  * 가이드 청크의 본문을 응답에 실을 형태로 다듬는다.
  *
@@ -524,6 +574,16 @@ function formatGuideHeader(
   ];
 }
 
+/** 검색 결과의 머리말에 싣는 조각 줄: 몇 번째 조각인지, 이 조각과 이웃 조각의 chunkId. */
+function formatGuidePartLine(chunkId: string, position: GuidePartPosition): string {
+  const ids = [
+    `이 조각의 chunkId: "${chunkId}"`,
+    ...(position.previousId ? [`이전 조각: "${position.previousId}"`] : []),
+    ...(position.nextId ? [`다음 조각: "${position.nextId}"`] : []),
+  ];
+  return `- **조각**: ${position.part}/${position.count} (${ids.join(", ")})`;
+}
+
 /**
  * 가이드 청크 하나의 본문을 filters.offset 부터 읽는다 (검색 결과에서 잘린 본문을 이어 읽는 용도).
  * 한 번에 GUIDE_CHUNK_PAGE_CHARS 자까지 돌려주고, 남은 내용이 있으면 다음 offset 을 알려 준다.
@@ -534,9 +594,12 @@ async function readGuideChunk(
   options: SectionOptions = {},
 ): Promise<string> {
   const filters = getFilters(args);
-  const chunk = await withIndexRetry("guide", "공식 가이드", resetGuideManager, async () =>
-    (await getInitializedGuideManager()).getChunkById(chunkId),
-  );
+  const found = await withIndexRetry("guide", "공식 가이드", resetGuideManager, async () => {
+    const guideManager = await getInitializedGuideManager();
+    const row = await guideManager.getChunkById(chunkId);
+    return row ? { chunk: row, position: await locateGuidePart(guideManager, row, new Map()) } : undefined;
+  });
+  const chunk = found?.chunk;
   if (!chunk) {
     throw new UserFacingError(
       `filters.chunkId 에 해당하는 가이드 청크를 찾을 수 없습니다: ${chunkId}. ` +
@@ -558,9 +621,23 @@ async function readGuideChunk(
   } else {
     note = `> ${range} (청크의 끝).`;
   }
+  // 조각으로 나뉜 절이면 몇 번째 조각인지와 이웃 조각을 읽는 방법을 알린다
+  const position = found?.position;
+  let partNote: string | undefined;
+  if (position) {
+    const neighbors = [
+      ...(position.previousId ? [`이전 조각의 chunkId 는 "${position.previousId}"`] : []),
+      ...(position.nextId ? [`다음 조각의 chunkId 는 "${position.nextId}"`] : []),
+    ];
+    partNote =
+      `> 이 절은 ${position.count}조각으로 나뉘어 있고, 이 청크는 ${position.part}번째 조각입니다.` +
+      (neighbors.length > 0 ? ` ${neighbors.join(", ")} 입니다 (\`filters.chunkId\` 에 넣어 읽습니다).` : "");
+  }
+
   return withNotes(
     lines.join("\n"),
     note,
+    partNote,
     ignoredFiltersNote(filters, GUIDE_CHUNK_USED_FILTER_KEYS, options),
     unusedParamsNote(args, { query: false, limit: false }, options),
   );
@@ -577,29 +654,87 @@ async function searchGuide(args: EgovSearchKnowledgeArgs, options: SectionOption
   const limit = resolveLimit(args, "guide", options);
   const layer = asString(filters.layer);
   const category = asString(filters.category);
-  // 본문이 같은 청크(같은 절을 가진 두 문서)는 한 번만 싣는다. 걸러 낸 뒤에도 limit 건을 채우도록 조금 더 가져온다.
-  const candidates = await withIndexRetry("guide", "공식 가이드", resetGuideManager, async () => {
+  // 결과를 줄이는 처리가 두 가지 있다. 줄인 뒤에도 limit 건을 채우도록 후보를 넉넉히 가져온다.
+  // - 본문이 같은 청크(같은 절을 가진 두 문서)는 한 번만 싣는다.
+  // - 같은 절의 조각이 여러 개 검색되면 유사도가 가장 높은 조각 하나로 묶고, 나머지는 그 결과 아래에 알린다.
+  //   묶지 않으면 긴 절 하나의 조각들이 결과 자리를 모두 차지한다.
+  const candidateLimit = Math.min(GUIDE_CANDIDATE_MAX, limit.value * 3 + GUIDE_DEDUPE_EXTRA);
+  const entries = await withIndexRetry("guide", "공식 가이드", resetGuideManager, async () => {
     const guideManager = await getInitializedGuideManager();
-    return guideManager.searchGuide(query, { limit: limit.value + GUIDE_DEDUPE_EXTRA, layer, category });
-  });
-  const seenContents = new Set<string>();
-  const results = candidates
-    .filter((candidate) => {
-      const key = candidate.content.replace(/\s+/g, " ").trim();
-      if (seenContents.has(key)) {
-        return false;
+    type Candidate = Awaited<ReturnType<typeof guideManager.searchGuide>>[number];
+    type Group = { result: Candidate; others: Candidate[]; position?: GuidePartPosition };
+
+    const groups: Group[] = [];
+    const groupBySection = new Map<string, Group>();
+    const seenContents = new Set<string>();
+    /** 후보를 유사도 순으로 훑어 결과로 실을 묶음에 더한다 (묶음은 limit 개까지 만든다). */
+    const absorb = (candidates: Candidate[]): void => {
+      for (const candidate of candidates) {
+        const contentKey = candidate.content.replace(/\s+/g, " ").trim();
+        if (seenContents.has(contentKey)) {
+          continue;
+        }
+        seenContents.add(contentKey);
+
+        // 조각 번호가 붙은 청크만 묶는다 (번호가 없는데 section 이 같은 절은 서로 다른 절이다)
+        const parsed = parseSectionPart(candidate.section);
+        const sectionKey = parsed ? guideSectionKey(candidate.source, parsed.base) : undefined;
+        const group = sectionKey ? groupBySection.get(sectionKey) : undefined;
+        if (group) {
+          group.others.push(candidate);
+        } else if (groups.length < limit.value) {
+          const created: Group = { result: candidate, others: [] };
+          groups.push(created);
+          if (sectionKey) {
+            groupBySection.set(sectionKey, created);
+          }
+        }
       }
-      seenContents.add(key);
-      return true;
-    })
-    .slice(0, limit.value);
+    };
+
+    const partsCache = new Map<string, Array<{ id: string; part: number; count: number }>>();
+    // 표 하나가 백 개가 넘는 조각으로 나뉜 절도 있다. 그런 절의 조각이 가까운 후보를 모두 차지하면 후보를 늘려도
+    // 결과가 한 건뿐이다. limit 건을 채우지 못했고 후보가 더 있을 수 있으면, 이미 받은 청크와 결과에 든 절의
+    // 모든 조각을 빼고 다음 후보를 가져온다.
+    const excludeIds = new Set<string>();
+    for (let pass = 0; pass < GUIDE_SEARCH_PASSES; pass++) {
+      const candidates = await guideManager.searchGuide(query, {
+        limit: candidateLimit,
+        layer,
+        category,
+        ...(excludeIds.size > 0 ? { excludeIds: [...excludeIds] } : {}),
+      });
+      absorb(candidates);
+      if (groups.length >= limit.value || candidates.length < candidateLimit) {
+        break;
+      }
+      for (const candidate of candidates) {
+        excludeIds.add(candidate.id);
+      }
+      for (const group of groups) {
+        const parsed = parseSectionPart(group.result.section);
+        if (parsed) {
+          group.position ??= await locateGuidePart(guideManager, group.result, partsCache);
+          for (const part of partsCache.get(guideSectionKey(group.result.source, parsed.base)) ?? []) {
+            excludeIds.add(part.id);
+          }
+        }
+      }
+    }
+
+    for (const group of groups) {
+      group.position ??= await locateGuidePart(guideManager, group.result, partsCache);
+    }
+    return groups;
+  });
   const ignored = ignoredFiltersNote(filters, GUIDE_USED_FILTER_KEYS, options);
 
-  const formatted = results.map((result, idx) => {
+  const formatted = entries.map(({ result, others, position }, idx) => {
     const total = result.content.length;
     const truncated = total > GUIDE_CONTENT_MAX_CHARS;
     const lines = [
       ...formatGuideHeader(`### ${idx + 1}. ${result.title}`, result),
+      ...(position ? [formatGuidePartLine(result.id, position)] : []),
       `- **유사도**: ${(1 - result.score).toFixed(4)}`,
       "",
       formatGuideContent(truncated ? result.content.substring(0, GUIDE_CONTENT_MAX_CHARS) : result.content),
@@ -612,10 +747,19 @@ async function searchGuide(args: EgovSearchKnowledgeArgs, options: SectionOption
           `\`scope: "guide"\`, \`filters.chunkId: "${result.id}"\`, \`filters.offset: ${GUIDE_CONTENT_MAX_CHARS}\` 으로 이어서 읽을 수 있습니다.`,
       );
     }
+    if (others.length > 0) {
+      // 조각이 많은 절은 함께 검색된 조각도 많다. 유사도가 높은 몇 개만 적고 나머지는 수로 알린다
+      const listed = others.slice(0, GUIDE_OTHER_PARTS_SHOWN).map((other) => {
+        const parsed = parseSectionPart(other.section);
+        return `${parsed ? `${parsed.part}/${parsed.count}` : "조각"} (chunkId "${other.id}")`;
+      });
+      const rest = others.length - listed.length;
+      lines.push("", `> 같은 절의 다른 조각도 검색되었습니다: ${listed.join(", ")}${rest > 0 ? ` 외 ${rest}개` : ""}.`);
+    }
     return lines.join("\n");
   });
 
-  const heading = `## eGovFrame 가이드 검색 결과 (${results.length}건)`;
+  const heading = `## eGovFrame 가이드 검색 결과 (${entries.length}건)`;
   if (formatted.length === 0) {
     const applied = [layer ? `layer=${layer}` : "", category ? `category=${category}` : ""].filter(Boolean);
     const hint = applied.length > 0 ? ` 적용한 필터: ${applied.join(", ")}.` : "";

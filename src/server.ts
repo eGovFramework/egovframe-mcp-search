@@ -91,7 +91,7 @@ const filtersSchema = z.strictObject({
   chunkId: filterString()
     .optional()
     .describe(
-      "guide: ID of one guide chunk, printed by a guide search when a result body is cut off. Returns that chunk from filters.offset (6,000 characters per call); query is not needed.",
+      "guide: ID of one guide chunk. A guide search prints it when a result body is cut off, and for a long section that is indexed as several pieces (the title ends with \"(k/n)\") together with the IDs of the previous and next piece. Returns that chunk from filters.offset (6,000 characters per call); query is not needed.",
     ),
 
   // ── knowledge ──
