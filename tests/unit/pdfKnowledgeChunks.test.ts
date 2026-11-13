@@ -295,6 +295,43 @@ describe("chunkPdfText — 나누는 자리", () => {
     expect(chunkPdfText(sentences.join(" "), 12, 0)).toEqual(sentences);
   });
 
+  it("숫자 바로 뒤의 마침표는 문장의 끝으로 보지 않는다 (목록 번호)", () => {
+    const items = ["1. 개요를 적는다.", "2. 적용 범위를 적는다.", "3. 용어를 정의한다.", "4. 절차를 적는다."]; // 11, 14, 12, 11자
+
+    // 번호 뒤의 공백을 문장 경계로 보면 "1. 개요를 적는다. 2." 처럼 번호가 제 항목과 떨어져 앞 청크의 끝에 남는다
+    expect(chunkPdfText(items.join(" "), 25, 0)).toEqual([items[0], items[1], `${items[2]} ${items[3]}`]);
+    // 빼는 것은 마침표뿐이다. 숫자 뒤의 물음표와 느낌표는 문장의 끝이다
+    expect(chunkPdfText("값은 3? 아니면 4! 둘 다 아니다.", 8, 0)).toEqual(["값은 3?", "아니면 4!", "둘 다 아니다."]);
+  });
+
+  it("날짜의 마침표에서 나누지 않는다 (날짜가 두 청크로 갈리지 않는다)", () => {
+    const text = "이 고시는 2025. 1. 7. 부터 시행한다. 다음 개정은 2026. 12. 31. 까지 한다.";
+
+    expect(chunkPdfText(text, 20, 0)).toEqual(["이 고시는 2025. 1. 7. 부터", "시행한다. 다음 개정은", "2026. 12. 31. 까지 한다."]);
+  });
+
+  it("번호 바로 뒤의 공백에서는 낱말도 나누지 않는다 (번호를 항목의 첫 낱말과 함께 둔다)", () => {
+    const text = "1. 개요 2. 적용 범위 3. 용어 정의 4. 적용 절차 5. 예외 사항 6. 문의처 7. 붙임";
+
+    // 문장 부호가 없어 낱말 사이에서 나눈다. 17자를 꽉 채우면 "... 범위 3." 에서 끊기지만, 번호는 다음 청크로 넘긴다
+    expect(chunkPdfText(text, 17, 0)).toEqual(["1. 개요 2. 적용 범위", "3. 용어 정의 4. 적용 절차", "5. 예외 사항 6. 문의처", "7. 붙임"]);
+    for (const maxChars of [8, 10, 12, 14, 17, 20, 23, 26, 30]) {
+      const chunks = chunkPdfText(text, maxChars, 0);
+
+      expect(chunks.join(" "), `상한 ${maxChars}`).toBe(text);
+      for (const chunk of chunks) {
+        expect(chunk, `상한 ${maxChars}`).not.toMatch(/\d\.$/);
+      }
+    }
+    // 번호 뒤의 공백이 여러 칸이어도 그 사이에서 나누지 않는다 (줄바꿈 없는 공백 U+00A0 은 본문을 정리할 때 한 칸으로 줄이지 않는다)
+    const nbsp = String.fromCharCode(0xa0);
+    expect(chunkPdfText(`가나다라 1.${nbsp}${nbsp}개요`, 9, 0)).toEqual(["가나다라", `1.${nbsp}${nbsp}개요`]);
+  });
+
+  it("번호와 뒤따르는 낱말이 함께 상한을 넘으면 그 사이의 공백에서 나눈다 (공백이 있는 한 글자 수로 자르지 않는다)", () => {
+    expect(chunkPdfText("12. 가나다라마 34. 바사아자차", 6, 0)).toEqual(["12.", "가나다라마", "34.", "바사아자차"]);
+  });
+
   it("문장 부호가 없는 긴 줄은 낱말 사이에서 나눈다", () => {
     const words = Array.from({ length: 30 }, (_, i) => `낱말${i + 1}`);
     const chunks = chunkPdfText(words.join(" "), 20, 0);
@@ -392,6 +429,19 @@ describe("chunkPdfText — 이웃한 청크의 겹침", () => {
     for (const chunk of chunks) {
       expect(chunk).toMatch(/^낱말\d+( 낱말\d+)*$/);
     }
+  });
+
+  it("겹침은 번호 바로 뒤의 낱말에서 시작하지 않는다", () => {
+    const text = "1. 개요 2. 적용 범위 3. 용어 정의 4. 적용 절차 5. 예외 사항 6. 문의처 7. 붙임";
+
+    // 겹침 7자의 범위에 번호("4.")와 그 뒤의 낱말("적용")이 함께 있다. 번호에서 시작한다
+    expect(chunkPdfText(text, 30, 7)).toEqual([
+      "1. 개요 2. 적용 범위 3. 용어 정의 4. 적용",
+      "4. 적용 절차 5. 예외 사항 6. 문의처",
+      "6. 문의처 7. 붙임",
+    ]);
+    // 겹침 4자의 범위에는 번호 뒤의 낱말("적용")만 있다. 번호를 떼고 낱말에서 시작하지 않고, 겹치지 않는다
+    expect(chunkPdfText(text, 30, 4)).toEqual(["1. 개요 2. 적용 범위 3. 용어 정의 4. 적용", "절차 5. 예외 사항 6. 문의처 7. 붙임"]);
   });
 
   it("나눌 자리가 없는 글자열은 겹치지 않는다", () => {

@@ -830,14 +830,29 @@ interface TextSpan {
 /** 문단 경계: 빈 줄 (공백이나 탭만 든 줄은 normalizePdfText 가 빈 줄로 만들어 둔다) */
 const PDF_PARAGRAPH_BREAK = /\n{2,}/g;
 
-/** 문장 경계: 끝 부호(와 닫는 따옴표·괄호) 뒤의 공백 */
-const PDF_SENTENCE_BREAK = /(?<=[.!?。！？]["'”’」』)\]]*)\s+/g;
+/**
+ * 문장 경계: 끝 부호(와 닫는 따옴표·괄호) 뒤의 공백.
+ *
+ * 숫자 바로 뒤의 마침표는 끝 부호로 보지 않는다. 목록 번호("1. 개요")와 날짜("2025. 1. 7.")의 마침표라서, 그 뒤에서
+ * 나누면 번호가 제 항목과 떨어져 앞 청크의 끝에 남고 날짜가 두 청크로 갈린다. 동봉 적용가이드(v5.0)에는 한 줄 안에서
+ * 끝 부호 뒤에 공백이 오는 자리가 71곳 있고, 그중 41곳이 숫자 바로 뒤의 마침표다.
+ * 숫자와 마침표로 끝나는 문장("... JDK 17.")의 끝도 함께 빠진다. 그런 문장은 뒤 문장과 한 조각으로 남고, 조각이 상한을
+ * 넘으면 낱말 사이에서 나뉜다.
+ */
+const PDF_SENTENCE_BREAK = /(?<=(?:(?<!\d)\.|[!?。！？])["'”’」』)\]]*)\s+/g;
 
 /**
- * 상한보다 긴 문단을 나눌 자리: 줄 → 문장 → 낱말.
- * 앞의 자리부터 써 보고, 그래도 상한을 넘는 조각만 다음 자리에서 더 나눈다.
+ * 낱말 경계: 이어진 공백. 번호(숫자와 마침표) 바로 뒤의 공백은 뺀다.
+ * 번호와 뒤따르는 낱말을 한 조각으로 두어, 낱말 사이에서 나눌 때에도 번호만 앞 청크의 끝에 남지 않게 한다.
  */
-const PDF_SPLIT_BREAKS: readonly RegExp[] = [/\n/g, PDF_SENTENCE_BREAK, /\s+/g];
+const PDF_WORD_BREAK = /(?<!\s)(?<!\d\.)\s+/g;
+
+/**
+ * 상한보다 긴 문단을 나눌 자리: 줄 → 문장 → 낱말 → 공백.
+ * 앞의 자리부터 써 보고, 그래도 상한을 넘는 조각만 다음 자리에서 더 나눈다.
+ * 마지막의 공백은 번호와 뒤따르는 낱말이 함께 상한을 넘을 때에만 쓰인다 (공백이 있는 한 글자 수로 자르지 않는다).
+ */
+const PDF_SPLIT_BREAKS: readonly RegExp[] = [/\n/g, PDF_SENTENCE_BREAK, PDF_WORD_BREAK, /\s+/g];
 
 /** 구간 양 끝의 공백을 뺀다. 남는 글자가 없으면 null. */
 function trimSpan(source: string, start: number, end: number): TextSpan | null {
@@ -852,7 +867,7 @@ function trimSpan(source: string, start: number, end: number): TextSpan | null {
  * separator 는 구간만 잘라 낸 글에서 찾는다. 본문 전체에서 찾으면 구간 안에 separator 가 없을 때 구간 밖의 다음 자리나
  * 본문의 끝까지 훑게 되어, 그런 구간이 많은 본문(문장 부호가 없는 긴 줄이 이어진 본문)에서는 걸리는 시간이 본문 크기의
  * 제곱으로 늘어난다. 구간은 본문의 처음이나 공백 바로 뒤에서 시작하므로, 구간 앞의 글자를 볼 수 없어도 separator 의
- * 뒤돌아보기 조건(문장 경계의 끝 부호)은 본문 전체에서 찾을 때와 같은 자리에서 성립한다.
+ * 뒤돌아보기 조건(문장 경계의 끝 부호, 번호 뒤의 공백을 빼는 조건)은 본문 전체에서 찾을 때와 같은 자리에서 성립한다.
  */
 function splitSpan(source: string, span: TextSpan, separator: RegExp): TextSpan[] {
   const parts: TextSpan[] = [];
@@ -933,9 +948,12 @@ function packSpans(parts: TextSpan[], firstMaxChars: number, restMaxChars: numbe
  * 뒤 청크의 본문(next)이 시작하는 자리에서 overlapChars 글자 안쪽, 앞 청크의 본문(previous) 안에서 찾는다.
  * 그 범위에서 가장 앞에 있는 줄의 처음을 고르고, 줄의 처음이 없으면 문장의 처음, 그것도 없으면 낱말의 처음을 고른다.
  * 낱말의 처음도 없으면 겹치지 않는다 (next.start 를 돌려준다). 앞 청크의 본문 전체를 다시 싣지는 않는다.
+ * 문장과 낱말의 처음은 나눌 때와 같은 경계(PDF_SENTENCE_BREAK, PDF_WORD_BREAK)로 가린다. 그래서 번호 바로 뒤의 낱말에서는
+ * 시작하지 않는다 (번호를 떼고 항목만 다시 싣지 않는다).
  */
 function findOverlapStart(source: string, previous: TextSpan, next: TextSpan, overlapChars: number): number {
   const sentenceBreak = new RegExp(PDF_SENTENCE_BREAK.source, 'y');
+  const wordBreak = new RegExp(PDF_WORD_BREAK.source, 'y');
   const earliest = Math.max(previous.start + 1, next.start - overlapChars);
   let sentenceStart: number | null = null;
   let wordStart: number | null = null;
@@ -954,7 +972,10 @@ function findOverlapStart(source: string, previous: TextSpan, next: TextSpan, ov
     if (sentenceStart === null && sentenceBreak.test(source)) {
       sentenceStart = position;
     }
-    wordStart ??= position;
+    wordBreak.lastIndex = gapStart;
+    if (wordStart === null && wordBreak.test(source)) {
+      wordStart = position;
+    }
   }
   return sentenceStart ?? wordStart ?? next.start;
 }
@@ -965,7 +986,8 @@ function findOverlapStart(source: string, previous: TextSpan, next: TextSpan, ov
  * - 문단(빈 줄이나 공백만 든 줄로 나뉜 덩어리)을 순서대로 담다가 다음 문단이 들어가지 않으면 문단 경계에서 청크를 나눈다.
  *   한 청크에 들어가는 문단은 쪼개지 않는다.
  * - 한 청크에 들어가지 않는 긴 문단만 줄 경계에서 나눈다. 줄 하나가 길면 문장 경계에서, 문장도 길면 낱말 사이에서
- *   나누고, 공백이 없는 글자열만 글자 수로 자른다.
+ *   나누고, 공백이 없는 글자열만 글자 수로 자른다. 번호(숫자와 마침표) 바로 뒤에서는 문장도 낱말도 나누지 않는다
+ *   (번호와 뒤따르는 낱말이 함께 들어가지 않을 때만 그 사이에서 나눈다).
  * - 긴 문단의 조각도 문단과 같은 방법으로 담는다 (앞 청크에 자리가 남으면 거기부터 채운다). pdf-parse 가 뽑은
  *   본문은 쪽 하나가 문단 하나라서, 긴 문단을 새 청크에서 시작하면 쪽마다 몇 줄짜리 자투리 청크가 남는다.
  * - 둘째 청크부터는 앞 청크의 끝부분을 overlapChars 글자까지 앞에 다시 싣는다 (findOverlapStart). 겹침을 넣을
