@@ -467,6 +467,50 @@ describe.skipIf(!HAS_BUNDLED_TABLES)("가이드 검색 — 동봉 테이블의 l
     }
   });
 
+  it("excludeIds 에 든 청크는 결과에서 빼고 그다음 순위의 청크로 채운다", async () => {
+    useQueryVector(rows[0].vector);
+    const first = await manager.searchGuide(STORED_VECTOR_QUERY, { limit: 5 });
+    const excluded = first.slice(0, 3).map((r) => r.id);
+
+    const next = await manager.searchGuide(STORED_VECTOR_QUERY, { limit: 5, excludeIds: excluded });
+
+    expect(next).toHaveLength(5);
+    expect(next.map((r) => r.id).filter((id) => excluded.includes(id))).toEqual([]);
+    expect(next.slice(0, 2).map((r) => r.id)).toEqual(first.slice(3, 5).map((r) => r.id));
+  });
+
+  it("excludeIds 는 layer 필터와 함께 적용한다", async () => {
+    useQueryVector(rows[0].vector);
+    const first = await manager.searchGuide(STORED_VECTOR_QUERY, { limit: 3, layer: "egovframe-runtime" });
+
+    const next = await manager.searchGuide(STORED_VECTOR_QUERY, {
+      limit: 3,
+      layer: "egovframe-runtime",
+      excludeIds: [first[0].id],
+    });
+
+    expect(next.map((r) => r.id)).not.toContain(first[0].id);
+    expect(next.every((r) => r.layer === "egovframe-runtime")).toBe(true);
+  });
+
+  it("excludeIds 의 값에 작은따옴표가 들어 있어도 조건이 풀리거나 질의가 깨지지 않는다", async () => {
+    useQueryVector(rows[0].vector);
+    const plain = await manager.searchGuide(STORED_VECTOR_QUERY, { limit: 3 });
+
+    const results = await manager.searchGuide(STORED_VECTOR_QUERY, { limit: 3, excludeIds: ["x' OR '1'='1", "'"] });
+
+    expect(results.map((r) => r.id)).toEqual(plain.map((r) => r.id));
+  });
+
+  it("빈 excludeIds 는 주지 않은 것과 같다", async () => {
+    useQueryVector(rows[0].vector);
+    const plain = await manager.searchGuide(STORED_VECTOR_QUERY, { limit: 3 });
+
+    expect((await manager.searchGuide(STORED_VECTOR_QUERY, { limit: 3, excludeIds: [] })).map((r) => r.id)).toEqual(
+      plain.map((r) => r.id),
+    );
+  });
+
   it("필터가 없으면 고유 값을 읽지 않고 전체에서 검색한다", async () => {
     const fresh = new GuideSearchManager(BUNDLED_KB);
     await fresh.initialize();

@@ -13,7 +13,7 @@ import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import { resolveGuideDbDir } from '../utils/dataPaths.js';
 import { UserFacingError } from '../utils/errors.js';
-import { lanceEquals, clampSearchLimit, lanceIn, quoteFilterValue } from '../utils/lanceFilter.js';
+import { lanceEquals, clampSearchLimit, lanceIn, lanceNotIn, quoteFilterValue } from '../utils/lanceFilter.js';
 import { guideSearchText, parseSectionPart } from './guideChunking.js';
 
 // 청킹은 LanceDB 와 임베딩 모델을 불러오지 않는 모듈에 둔다. 기존 호출자를 위해 여기서도 내보낸다
@@ -65,6 +65,8 @@ export interface GuideSearchOptions {
   limit?: number;
   layer?: string;      // 특정 레이어만 검색 (예: "egovframe-runtime")
   category?: string;   // 특정 카테고리만 검색 (예: "persistence-layer")
+  /** 결과에서 뺄 청크의 id. 이미 받은 청크를 빼고 그다음 순위의 청크를 가져올 때 쓴다 */
+  excludeIds?: readonly string[];
 }
 
 /** 가이드 필터에 쓸 수 있는 값 하나와 그 값을 가진 청크 수 */
@@ -441,7 +443,12 @@ export class GuideSearchManager {
     const limit = clampSearchLimit(options.limit, DEFAULT_GUIDE_SEARCH_LIMIT);
 
     // 필터 조건 생성 — 입력 오류는 임베딩 모델을 불러오기 전에 알린다
-    const filter = await this.buildFilter(layer, category);
+    const facetFilter = await this.buildFilter(layer, category);
+    const excludeIds = (options.excludeIds ?? []).map(String);
+    const filter = [
+      ...(facetFilter ? [`(${facetFilter})`] : []),
+      ...(excludeIds.length > 0 ? [lanceNotIn('id', excludeIds)] : []),
+    ].join(' AND ');
 
     const embedder = getEmbedder();
     const queryVector = await embedder.embed(query, 'query');

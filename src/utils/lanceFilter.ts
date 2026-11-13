@@ -57,6 +57,16 @@ export function lanceIn(column: string, values: readonly string[]): string {
 }
 
 /**
+ * `column NOT IN ('a', 'b')` 조건. values 는 하나 이상이어야 한다.
+ */
+export function lanceNotIn(column: string, values: readonly string[]): string {
+  if (values.length === 0) {
+    throw new Error(`lanceNotIn: ${column} 에 비교할 값이 없습니다`);
+  }
+  return `${column} NOT IN (${values.map(lanceString).join(', ')})`;
+}
+
+/**
  * 배열 컬럼이 values 가운데 하나라도 포함하면 참인 조건: `array_has_any(column, ['a', 'b'])`.
  * 값은 정확히 일치해야 한다 (대소문자 구분).
  */

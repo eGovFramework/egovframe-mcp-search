@@ -15,6 +15,7 @@ import {
   lanceArrayHasAny,
   lanceEquals,
   lanceIn,
+  lanceNotIn,
   lanceString,
   quoteFilterValue,
 } from "../../src/utils/lanceFilter.js";
@@ -58,6 +59,17 @@ describe("lanceEquals", () => {
   it("컬럼과 문자열 리터럴의 등호 조건을 만든다", () => {
     expect(lanceEquals("layer", "common-component")).toBe("layer = 'common-component'");
     expect(lanceEquals("type", "it's")).toBe("type = 'it''s'");
+  });
+});
+
+describe("lanceNotIn", () => {
+  it("값을 리터럴로 만들어 NOT IN 조건을 만든다 (작은따옴표는 이스케이프한다)", () => {
+    expect(lanceNotIn("id", ["a"])).toBe("id NOT IN ('a')");
+    expect(lanceNotIn("id", ["a", "it's"])).toBe("id NOT IN ('a', 'it''s')");
+  });
+
+  it("값이 하나도 없으면 조건을 만들지 않고 오류를 던진다", () => {
+    expect(() => lanceNotIn("id", [])).toThrow(/비교할 값이 없습니다/);
   });
 });
 
