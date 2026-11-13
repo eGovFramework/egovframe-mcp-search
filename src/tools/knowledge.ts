@@ -72,7 +72,8 @@ function normalizeExcerptLength(value: number | undefined): number | undefined {
 /**
  * 지식 검색 (통합)
  * - query + scope="knowledge" → 시맨틱 검색 (기본)
- * - sort="recent" → 최근 추가 순 조회 (질의를 쓰지 않으므로 query 없이 호출할 수 있다)
+ * - sort="recent" → 최근 추가 순 조회 (질의를 쓰지 않으므로 query 없이 호출할 수 있다).
+ *   type·tags·minImportance·verifiedOnly 필터는 시맨틱 검색과 같은 뜻으로 적용한다
  * - query + scope="all" → 통합 검색 (지식 + 호환성)
  *
  * excerptLength 를 주면 결과의 content 를 그 길이 이내의 발췌로 바꾼다 (표지·생략 표시 포함).
@@ -101,9 +102,14 @@ export async function searchKnowledge(args: {
   const manager = await getInitializedHybridManager();
   const knowledge = manager.getKnowledge();
 
-  // sort="recent" → 최근 지식 목록 (list_recent_knowledge 기능)
+  // sort="recent" → 최근 지식 목록 (list_recent_knowledge 기능). 필터는 시맨틱 검색과 같은 조건을 건다
   if (args.sort === 'recent') {
-    const results = await knowledge.listRecentKnowledge(args.limit || 10, args.type);
+    const results = await knowledge.listRecentKnowledge(args.limit || 10, {
+      type: args.type,
+      tags: args.tags,
+      minImportance: args.minImportance,
+      verifiedOnly: args.verifiedOnly,
+    });
     return {
       success: true,
       sort: 'recent',

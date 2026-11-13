@@ -9,6 +9,7 @@ import {
   DeveloperKnowledge,
   KnowledgeSearchResult,
   KnowledgeSearchOptions,
+  KnowledgeFilterOptions,
   KnowledgeStats,
   AddKnowledgeInput,
   UpdateKnowledgeInput,
@@ -28,6 +29,9 @@ import { clampSearchLimit, lanceArrayHasAny, lanceEquals, quoteFilterValue } fro
 /** limit 을 주지 않았을 때 돌려주는 건수: 의미 검색 / 최근 목록 */
 const DEFAULT_SEARCH_LIMIT = 5;
 const DEFAULT_RECENT_LIMIT = 10;
+
+/** 최근 목록이 읽는 컬럼 — 돌려주는 필드(RecentKnowledge)뿐이다. 본문과 벡터는 읽지 않는다 */
+const RECENT_COLUMNS = ['id', 'type', 'title', 'tags', 'importance', 'verified', 'createdAt'];
 
 /**
  * type 필터 값을 검증한다.
@@ -392,19 +396,27 @@ export class DeveloperKnowledgeManager {
   /**
    * 최근 지식 목록 조회
    *
+   * filter 는 의미 검색과 같은 조건(type·tags·minImportance·verifiedOnly)을 건다
+   * (buildKnowledgeFilter). type 하나만 걸 때는 문자열로 줘도 된다.
    * limit 은 검색과 같은 방식으로 맞춘다 (1 이상 MAX_VECTOR_SEARCH_LIMIT 이하의 정수, 기본 10건).
    */
   async listRecentKnowledge(
     limit: number = DEFAULT_RECENT_LIMIT,
-    type?: KnowledgeType
+    filter?: KnowledgeType | KnowledgeFilterOptions
   ): Promise<RecentKnowledge[]> {
     const rowLimit = clampSearchLimit(limit, DEFAULT_RECENT_LIMIT);
-    let query = this.table.query();
+    // 객체가 아닌 값은 type 으로 본다 (허용되지 않은 값이면 buildKnowledgeFilter 가 거부한다)
+    const where = buildKnowledgeFilter(
+      typeof filter === 'object' && filter !== null ? filter : { type: filter },
+    );
 
-    if (type) {
-      query = query.where(lanceEquals('type', requireKnowledgeType(type)));
+    // 정렬과 응답에 쓰는 컬럼만 읽는다. 읽는 순서는 전체 컬럼을 읽을 때와 같아서,
+    // createdAt 이 같은 행(색인 배치마다 같은 시각이다) 사이의 순서도 그대로다.
+    let query = this.table.query().select(RECENT_COLUMNS);
+    if (where) {
+      query = query.where(where);
     }
-    
+
     const results = await query.toArray();
     
     // 날짜순 정렬 (최신순)

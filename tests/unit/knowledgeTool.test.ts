@@ -6,7 +6,7 @@
  * 건드리지 않도록 싱글톤 접근 함수만 대체하고, 그 뒤의 DeveloperKnowledgeManager 는 동봉
  * LanceDB 테이블을 읽기 전용으로 여는 실제 객체를 쓴다 (_lanceFixtures 참고).
  */
-import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from "vitest";
 import { DeveloperKnowledgeManager } from "../../src/rag/knowledgeManager.js";
 import { getEmbedder } from "../../src/rag/embedder.js";
 import { formatProductLabel, searchKnowledge, smartSearch } from "../../src/tools/knowledge.js";
@@ -20,6 +20,7 @@ import {
   useQueryVector,
   type VectorRow,
 } from "./_lanceFixtures.js";
+import { createKnowledgeTable, type KnowledgeTableFixture } from "./_knowledgeTableFixture.js";
 
 /** getInitializedHybridManager() 가 돌려줄 객체 (테스트마다 필요한 부분만 채운다) */
 const hybrid = vi.hoisted(() => ({ current: undefined as unknown }));
@@ -210,6 +211,68 @@ describe("searchKnowledge 도구 — 통합 검색(scope=all)의 지식 미리�
     expect(preview).toContain("\n\n답변:\n안녕하세요.");
 
     expect((await previewOf(80)).length).toBeLessThanOrEqual(80);
+  });
+});
+
+describe("searchKnowledge 도구 — 최근 목록(sort=recent)의 필터", () => {
+  let fixture: KnowledgeTableFixture;
+
+  /** sort=recent 응답의 id 를 순서대로 */
+  const recentIds = async (args: Omit<Parameters<typeof searchKnowledge>[0], "sort">): Promise<string[]> => {
+    const output = (await searchKnowledge({ ...args, sort: "recent" })) as {
+      sort?: string;
+      count: number;
+      results: Array<{ id: string }>;
+    };
+    expect(output.sort).toBe("recent");
+    expect(output.count).toBe(output.results.length);
+    return output.results.map((result) => result.id);
+  };
+
+  beforeAll(async () => {
+    // day 가 클수록 최근에 만든 행이다 — 최근 순은 r4, r3, r2, r1
+    const createdAt = (day: number) => `2026-01-0${day}T00:00:00.000Z`;
+    fixture = await createKnowledgeTable([
+      { id: "r1", type: "solution", tags: ["faq"], importance: 5, verified: true, createdAt: createdAt(1) },
+      { id: "r2", type: "solution", tags: ["qa"], importance: 3, verified: false, createdAt: createdAt(2) },
+      { id: "r3", type: "tip", tags: ["faq", "pdf"], importance: 4, verified: true, createdAt: createdAt(3) },
+      { id: "r4", type: "tip", tags: [], importance: 2, verified: false, createdAt: createdAt(4) },
+    ]);
+  });
+
+  beforeEach(() => {
+    hybrid.current = { getKnowledge: () => fixture.manager };
+  });
+
+  afterAll(async () => {
+    await fixture.cleanup();
+  });
+
+  it("필터가 없으면 전체를 최근 순으로 돌려준다", async () => {
+    expect(await recentIds({})).toEqual(["r4", "r3", "r2", "r1"]);
+  });
+
+  it("type 필터를 적용한다", async () => {
+    expect(await recentIds({ type: "tip" })).toEqual(["r4", "r3"]);
+  });
+
+  it("tags 필터를 적용한다 (조용히 무시하지 않는다)", async () => {
+    expect(await recentIds({ tags: ["faq"] })).toEqual(["r3", "r1"]);
+    expect(await recentIds({ tags: ["pdf", "qa"] })).toEqual(["r3", "r2"]);
+  });
+
+  it("minImportance 필터를 적용한다", async () => {
+    expect(await recentIds({ minImportance: 4 })).toEqual(["r3", "r1"]);
+  });
+
+  it("verifiedOnly 필터를 적용한다", async () => {
+    expect(await recentIds({ verifiedOnly: true })).toEqual(["r3", "r1"]);
+  });
+
+  it("여러 필터와 limit 을 함께 적용한다", async () => {
+    expect(await recentIds({ type: "solution", tags: ["faq"] })).toEqual(["r1"]);
+    expect(await recentIds({ type: "tip", minImportance: 3 })).toEqual(["r3"]);
+    expect(await recentIds({ tags: ["faq"], verifiedOnly: true, limit: 1 })).toEqual(["r3"]);
   });
 });
 

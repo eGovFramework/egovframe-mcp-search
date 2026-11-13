@@ -38,6 +38,8 @@ export interface KnowledgeRowSpec {
 export interface KnowledgeTableFixture {
   /** 행을 넣은 뒤에 연 매니저 (검증 대상) */
   manager: DeveloperKnowledgeManager;
+  /** 임시 테이블을 새 핸들로 연다 (매니저와는 별개의 핸들) */
+  openTable(): Promise<lancedb.Table>;
   /** 테이블에 지금 들어 있는 행의 id (매니저가 쓴 내용까지 반영해 새로 읽는다, 오름차순) */
   ids(): Promise<string[]>;
   /** 임시 디렉토리를 지운다 */
@@ -99,6 +101,7 @@ export async function createKnowledgeTable(rows: KnowledgeRowSpec[]): Promise<Kn
 
   return {
     manager,
+    openTable,
     ids: async () => {
       const records = await (await openTable()).query().select(["id"]).toArray();
       return records.map((record: { id: unknown }) => String(record.id)).sort();

@@ -58,13 +58,17 @@ export interface KnowledgeSearchResult {
   metadata: Record<string, any>;
 }
 
-// 지식 검색 옵션
-export interface KnowledgeSearchOptions {
-  limit?: number;
+// 지식 필터 조건 (의미 검색과 최근 목록이 같은 조건을 쓴다)
+export interface KnowledgeFilterOptions {
   type?: KnowledgeType;
-  tags?: string[];
+  tags?: string[];  // 하나라도 가진 행 (값은 대소문자까지 일치)
   minImportance?: 1 | 2 | 3 | 4 | 5;
   verifiedOnly?: boolean;
+}
+
+// 지식 검색 옵션
+export interface KnowledgeSearchOptions extends KnowledgeFilterOptions {
+  limit?: number;
 }
 
 // 지식 통계
