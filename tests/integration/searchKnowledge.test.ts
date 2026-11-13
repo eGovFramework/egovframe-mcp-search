@@ -543,6 +543,66 @@ describe("integration — egov_search_knowledge 호환 소프트웨어 조회", 
   });
 });
 
+describe("integration — egov_search_knowledge 적용되지 않는 필터 안내", () => {
+  let client: Client;
+
+  beforeAll(async () => {
+    client = await createMcpClient();
+  });
+
+  afterAll(async () => {
+    await client?.close();
+  });
+
+  const search = (args: Record<string, unknown>) => callSearchKnowledge(client, args);
+
+  /** 무시한 필터를 알리는 안내 줄의 표지 */
+  const IGNORED_MARKER = "적용되지 않아 무시한 필터";
+
+  it("조회에 쓰이지 않은 필터는 무시했다고 알린다", async () => {
+    const res = await search({
+      scope: "components",
+      query: "게시판",
+      filters: { tags: ["faq"], frameworkVersion: "4.3" },
+    });
+    expect(res.isError).toBe(false);
+    const note = res.text.split("\n").find((line) => line.includes(IGNORED_MARKER)) ?? "";
+    expect(note).toContain("tags");
+    expect(note).toContain("frameworkVersion");
+  });
+
+  it("조회에 쓰인 필터만 준 호출에는 안내를 붙이지 않는다", async () => {
+    const list = await search({ scope: "components", query: "게시판", filters: { hasWeb: true } });
+    expect(list.isError).toBe(false);
+    expect(list.text).not.toContain(IGNORED_MARKER);
+
+    const compatibility = await search({ scope: "compatibility", filters: { frameworkVersion: "4.3", offset: 5 } });
+    expect(compatibility.isError).toBe(false);
+    expect(compatibility.text).not.toContain(IGNORED_MARKER);
+  });
+
+  it("action 이 쓰지 않는 필터도 알린다", async () => {
+    const res = await search({
+      scope: "components",
+      action: "get",
+      filters: { componentId: "uia", dbType: "oracle", table: "COMTNEMPLYRINFO" },
+    });
+    expect(res.isError).toBe(false);
+    const note = res.text.split("\n").find((line) => line.includes(IGNORED_MARKER)) ?? "";
+    expect(note).toContain("dbType");
+    expect(note).toContain("table");
+    expect(note).not.toContain("componentId");
+  });
+
+  it("호환 소프트웨어 조회에서 쓰이지 않는 필터를 알린다", async () => {
+    const res = await search({ scope: "compatibility", filters: { frameworkVersion: "4.3", layer: "egovframe-runtime" } });
+    expect(res.isError).toBe(false);
+    const note = res.text.split("\n").find((line) => line.includes(IGNORED_MARKER)) ?? "";
+    expect(note).toContain("layer");
+    expect(note).not.toContain("frameworkVersion");
+  });
+});
+
 describe("integration — egov_search_knowledge 개발자 지식·통합 검색", () => {
   let client: Client;
 

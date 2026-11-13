@@ -106,6 +106,35 @@ interface SectionOptions {
 /** componentId 와 그 별칭. 값이 먼저 지정된 키가 쓰인다. */
 const COMPONENT_ID_KEYS = ["componentId", "component", "id"] as const;
 
+/** 공통컴포넌트 목록·키워드 검색에 적용되는 필터 키. */
+const COMPONENT_LIST_FILTER_KEYS = ["categoryId", "keyword", "hasWeb", "version", "limit"] as const;
+
+/** 가이드 검색에 적용되는 필터 키. */
+const GUIDE_USED_FILTER_KEYS = ["layer", "category", "limit"] as const;
+
+/** 개발자 지식 검색에 적용되는 필터 키. */
+const KNOWLEDGE_USED_FILTER_KEYS = [
+  "type",
+  "tags",
+  "minImportance",
+  "verifiedOnly",
+  "sort",
+  "knowledgeScope",
+  "limit",
+] as const;
+
+/** 호환 소프트웨어 조회에 적용되는 필터 키. */
+const COMPATIBILITY_USED_FILTER_KEYS = [
+  "frameworkVersion",
+  "category",
+  "minLevel",
+  "vendor",
+  "productName",
+  "includeKnowledge",
+  "limit",
+  "offset",
+] as const;
+
 /**
  * scope 를 지정하지 않았을 때 출처를 가리키는 필터 키.
  * 여러 출처가 함께 쓰거나 뜻이 넓은 키(category, keyword, version, limit, offset)는 넣지 않는다.
@@ -228,6 +257,15 @@ function withNotes(text: string, ...notes: Array<string | undefined>): string {
   return present.length > 0 ? `${text.trimEnd()}\n\n${present.join("\n\n")}` : text;
 }
 
+/**
+ * 호출자가 줬지만 이번 조회에는 적용되지 않은 필터를 알리는 안내.
+ * 필터가 조용히 무시되면 호출자는 걸러진 결과라고 오해하므로, 무시한 키를 응답에 적는다.
+ */
+function ignoredFiltersNote(filters: Record<string, unknown>, usedKeys: readonly string[]): string | undefined {
+  const ignored = Object.keys(filters).filter((key) => hasFilterValue(filters, key) && !usedKeys.includes(key));
+  return ignored.length > 0 ? `> 이 조회에 적용되지 않아 무시한 필터: ${ignored.join(", ")}.` : undefined;
+}
+
 let compatibilityCategories: Set<string> | undefined;
 
 /**
@@ -287,6 +325,7 @@ async function searchGuide(args: EgovSearchKnowledgeArgs, options: SectionOption
   const category = asString(filters.category);
   const guideManager = await getInitializedGuideManager();
   const results = await guideManager.searchGuide(query, { limit: limit.value, layer, category });
+  const ignored = ignoredFiltersNote(filters, GUIDE_USED_FILTER_KEYS);
 
   const formatted = results.map((result, idx) => {
     // url 은 가이드 사이트(Hugo)의 permalink 다. 값이 없는 문서는 링크를 만들지 않는다.
@@ -307,9 +346,9 @@ async function searchGuide(args: EgovSearchKnowledgeArgs, options: SectionOption
   if (formatted.length === 0) {
     const applied = [layer ? `layer=${layer}` : "", category ? `category=${category}` : ""].filter(Boolean);
     const hint = applied.length > 0 ? ` 적용한 필터: ${applied.join(", ")}.` : "";
-    return withNotes(`${heading}\n\n검색 결과가 없습니다. 다른 키워드로 검색해 보세요.${hint}`, limit.note);
+    return withNotes(`${heading}\n\n검색 결과가 없습니다. 다른 키워드로 검색해 보세요.${hint}`, limit.note, ignored);
   }
-  return withNotes(`${heading}\n\n${formatted.join("\n\n---\n\n")}`, limit.note);
+  return withNotes(`${heading}\n\n${formatted.join("\n\n---\n\n")}`, limit.note, ignored);
 }
 
 async function searchDeveloperKnowledge(args: EgovSearchKnowledgeArgs, options: SectionOptions = {}): Promise<string> {
@@ -337,7 +376,12 @@ async function searchDeveloperKnowledge(args: EgovSearchKnowledgeArgs, options: 
       ? `> 개발자 지식의 본문은 ${excerptLength}자를 넘으면 발췌해서 싣습니다. 전체 본문은 같은 query 에 \`scope: "knowledge"\` 를 지정해 검색하면 볼 수 있습니다.`
       : undefined;
 
-  return withNotes(formatJson("개발자 지식 검색 결과", result), limit.note, excerptNote);
+  return withNotes(
+    formatJson("개발자 지식 검색 결과", result),
+    limit.note,
+    excerptNote,
+    ignoredFiltersNote(filters, KNOWLEDGE_USED_FILTER_KEYS),
+  );
 }
 
 /** filters.componentId 와 그 별칭(component, id) 가운데 먼저 지정된 값. */
@@ -489,6 +533,7 @@ function formatComponentListLookup(
     version: asString(filters.version),
   };
   const hasFilters = Object.values(listFilters).some((value) => value !== undefined);
+  const ignored = ignoredFiltersNote(filters, COMPONENT_LIST_FILTER_KEYS);
 
   // 검색어를 하나도 추출할 수 없는 query("*" 처럼 기호뿐인 값)는 지정하지 않은 것으로 본다.
   const query = args.query && extractSearchTerms(args.query).length > 0 ? args.query : undefined;
@@ -496,7 +541,7 @@ function formatComponentListLookup(
   if (query) {
     const limit = resolveLimit(args, "components", options);
     const { results, total, matchMode } = searchComponents(query, limit.value, listFilters);
-    return withNotes(formatComponentList(results, false, { total, matchMode }), limit.note);
+    return withNotes(formatComponentList(results, false, { total, matchMode }), limit.note, ignored);
   }
 
   if (hasFilters) {
@@ -507,11 +552,35 @@ function formatComponentListLookup(
         ? resolveLimit(args, "components", options)
         : undefined;
     const { components, total } = listCommonComponents(listFilters, limit?.value);
-    return withNotes(formatComponentList(components, true, { total }), limit?.note);
+    return withNotes(formatComponentList(components, true, { total }), limit?.note, ignored);
   }
 
   const { categories } = listComponentCategories();
-  return `${formatCategoryList(categories)}\n---\n\n${formatComponentSummary(getComponentSummary())}`;
+  return withNotes(
+    `${formatCategoryList(categories)}\n---\n\n${formatComponentSummary(getComponentSummary())}`,
+    ignored,
+  );
+}
+
+/** action 별로 실제 조회에 쓰이는 필터 키. */
+function usedFilterKeysForAction(action: ComponentAction, filters: Record<string, unknown>): readonly string[] {
+  switch (action) {
+    case "get":
+    case "info":
+    case "sourceFiles":
+      return COMPONENT_ID_KEYS;
+    case "dependencies":
+      return [...COMPONENT_ID_KEYS, "componentIds"];
+    case "readSource":
+      return ["filePath", "offset"];
+    case "ddl":
+      return [...COMPONENT_ID_KEYS, "dbType"];
+    case "dml":
+      // limit 과 offset 은 filters.table 을 준 구간 조회에서만 쓰인다.
+      return hasFilterValue(filters, "table")
+        ? [...COMPONENT_ID_KEYS, "dbType", "table", "limit", "offset"]
+        : [...COMPONENT_ID_KEYS, "dbType"];
+  }
 }
 
 function runComponentAction(
@@ -543,7 +612,9 @@ function searchComponentsGateway(args: EgovSearchKnowledgeArgs, options: Section
   // action 이 있으면 componentId 는 그 action 의 대상일 뿐이므로 상세 조회로 가로채지 않는다.
   if (!action) {
     const componentId = getComponentId(filters);
-    return componentId ? formatComponentDetail(componentId) : formatComponentListLookup(args, filters, options);
+    return componentId
+      ? withNotes(formatComponentDetail(componentId), ignoredFiltersNote(filters, COMPONENT_ID_KEYS))
+      : formatComponentListLookup(args, filters, options);
   }
 
   if (!isComponentAction(action)) {
@@ -552,7 +623,10 @@ function searchComponentsGateway(args: EgovSearchKnowledgeArgs, options: Section
     );
   }
 
-  return runComponentAction(args, filters, action);
+  return withNotes(
+    runComponentAction(args, filters, action),
+    ignoredFiltersNote(filters, usedFilterKeysForAction(action, filters)),
+  );
 }
 
 async function searchCompatibility(args: EgovSearchKnowledgeArgs, options: SectionOptions = {}): Promise<string> {
@@ -578,7 +652,12 @@ async function searchCompatibility(args: EgovSearchKnowledgeArgs, options: Secti
       ? `> 전체 ${result.total}건 중 ${shownRange} 결과를 표시했습니다. 다음 구간은 같은 호출에 \`filters.offset: ${shownEnd}\` 을 주어 조회합니다.`
       : undefined;
 
-  return withNotes(formatJson("호환 소프트웨어 검색 결과", result), limit.note, pagingNote);
+  return withNotes(
+    formatJson("호환 소프트웨어 검색 결과", result),
+    limit.note,
+    pagingNote,
+    ignoredFiltersNote(filters, COMPATIBILITY_USED_FILTER_KEYS),
+  );
 }
 
 async function searchAll(args: EgovSearchKnowledgeArgs): Promise<string> {
@@ -625,7 +704,17 @@ async function searchAll(args: EgovSearchKnowledgeArgs): Promise<string> {
     }),
   );
 
-  return `# 통합 지식 검색 결과\n\n${sections.join("\n\n---\n\n")}`;
+  // 어느 출처에도 넘기지 않은 필터(sort, knowledgeScope, offset 등)는 통합 검색에서 쓰이지 않는다.
+  const ignored = ignoredFiltersNote(filters, [
+    ...guideKeys,
+    ...knowledgeKeys,
+    ...componentKeys,
+    ...compatibilityKeys,
+    "category",
+    "limit",
+  ]);
+
+  return withNotes(`# 통합 지식 검색 결과\n\n${sections.join("\n\n---\n\n")}`, ignored);
 }
 
 /**

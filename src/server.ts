@@ -216,7 +216,7 @@ server.registerTool(
       filters: filtersSchema
         .optional()
         .describe(
-          "Scope-specific filters. Each key states the scope it applies to. Unknown keys and values of the wrong type are rejected.",
+          "Scope-specific filters. Each key states the scope it applies to. Unknown keys and values of the wrong type are rejected. A known key that the chosen scope or action does not use is ignored, and the response names the ignored keys.",
         ),
       limit: z
         .number()
