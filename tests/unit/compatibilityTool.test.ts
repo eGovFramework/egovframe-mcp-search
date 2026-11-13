@@ -57,8 +57,8 @@ function useCatalogue(rows: SoftwareSeed[]): { sqlite: () => SQLiteManager } {
 }
 
 /**
- * "CMS" 로 찾으면 31행이 나온다. 프레임워크 4.3 인 TargetCMS 는 설명이 길어
- * 검색 순위(bm25)가 가장 낮다.
+ * "CMS" 로 찾으면 31행이 나온다. 31행 모두 이름에 'CMS' 가 들어 있어 확인일자가 최근인 순으로 나오고,
+ * 프레임워크 4.3 인 TargetCMS 는 확인일자가 가장 오래되어 맨 뒤(31번째)다.
  */
 const CROWDED: SoftwareSeed[] = [
   ...Array.from({ length: 30 }, (_, index): SoftwareSeed => ({
@@ -78,8 +78,8 @@ const CROWDED: SoftwareSeed[] = [
     category: "CMS Solution",
     compatibility_level: 2,
     vendor: "LG CNS",
-    verified_date: "2024-01-01",
-    description: `CMS ${"아주 긴 설명 ".repeat(40)}`,
+    verified_date: "2022-01-01",
+    description: "CMS",
   },
 ];
 
@@ -620,7 +620,11 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
   describe("query 와 필터를 함께 준 조회", () => {
     const db = useCatalogue(CROWDED);
 
-    it("검색 순위가 낮아도 필터에 맞는 행을 빠뜨리지 않는다", async () => {
+    it("정렬에서 뒤에 오는 행이어도 필터에 맞으면 빠뜨리지 않는다", async () => {
+      // 필터가 없으면 TargetCMS 는 31번째(마지막)다
+      const unfiltered = await searchCompatibleSoftware({ query: "CMS", limit: 100 });
+      expect(versionsOf(unfiltered.software).indexOf("TargetCMS 1.0")).toBe(CROWDED.length - 1);
+
       // 예전에는 상위 limit*5 건만 가져와 걸러서, 순위가 31번째인 TargetCMS 가 빠졌다
       const response = await searchCompatibleSoftware({ query: "CMS", frameworkVersion: "4.3", limit: 1 });
       expect(versionsOf(response.software)).toEqual(["TargetCMS 1.0"]);
