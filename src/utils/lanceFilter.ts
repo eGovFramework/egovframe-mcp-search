@@ -21,6 +21,20 @@ export function lanceEquals(column: string, value: string): string {
 }
 
 /**
+ * `column IN ('a', 'b')` 조건. 값이 하나면 `column = 'a'` 로 만든다.
+ * values 는 하나 이상이어야 한다.
+ */
+export function lanceIn(column: string, values: readonly string[]): string {
+  if (values.length === 0) {
+    throw new Error(`lanceIn: ${column} 에 비교할 값이 없습니다`);
+  }
+  if (values.length === 1) {
+    return lanceEquals(column, values[0]);
+  }
+  return `${column} IN (${values.map(lanceString).join(', ')})`;
+}
+
+/**
  * 배열 컬럼이 values 가운데 하나라도 포함하면 참인 조건: `array_has_any(column, ['a', 'b'])`.
  * 값은 정확히 일치해야 한다 (대소문자 구분).
  */

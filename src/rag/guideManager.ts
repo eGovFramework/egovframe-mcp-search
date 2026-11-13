@@ -13,7 +13,7 @@ import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import { resolveGuideDbDir } from '../utils/dataPaths.js';
 import { UserFacingError } from '../utils/errors.js';
-import { lanceEquals } from '../utils/lanceFilter.js';
+import { lanceIn, quoteFilterValue } from '../utils/lanceFilter.js';
 
 // ─── 타입 정의 ────────────────────────────────────────────
 
@@ -45,11 +45,32 @@ export interface GuideSearchResult {
   score: number;       // 코사인 거리 (낮을수록 유사, 1 - score 가 코사인 유사도)
 }
 
-/** 가이드 검색 옵션 */
+/**
+ * 가이드 검색 옵션
+ *
+ * layer / category 는 테이블에 저장된 값에 대소문자 구분 없이 대응시킨다.
+ * 대응되는 값이 없으면 유효한 값을 나열한 UserFacingError 를 던진다 (유효한 값: getFacets()).
+ */
 export interface GuideSearchOptions {
   limit?: number;
   layer?: string;      // 특정 레이어만 검색 (예: "egovframe-runtime")
   category?: string;   // 특정 카테고리만 검색 (예: "persistence-layer")
+}
+
+/** 가이드 필터에 쓸 수 있는 값 하나와 그 값을 가진 청크 수 */
+export interface GuideFacetValue {
+  value: string;
+  count: number;
+}
+
+/** 가이드 필터(layer / category)에 쓸 수 있는 고유 값 목록 — 테이블에 저장된 값 그대로 */
+export interface GuideFacets {
+  /** layer 고유 값 (청크 수 내림차순) */
+  layers: GuideFacetValue[];
+  /** category 고유 값 — 모든 layer 를 합쳐 센다 (청크 수 내림차순). 빈 category 는 넣지 않는다 */
+  categories: GuideFacetValue[];
+  /** layer 별 category 고유 값 (청크 수 내림차순). category 가 없는 layer 는 빈 배열 */
+  categoriesByLayer: Record<string, GuideFacetValue[]>;
 }
 
 /** 가이드 인덱싱 통계 */
@@ -217,6 +238,129 @@ export function chunkMarkdown(
   return chunks;
 }
 
+// ─── 필터 값 해석 ─────────────────────────────────────────
+
+/** 고유 값별 개수를 청크 수 내림차순(같으면 값 오름차순) 목록으로 바꾼다. */
+function toFacetValues(counts: Map<string, number>): GuideFacetValue[] {
+  return [...counts]
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => b.count - a.count || (a.value < b.value ? -1 : a.value > b.value ? 1 : 0));
+}
+
+/**
+ * 청크의 layer / category 값에서 필터에 쓸 수 있는 고유 값 목록을 만든다.
+ */
+export function buildGuideFacets(rows: Iterable<{ layer?: unknown; category?: unknown }>): GuideFacets {
+  const layerCounts = new Map<string, number>();
+  const categoryCounts = new Map<string, number>();
+  const categoryCountsByLayer = new Map<string, Map<string, number>>();
+  const increment = (counts: Map<string, number>, value: string) => counts.set(value, (counts.get(value) ?? 0) + 1);
+
+  for (const row of rows) {
+    const layer = String(row.layer ?? '');
+    const category = String(row.category ?? '');
+    if (!layer) continue;
+
+    increment(layerCounts, layer);
+    let inLayer = categoryCountsByLayer.get(layer);
+    if (!inLayer) {
+      inLayer = new Map();
+      categoryCountsByLayer.set(layer, inLayer);
+    }
+
+    // 빈 category (layer 바로 아래 문서) 는 필터로 지정할 수 없는 값이라 목록에 넣지 않는다
+    if (category) {
+      increment(categoryCounts, category);
+      increment(inLayer, category);
+    }
+  }
+
+  const layers = toFacetValues(layerCounts);
+  return {
+    layers,
+    categories: toFacetValues(categoryCounts),
+    categoriesByLayer: Object.fromEntries(
+      layers.map(({ value }) => [value, toFacetValues(categoryCountsByLayer.get(value) ?? new Map())]),
+    ),
+  };
+}
+
+/** 필터 입력을 비교할 수 있는 문자열로 바꾼다 (앞뒤 공백 제거, 비어 있으면 필터 없음). */
+function normalizeFilterInput(value: unknown): string {
+  return value === undefined || value === null ? '' : String(value).trim();
+}
+
+/**
+ * 입력 값에 대응하는 저장 값을 찾는다.
+ * 정확히 같은 값이 있으면 그 값만, 없으면 대소문자만 다른 값을 모두 돌려준다.
+ */
+function matchStoredValues(input: string, stored: string[]): string[] {
+  if (stored.includes(input)) {
+    return [input];
+  }
+  const lowered = input.toLowerCase();
+  return stored.filter((value) => value.toLowerCase() === lowered);
+}
+
+function listValues(values: string[]): string {
+  return values.length > 0 ? values.join(', ') : '(없음)';
+}
+
+/**
+ * 입력한 layer / category 를 테이블에 저장된 값에 대응시킨다.
+ *
+ * 필터는 저장된 값과 정확히 일치해야 걸리는데 호출자는 저장된 값을 알 방법이 없다.
+ * 대소문자와 앞뒤 공백 차이는 흡수하고, 대응되는 값이 없으면 "결과 없음" 대신 유효한 값을
+ * 나열한 UserFacingError 를 던진다. layer 는 전체를, category 는 layer 가 주어졌으면 그 layer 의
+ * category 만 나열한다 (같은 이름의 category 가 여러 layer 에 있다).
+ *
+ * @returns where 절에 넣을 저장 값 (필터가 없으면 빈 배열)
+ */
+export function resolveGuideFilter(
+  facets: GuideFacets,
+  layer?: string,
+  category?: string,
+): { layers: string[]; categories: string[] } {
+  const wantedLayer = normalizeFilterInput(layer);
+  const wantedCategory = normalizeFilterInput(category);
+
+  let layers: string[] = [];
+  if (wantedLayer) {
+    const known = facets.layers.map((facet) => facet.value);
+    layers = matchStoredValues(wantedLayer, known);
+    if (layers.length === 0) {
+      throw new UserFacingError(
+        `알 수 없는 layer 값입니다: ${quoteFilterValue(wantedLayer)}. 사용할 수 있는 값: ${listValues(known)}`,
+      );
+    }
+  }
+
+  let categories: string[] = [];
+  if (wantedCategory) {
+    const known =
+      layers.length > 0
+        ? [
+            ...new Set(
+              layers.flatMap((value) =>
+                Object.hasOwn(facets.categoriesByLayer, value)
+                  ? facets.categoriesByLayer[value].map((facet) => facet.value)
+                  : [],
+              ),
+            ),
+          ]
+        : facets.categories.map((facet) => facet.value);
+    categories = matchStoredValues(wantedCategory, known);
+    if (categories.length === 0) {
+      const scope = layers.length > 0 ? ` (layer ${layers.join(', ')})` : '';
+      throw new UserFacingError(
+        `알 수 없는 category 값입니다: ${quoteFilterValue(wantedCategory)}${scope}. 사용할 수 있는 값: ${listValues(known)}`,
+      );
+    }
+  }
+
+  return { layers, categories };
+}
+
 // ─── GuideSearchManager 클래스 ───────────────────────────
 
 export class GuideSearchManager {
@@ -349,19 +493,11 @@ export class GuideSearchManager {
   ): Promise<GuideSearchResult[]> {
     const { limit = 5, layer, category } = options;
 
+    // 필터 조건 생성 — 입력 오류는 임베딩 모델을 불러오기 전에 알린다
+    const filter = await this.buildFilter(layer, category);
+
     const embedder = getEmbedder();
     const queryVector = await embedder.embed(query, 'query');
-
-    // 필터 조건 생성
-    const filters: string[] = [];
-
-    if (layer) {
-      filters.push(lanceEquals('layer', layer));
-    }
-
-    if (category) {
-      filters.push(lanceEquals('category', category));
-    }
 
     // 벡터 검색 — 인덱스를 건너뛰고 전수 검색한다.
     // 동봉 테이블의 IVF_PQ 인덱스는 기본 설정으로 일부 파티션만 훑어, 필터(where)에 맞는 청크가
@@ -375,8 +511,8 @@ export class GuideSearchManager {
       .distanceType('cosine')
       .limit(limit);
 
-    if (filters.length > 0) {
-      searchQuery = searchQuery.where(filters.join(' AND '));
+    if (filter) {
+      searchQuery = searchQuery.where(filter);
     }
 
     const results = await searchQuery.toArray();
@@ -393,6 +529,53 @@ export class GuideSearchManager {
       url: r.url,
       score: r._distance,
     }));
+  }
+
+  /** layer / category 고유 값 캐시 — 테이블 핸들과 버전이 그대로일 때만 유효하다 */
+  private facetsCache: { table: unknown; version: number; facets: GuideFacets } | null = null;
+
+  /**
+   * 필터(layer / category)에 쓸 수 있는 고유 값 목록.
+   *
+   * 테이블에서 한 번 읽어 캐시하고, 테이블이 다시 열리거나 내용이 바뀌면 다시 읽는다.
+   * 돌려주는 객체는 복사본이라 호출자가 바꿔도 캐시에 영향이 없다.
+   */
+  async getFacets(): Promise<GuideFacets> {
+    return structuredClone(await this.loadFacets());
+  }
+
+  /** 캐시된 고유 값 목록 (없거나 테이블이 바뀌었으면 layer / category 두 컬럼만 읽어 다시 만든다). */
+  private async loadFacets(): Promise<GuideFacets> {
+    const version: number = await this.table.version();
+    const cached = this.facetsCache;
+    if (cached && cached.table === this.table && cached.version === version) {
+      return cached.facets;
+    }
+
+    const rows = await this.table.query().select(['layer', 'category']).toArray();
+    const facets = buildGuideFacets(rows);
+    this.facetsCache = { table: this.table, version, facets };
+    return facets;
+  }
+
+  /**
+   * layer / category 입력을 저장된 값에 대응시켜 where 절을 만든다. 필터가 없으면 undefined.
+   * 대응되는 값이 없으면 UserFacingError (resolveGuideFilter 참고).
+   */
+  private async buildFilter(layer?: string, category?: string): Promise<string | undefined> {
+    if (!normalizeFilterInput(layer) && !normalizeFilterInput(category)) {
+      return undefined;
+    }
+
+    const { layers, categories } = resolveGuideFilter(await this.loadFacets(), layer, category);
+    const filters: string[] = [];
+    if (layers.length > 0) {
+      filters.push(lanceIn('layer', layers));
+    }
+    if (categories.length > 0) {
+      filters.push(lanceIn('category', categories));
+    }
+    return filters.length > 0 ? filters.join(' AND ') : undefined;
   }
 
   /**

@@ -9,7 +9,13 @@ import fs from "fs-extra";
 import os from "node:os";
 import path from "node:path";
 import * as lancedb from "@lancedb/lancedb";
-import { lanceArrayHasAny, lanceEquals, lanceString, quoteFilterValue } from "../../src/utils/lanceFilter.js";
+import {
+  lanceArrayHasAny,
+  lanceEquals,
+  lanceIn,
+  lanceString,
+  quoteFilterValue,
+} from "../../src/utils/lanceFilter.js";
 import { GUIDE_TABLE, HAS_BUNDLED_TABLES, openBundledTable } from "./_lanceFixtures.js";
 
 /** 조건을 바꾸거나 질의를 깨뜨리려는 값들 */
@@ -50,6 +56,18 @@ describe("lanceEquals", () => {
   it("컬럼과 문자열 리터럴의 등호 조건을 만든다", () => {
     expect(lanceEquals("layer", "common-component")).toBe("layer = 'common-component'");
     expect(lanceEquals("type", "it's")).toBe("type = 'it''s'");
+  });
+});
+
+describe("lanceIn", () => {
+  it("값이 하나면 등호 조건, 여럿이면 IN 조건을 만든다", () => {
+    expect(lanceIn("layer", ["docs"])).toBe("layer = 'docs'");
+    expect(lanceIn("layer", ["docs", "Docs"])).toBe("layer IN ('docs', 'Docs')");
+    expect(lanceIn("layer", ["it's", "a"])).toBe("layer IN ('it''s', 'a')");
+  });
+
+  it("값이 없으면 조건을 만들지 않고 오류를 던진다", () => {
+    expect(() => lanceIn("layer", [])).toThrow();
   });
 });
 
@@ -109,6 +127,12 @@ describe("where 절 리터럴 — 실제 LanceDB 질의", () => {
       const expected = value === "x' OR '1'='1" ? 1 : 0;
       expect(await table.countRows(lanceEquals("name", value)), JSON.stringify(value)).toBe(expected);
     }
+  });
+
+  it("IN 조건은 나열한 값과 정확히 같은 행을 고른다", async () => {
+    expect(await table.countRows(lanceIn("name", ["plain", "o'brien"]))).toBe(2);
+    expect(await table.countRows(lanceIn("name", ["PLAIN", "x' OR '1'='1"]))).toBe(1);
+    expect(await table.countRows(lanceIn("name", HOSTILE_VALUES.filter((v) => v !== "x' OR '1'='1")))).toBe(0);
   });
 
   it("배열 컬럼은 값 가운데 하나라도 가진 행을 고른다", async () => {
