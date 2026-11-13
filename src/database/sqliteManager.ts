@@ -1222,7 +1222,9 @@ const COMPONENT_SEARCH: KeywordSearchTarget = {
   rowid: 'c.id',
   searchColumns: ['c.component_id', 'c.name', 'c.name_en', 'c.description', 'c.description_en', 'c.package_name'],
   nameColumns: ['c.component_id', 'c.name', 'c.name_en'],
-  defaultOrder: 'c.component_id',
+  // 이름이 짧을수록 검색어가 이름에서 차지하는 비중이 크다 ('로그인' 에는 '로그인화면이미지관리' 보다 '일반로그인' 이 가깝다).
+  // 일치한 검색어 수가 같은 컴포넌트는 이름이 짧은 것부터, 길이도 같으면 컴포넌트 ID 순으로 놓는다
+  defaultOrder: 'LENGTH(c.name), c.component_id',
 };
 
 /** SQLite 가 허용하는 LIKE 패턴의 최대 길이 (SQLITE_MAX_LIKE_PATTERN_LENGTH 기본값, 바이트). */

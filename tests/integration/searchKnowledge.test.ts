@@ -623,10 +623,12 @@ describe("integration — egov_search_knowledge 공통컴포넌트 조회", () =
     const res = await search({ scope: "components", filters: { componentId: "로그인" } });
     expect(res.isError).toBe(false);
     expect(res.text).toContain("컴포넌트를 찾을 수 없습니다: 로그인");
-    // 후보는 같은 입력으로 키워드 검색한 상위 5건이다
+    // 후보는 같은 입력으로 키워드 검색한 상위 5건이다. 이름에 '로그인' 이 든 컴포넌트가 이름이 짧은 순으로 나온다
     expect(res.text).toContain("비슷한 컴포넌트");
+    const candidates = res.text.match(/^- `[^`]+`/gm) ?? [];
+    expect(candidates).toHaveLength(5);
+    expect(candidates[0]).toBe("- `uia`");
     expect(res.text).toContain("- `uap` 로그인정책관리");
-    expect(res.text.match(/^- `/gm)?.length).toBe(5);
   });
 
   it("후보가 없는 입력에는 후보 목록을 붙이지 않는다", async () => {
