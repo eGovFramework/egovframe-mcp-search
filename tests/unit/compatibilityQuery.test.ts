@@ -611,6 +611,21 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       });
     });
 
+    it("OR 가 있어 빼지 않은 대상 낱말은, 다른 대상 낱말을 빼게 하는 검색어로 세지 않는다", () => {
+      // 'eGovframe' 은 제품명에 든 행이 있어 빼지 않는다. 그 낱말을 쓸 수 있다고 해서 '표준프레임워크' 를 빼지는 않는다:
+      // 대상 낱말은 영어 기능어도 대상 낱말도 아닌 검색어를 쓸 수 있을 때만 뺀다
+      const result = search("eGovframe OR 표준프레임워크");
+      expect(result.terms).toEqual({
+        used: ["eGovframe", "표준프레임워크"],
+        ignored: [],
+        dropped: [],
+        required: 1,
+        orQuery: true,
+      });
+      // '표준프레임워크' 가 설명에 든 여섯 행과 제품명에 eGovframe 이 든 한 행
+      expect(result.total).toBe(CATALOGUE.length + 1);
+    });
+
     it("뺀 대상 낱말이 이름 컬럼에 든 행을 먼저 돌려준다", () => {
       // CMS 가 든 세 행은 확인일자 순이다
       expect(versionsOf(search("CMS").rows)).toEqual(["SampleCMS 1.0", "OtherCMS 2.0", "DL-WCMS for eGovframe v1.0"]);
@@ -684,6 +699,12 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       const result = search("the CMS");
       expect(result.terms?.dropped).toEqual(["the"]);
       expect(versionsOf(result.rows)).toEqual(["SampleCMS 1.0", "OtherCMS 2.0", "DL-WCMS for eGovframe v1.0"]);
+
+      // 대상 낱말과 함께 빼도 같다: 제품명에 eGovframe 이 든 행만 앞으로 오고, 나머지는 확인일자 순 그대로다.
+      // 'the' 까지 정렬에 쓰면 OtherCMS 가 SampleCMS 보다 앞에 온다
+      const both = search("the eGovframe CMS");
+      expect(both.terms?.dropped).toEqual(["the", "eGovframe"]);
+      expect(versionsOf(both.rows)).toEqual(["DL-WCMS for eGovframe v1.0", "SampleCMS 1.0", "OtherCMS 2.0"]);
     });
 
     it("모든 검색어 일치만 하는 조회(queryCompatibleSoftwareAllTerms)도 같은 규칙으로 낱말을 빼고 정렬한다", () => {
@@ -1603,6 +1624,21 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(result.terms).toEqual({ used: ["SCP-SmartUI"], ignored: ["없는말"], dropped: [], required: 1 });
     });
 
+    it("조사를 뗀 꼴을 검색어 그대로의 유연한 꼴보다 먼저 견준다", () => {
+      // 'SCP-SmartUI는' 그대로의 유연한 꼴은 설명에 'SCP SmartUI는' 이 적힌 행과 일치한다. 조사를 뗀 'SCP-SmartUI' 가
+      // 제품명에 그대로 든 행이 있으므로 그 꼴을 쓰고, 유연한 꼴로 찾은 행은 돌려주지 않는다
+      sqlite.addCompatibilitySoftwareBatch([
+        { ...named("Memo", "2031-06-01"), description: "SCP SmartUI는 화면 도구다" },
+      ]);
+      const result = search("SCP-SmartUI는");
+      expect(versionsOf(result.rows)).toEqual(["SCP-SmartUI 1.0"]);
+      expect(result.terms).toEqual({ used: ["SCP-SmartUI"], ignored: [], dropped: [], required: 1 });
+      // 조사를 뗀 꼴이 일치하는 행이 없을 때에야 그대로의 유연한 꼴을 쓴다
+      const flexible = search("SCP_SmartUI는");
+      expect(versionsOf(flexible.rows)).toEqual(["Memo 1.0"]);
+      expect(flexible.terms).toEqual({ used: ["SCP_SmartUI는"], ignored: [], dropped: [], required: 1 });
+    });
+
     it("조사를 뗀 꼴의 유연한 꼴도 견주고, 쓴 검색어는 뗀 꼴로 싣는다", () => {
       const result = search("K2Web-Wizard는");
       expect(versionsOf(result.rows)).toEqual(["K2Web Wizard 1.0"]);
@@ -1873,6 +1909,10 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     it("뗀 꼴이 다른 검색어와 같으면 used 에 한 번만 싣는다", () => {
       expect(termsOf("JEUS JEUS는 Tibero")).toEqual({ used: ["JEUS", "Tibero"], ignored: [], dropped: [], required: 1 });
       expect(termsOf("jeus는 JEUS Tibero")).toEqual({ used: ["jeus", "Tibero"], ignored: [], dropped: [], required: 1 });
+      // 같은 꼴이 되어 쓰지 않은 검색어는 일치하는 행이 없는 검색어가 아니다 (ignored 에 싣지 않는다)
+      const twice = sqlite.queryCompatibleSoftware({ query: "JEUS JEUS는" });
+      expect(twice.terms).toEqual({ used: ["JEUS"], ignored: [], dropped: [], required: 1 });
+      expect(versionsOf(twice.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
     });
 
     it("쓸 검색어가 하나도 남지 않으면 used 는 비고 결과는 0건이다", () => {
