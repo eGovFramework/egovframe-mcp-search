@@ -305,16 +305,22 @@ describe('readSourceFileInRoot — 바이너리 판정과 큰 파일 나눠 읽�
 });
 
 describe.skipIf(!hasComponentSources)('readSourceFileInRoot — 동봉 소스 트리', () => {
-  it('글꼴 파일은 수 MB 의 내용 대신 메타데이터만 돌려준다', () => {
-    const result = readSourceFileInRoot(SRC_ROOT, 'src/main/webapp/font/NanumGothic.ttf');
+  /** 소스 버전이 바뀌어 예시 파일이 없어지면 그 테스트만 건너뛴다 */
+  const missing = (relative: string) => !fs.existsSync(path.join(SRC_ROOT, relative));
+  const FONT_FILE = 'src/main/webapp/font/NanumGothic.ttf';
+  const BIG_SCRIPT = 'script/dml/mysql/com_DML_mysql.sql';
+  const JAVA_FILE = 'src/main/java/egovframework/com/cop/bbs/service/Board.java';
+
+  it.skipIf(missing(FONT_FILE))('글꼴 파일은 수 MB 의 내용 대신 메타데이터만 돌려준다', () => {
+    const result = readSourceFileInRoot(SRC_ROOT, FONT_FILE);
 
     expect(result?.language).toBe('binary');
     expect(result?.size).toBeGreaterThan(1_000_000);
     expect(result?.content.length).toBeLessThan(200);
   });
 
-  it('큰 스크립트는 60,000자에서 끊고 이어 읽을 위치를 준다', () => {
-    const result = readSourceFileInRoot(SRC_ROOT, 'script/dml/mysql/com_DML_mysql.sql');
+  it.skipIf(missing(BIG_SCRIPT))('큰 스크립트는 60,000자에서 끊고 이어 읽을 위치를 준다', () => {
+    const result = readSourceFileInRoot(SRC_ROOT, BIG_SCRIPT);
 
     expect(result?.content.length).toBe(SOURCE_READ_MAX_CHARS);
     expect(result?.truncated).toBe(true);
@@ -322,8 +328,8 @@ describe.skipIf(!hasComponentSources)('readSourceFileInRoot — 동봉 소스 �
     expect(result?.nextOffset).toBe(SOURCE_READ_MAX_CHARS);
   });
 
-  it('보통 크기의 Java 소스는 한 번에 전부 돌려준다', () => {
-    const relative = 'src/main/java/egovframework/com/cop/bbs/service/Board.java';
+  it.skipIf(missing(JAVA_FILE))('보통 크기의 Java 소스는 한 번에 전부 돌려준다', () => {
+    const relative = JAVA_FILE;
     const result = readSourceFileInRoot(SRC_ROOT, relative);
 
     expect(result?.language).toBe('java');

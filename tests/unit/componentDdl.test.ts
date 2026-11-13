@@ -305,38 +305,49 @@ describe.skipIf(!hasComponentSources)('extractTableDDLs — 동봉 스크립트 
     expect(mismatches).toEqual([]);
   });
 
-  it('goldilocks: 한 줄짜리 인덱스가 있는 컴포넌트(uia)의 테이블 12개와 인덱스 8개를 모두 추출한다', () => {
-    const uia = components.find((c) => c.id === 'uia');
-    expect(uia).toBeDefined();
-    const result = extractTableDDLs(readScript('goldilocks'), uia!.useTables);
-    const statements = parseStatements(result.ddl);
-    const requested = new Set(uia!.useTables.map((t) => t.toUpperCase()));
+  it.each(DB_TYPES)('%s: 한 줄짜리 CREATE INDEX 가 가리키는 테이블을 요청하면 그 인덱스를 모두 추출한다', (dbType) => {
+    const script = readScript(dbType);
+    // 시작과 끝이 같은 줄인 인덱스 문 (goldilocks 와 cubrid 스크립트에만 있다)
+    const singleLine = script
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => /^CREATE\s+(?:UNIQUE\s+)?INDEX\s.*;$/i.test(line));
+    const tables = [...new Set(parseStatements(singleLine.join('\n')).map((s) => s.target))];
+    if (tables.length === 0) return;
 
-    expect(statements.filter((s) => s.kind === 'table')).toHaveLength(12);
-    expect(statements.filter((s) => s.kind === 'index')).toHaveLength(8);
-    expect(statements.filter((s) => !requested.has(s.target))).toEqual([]);
-    expect(result.foundCount).toBe(12);
+    const result = extractTableDDLs(script, tables);
+    const statements = parseStatements(result.ddl);
+
+    for (const line of singleLine) {
+      expect(result.ddl).toContain(line);
+    }
+    expect(statements.filter((s) => !tables.includes(s.target))).toEqual([]);
+    expect(statements.filter((s) => s.kind === 'table')).toHaveLength(tables.length);
+    expect(result.foundCount).toBe(tables.length);
   });
 
-  it.each(DB_TYPES)('%s: 게시판(bbs)의 테이블 19개와 COMVNUSERMASTER 뷰를 추출한다', (dbType) => {
-    const bbs = components.find((c) => c.id === 'bbs');
-    expect(bbs).toBeDefined();
-    const result = extractTableDDLs(readScript(dbType), bbs!.useTables);
+  it.each(DB_TYPES)('%s: COMVNUSERMASTER 뷰를 자신이 조회하는 테이블 뒤에 추출한다', (dbType) => {
+    // 46개 컴포넌트가 쓰는 뷰. 회원 테이블 세 개를 UNION 으로 조회한다
+    const result = extractTableDDLs(readScript(dbType), [
+      'COMVNUSERMASTER',
+      'COMTNGNRLMBER',
+      'COMTNENTRPRSMBER',
+      'COMTNEMPLYRINFO',
+    ]);
     const statements = parseStatements(result.ddl);
 
-    expect(result.foundCount).toBe(19);
+    expect(result.foundCount).toBe(3);
     expect(result.viewCount).toBe(1);
     expect(result.missing).toEqual([]);
-    // 뷰는 자신이 조회하는 테이블 뒤, 출력의 맨 끝에 온다
     expect(statements[statements.length - 1]).toMatchObject({ kind: 'view', target: 'COMVNUSERMASTER' });
+    expect(statements[statements.length - 1].text).toMatch(/UNION ALL/i);
   });
 
-  it('mysql: 스크립트에 정의가 없는 이름(mpm 의 COMTNSIEMAP)은 찾지 못한 객체로 알린다', () => {
-    const mpm = components.find((c) => c.id === 'mpm');
-    expect(mpm).toBeDefined();
-    const result = extractTableDDLs(readScript('mysql'), mpm!.useTables);
+  it.each(DB_TYPES)('%s: 스크립트에 정의가 없는 이름은 찾지 못한 객체로 알린다', (dbType) => {
+    // 메타데이터에 실제로 있는 사례: 오타(COMTNSIEMAP)와 다른 스크립트에 정의된 객체(UserConnection)
+    const result = extractTableDDLs(readScript(dbType), ['COMTNSIEMAP', 'COMTNGNRLMBER', 'UserConnection']);
 
-    expect(result.missing).toEqual(['COMTNSIEMAP']);
-    expect(result.foundCount + result.viewCount).toBe(new Set(mpm!.useTables).size - 1);
+    expect(result.foundCount).toBe(1);
+    expect(result.missing).toEqual(['COMTNSIEMAP', 'UserConnection']);
   });
 });

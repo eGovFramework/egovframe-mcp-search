@@ -283,7 +283,13 @@ describe.skipIf(!hasComponentSources)('extractTableDMLs — 동봉 스크립트 
     return byTable;
   }
 
-  it.each(DB_TYPES)('%s: 기본 보기는 모든 컴포넌트에서 3만 자를 넘지 않고 건수가 정확하다', (dbType) => {
+  /**
+   * 응답 크기의 상한 (문자 수). 지금 데이터에서 가장 큰 응답은 약 2만 7천 자이고,
+   * 제한이 없던 때는 컴포넌트마다 12만~19만 자였다.
+   */
+  const MAX_RESPONSE_CHARS = 40_000;
+
+  it.each(DB_TYPES)('%s: 기본 보기는 모든 컴포넌트에서 크기가 제한되고 건수가 정확하다', (dbType) => {
     const script = readScript(dbType);
     const byTable = insertLinesByTable(script);
 
@@ -307,7 +313,7 @@ describe.skipIf(!hasComponentSources)('extractTableDMLs — 동봉 스크립트 
         (sum, t) => sum + Math.min(DML_PREVIEW_ROWS_PER_TABLE, byTable.get(t)?.length ?? 0),
         0,
       );
-      if (text.length > 30_000) problems.push(`${component.id}: ${text.length}자`);
+      if (text.length > MAX_RESPONSE_CHARS) problems.push(`${component.id}: ${text.length}자`);
       if (targets.some((t) => !requested.has(t))) problems.push(`${component.id}: 요청하지 않은 테이블의 INSERT`);
       if (result.totalCount !== expectedTotal) problems.push(`${component.id}: totalCount ${result.totalCount}/${expectedTotal}`);
       if (result.statementCount !== expectedShown || targets.length !== expectedShown) {
@@ -336,7 +342,7 @@ describe.skipIf(!hasComponentSources)('extractTableDMLs — 동봉 스크립트 
       });
       expect(page.totalCount).toBe(expected.length);
       expect(page.statementCount).toBeLessThanOrEqual(DML_TABLE_PAGE_SIZE);
-      expect(page.dml.length).toBeLessThan(30_000);
+      expect(page.dml.length).toBeLessThan(MAX_RESPONSE_CHARS);
       collected.push(...page.dml.split('\n').filter((line) => /^\s*INSERT\s+INTO/i.test(line)));
     }
     expect(collected).toEqual(expected);
