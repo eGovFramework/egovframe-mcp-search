@@ -147,6 +147,105 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
     });
   });
 
+  describe("쓰지 않은 검색어 (ignoredTerms)", () => {
+    useCatalogue(CATALOGUE);
+
+    it("일치하는 행이 없어 쓰지 않은 검색어를 알린다", async () => {
+      const response = await searchCompatibleSoftware({ query: "JEUS 호환 여부 문의" });
+      expect(response.matchMode).toBe("any-term");
+      expect(response.ignoredTerms).toEqual(["여부", "문의"]);
+    });
+
+    it("필터를 적용한 대상 안에서 일치하는 행이 없는 검색어도 알린다", async () => {
+      const response = await searchCompatibleSoftware({ query: "티맥스 JEUS", category: "DBMS" });
+      expect(versionsOf(response.software)).toEqual(["Tibero 7"]);
+      expect(response.ignoredTerms).toEqual(["JEUS"]);
+    });
+
+    it("결과가 0건이어도 알린다", async () => {
+      const response = await searchCompatibleSoftware({ query: "없는제품이름 추천" });
+      expect(response).toMatchObject({ total: 0, count: 0, matchMode: "any-term" });
+      expect(response.ignoredTerms).toEqual(["없는제품이름", "추천"]);
+    });
+
+    it("모든 검색어를 썼으면 싣지 않는다", async () => {
+      const responses = [
+        await searchCompatibleSoftware({ query: "JEUS" }),
+        // 조사를 떼어 쓴 검색어는 쓰지 않은 것이 아니다
+        await searchCompatibleSoftware({ query: "JEUS는" }),
+        // 대체 검색이어도 모든 검색어에 일치하는 행이 있다
+        await searchCompatibleSoftware({ query: "JEUS Tibero" }),
+      ];
+      for (const response of responses) {
+        expect(response.count).toBeGreaterThan(0);
+        expect(response).not.toHaveProperty("ignoredTerms");
+      }
+    });
+
+    it("키워드 검색을 하지 않았으면 싣지 않는다", async () => {
+      expect(await searchCompatibleSoftware({ frameworkVersion: "4.3" })).not.toHaveProperty("ignoredTerms");
+      expect(await searchCompatibleSoftware({ query: "*" })).not.toHaveProperty("ignoredTerms");
+    });
+  });
+
+  describe("query 때문에 0건일 때의 안내 (totalWithoutQuery)", () => {
+    useCatalogue(CATALOGUE);
+
+    it("필터 없이 query 만으로 0건이면 전체 건수를 알린다", async () => {
+      const response = await searchCompatibleSoftware({ query: "없는제품이름" });
+      expect(response).toMatchObject({ total: 0, count: 0, totalWithoutQuery: CATALOGUE.length });
+    });
+
+    it("필터만 적용하면 행이 있는데 query 때문에 0건이면 필터만 적용한 건수를 알린다", async () => {
+      const byVersion = await searchCompatibleSoftware({ query: "없는제품이름", frameworkVersion: "4.3" });
+      expect(byVersion).toMatchObject({ total: 0, totalWithoutQuery: 2 });
+
+      // 'JEUS' 는 표에는 있지만 DBMS 안에는 없다. 필터 값은 유효하므로 available 은 붙지 않는다
+      const byCategory = await searchCompatibleSoftware({ query: "JEUS", category: "DBMS" });
+      expect(byCategory).toMatchObject({ total: 0, totalWithoutQuery: 1, ignoredTerms: ["JEUS"] });
+      expect(byCategory).not.toHaveProperty("available");
+    });
+
+    it("검색어를 모두 쓰고도 절반 이상 일치하는 행이 없어 0건일 때도 알린다", async () => {
+      // JEUS·Tibero·WebLogic 은 저마다 일치하는 행이 있지만, 둘 이상이 함께 든 행은 없다
+      const response = await searchCompatibleSoftware({ query: "JEUS Tibero WebLogic" });
+      expect(response).toMatchObject({ total: 0, matchMode: "any-term", totalWithoutQuery: CATALOGUE.length });
+      expect(response).not.toHaveProperty("ignoredTerms");
+    });
+
+    it("필터만으로도 0건이면 싣지 않는다", async () => {
+      // 데이터에 없는 버전: 쓸 수 있는 값(available)을 대신 알린다
+      const unknown = await searchCompatibleSoftware({ query: "JEUS", frameworkVersion: "5.0" });
+      expect(unknown.total).toBe(0);
+      expect(unknown).not.toHaveProperty("totalWithoutQuery");
+      expect(unknown).toHaveProperty("available");
+
+      // 값은 모두 유효하지만 조합에 맞는 행이 없다
+      const emptyCombination = await searchCompatibleSoftware({
+        query: "JEUS",
+        frameworkVersion: "3.6",
+        category: "DBMS",
+      });
+      expect(emptyCombination.total).toBe(0);
+      expect(emptyCombination).not.toHaveProperty("totalWithoutQuery");
+    });
+
+    it("결과가 있거나 키워드 검색을 하지 않았으면 싣지 않는다", async () => {
+      expect(await searchCompatibleSoftware({ query: "JEUS" })).not.toHaveProperty("totalWithoutQuery");
+      expect(await searchCompatibleSoftware({ query: "JEUS 없는말" })).not.toHaveProperty("totalWithoutQuery");
+      expect(await searchCompatibleSoftware({ frameworkVersion: "5.0" })).not.toHaveProperty("totalWithoutQuery");
+      expect(await searchCompatibleSoftware({ query: "*", frameworkVersion: "5.0" })).not.toHaveProperty(
+        "totalWithoutQuery",
+      );
+    });
+
+    it("결과가 있는 조회에서는 필터 전용 조회를 따로 하지 않는다", async () => {
+      const query = vi.spyOn(hybrid.sqlite as SQLiteManager, "queryCompatibleSoftware");
+      await searchCompatibleSoftware({ query: "JEUS" });
+      expect(query).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("검색어가 추출되지 않는 query", () => {
     useCatalogue(CATALOGUE);
 

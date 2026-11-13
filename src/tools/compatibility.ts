@@ -199,6 +199,13 @@ export interface CompatibilitySearchResponse {
   filters: CompatibilitySearchFilter;
   /** 키워드 검색이 결과를 찾은 방식. 키워드 검색을 하지 않았으면 없다 */
   matchMode?: KeywordMatchMode;
+  /** 일치하는 행이 없어 검색에 쓰지 않은 검색어 (query 에 적힌 꼴). 그런 검색어가 없으면 없다 */
+  ignoredTerms?: string[];
+  /**
+   * 키워드 검색 결과가 0건인데 같은 필터만 적용하면 행이 있을 때: 필터만 적용한 건수.
+   * 0건의 원인이 필터가 아니라 query 임을 알 수 있다
+   */
+  totalWithoutQuery?: number;
   /** 결과가 0건이고 frameworkVersion·category 가 데이터에 없는 값일 때: 쓸 수 있는 값 */
   available?: { frameworkVersions: string[]; categories: string[] };
   /** 조회된 소프트웨어. 내부용 필드(id, created_at)는 싣지 않는다 */
@@ -240,7 +247,7 @@ export async function searchCompatibleSoftware(args: {
   // 키워드와 필터를 한 번의 조회로 처리한다 (필터는 SQL 에서 LIMIT 보다 먼저 적용된다).
   // matchMode 는 키워드 검색이 결과를 찾은 방식이다 (all-terms: 모든 검색어가 일치하는 행,
   // any-term: 그런 행이 없어 대체 검색으로 찾은 행. 일부 검색어만 일치한다).
-  const { rows: results, total, matchMode } = sqlite.queryCompatibleSoftware({
+  const { rows: results, total, matchMode, terms } = sqlite.queryCompatibleSoftware({
     query: args.query?.trim(),
     filters,
     limit,
@@ -250,6 +257,10 @@ export async function searchCompatibleSoftware(args: {
   // 결과가 없고 frameworkVersion·category 가 데이터에 없는 값이면, 쓸 수 있는 값을 알려 준다.
   const available = total === 0 ? findAvailableValues(sqlite, filters) : undefined;
 
+  // 키워드 검색 결과가 0건이면 같은 필터만 적용한 건수를 센다. 행이 있으면 0건의 원인은 필터가 아니라 query 다.
+  const totalWithoutQuery =
+    matchMode && total === 0 ? sqlite.queryCompatibleSoftware({ filters, limit: 1 }).total : 0;
+
   const response: CompatibilitySearchResponse = {
     success: true,
     total,
@@ -258,6 +269,8 @@ export async function searchCompatibleSoftware(args: {
     offset,
     filters,
     ...(matchMode ? { matchMode } : {}),
+    ...(terms && terms.ignored.length > 0 ? { ignoredTerms: terms.ignored } : {}),
+    ...(totalWithoutQuery > 0 ? { totalWithoutQuery } : {}),
     ...(available ? { available } : {}),
     software: results,
   };
