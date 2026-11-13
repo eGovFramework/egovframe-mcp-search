@@ -539,7 +539,7 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
     it("제목이나 본문에 제품명이 들어 있는 지식만 남기고, 항목에 id 를 싣는다", async () => {
       setCandidates([
         knowledge("k-title", "JEUS 데이터소스 설정 문의", "설정 방법이 궁금합니다."),
-        knowledge("k-content", "WAS 기동 오류", "jeus 8 에서 기동할 때 오류가 납니다."),
+        knowledge("k-content", "WAS 기동 오류", "JEUS 8 에서 기동할 때 오류가 납니다."),
         knowledge("k-unrelated", "게시판 샘플", "공통컴포넌트 게시판 샘플 문의"),
       ]);
 
@@ -654,6 +654,67 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
         expect(response.knowledgeLookup).toEqual({ searchedProducts: 0, pageProducts: 0 });
         expect(response).not.toHaveProperty("knowledgeWarning");
       }
+    });
+  });
+
+  describe("includeKnowledge — 제품명을 낱말로 언급하는 글만 싣는다", () => {
+    const seed = (product_name: string): SoftwareSeed => ({
+      ...CATALOGUE[4],
+      product_name,
+      product_version: `${product_name} 1.0`,
+    });
+    useCatalogue([seed("xFRAME"), seed("CESS"), seed("HMS"), seed("DevOnFrame"), seed("JEUS")]);
+
+    /** 제품 하나를 조회해 그 제품의 관련 지식 id 를 돌려준다 */
+    const relatedIds = async (productName: string, candidates: unknown[]) => {
+      setCandidates(candidates);
+      const response = await searchCompatibleSoftware({ productName, includeKnowledge: true });
+      expect(response.count).toBe(1);
+      return (response.relatedKnowledge ?? []).flatMap((entry) => entry.knowledge.map((item) => item.id));
+    };
+
+    it("제품명이 다른 낱말의 일부로 들어 있을 뿐인 글은 싣지 않는다", async () => {
+      // 실제 데이터에서 제품 xFRAME 에 X-Frame-Options 헤더를 묻는 글이 실렸다
+      expect(
+        await relatedIds("xFRAME", [
+          knowledge("k1", "xframeoptions 문의", "security 의 xframeOptions 옵션 때문에 화면이 표시되지 않습니다."),
+          knowledge("k2", "UI 솔루션 연동", "화면은 xFrame 으로 개발하고 서버는 표준프레임워크입니다."),
+          knowledge("k3", "xFRAME5 설치", "설치 중 오류가 납니다."),
+        ]),
+      ).toEqual(["k2"]);
+    });
+
+    it("네 글자 이하의 영문 제품명은 대소문자까지 같은 글만 싣는다", async () => {
+      // 실제 데이터에서 제품 CESS 에 access-denied-page 가 든 글이, HMS 에 프로젝트 이름 hms 가 든 글이 실렸다
+      expect(
+        await relatedIds("CESS", [
+          knowledge("k1", "context-security.xml 관련", '<http access-denied-page="/cmm/sec/accessDenied.do">'),
+          knowledge("k2", "로그인 질문", "loginSuccess.do 는 아무 내용도 없는데 어디에서 이동하나요"),
+          knowledge("k3", "CESS 연동 문의", "설치 방법이 궁금합니다."),
+        ]),
+      ).toEqual(["k3"]);
+      expect(
+        await relatedIds("HMS", [
+          knowledge("k1", "톰캣 구동시 에러", "Failed to execute goal (default-compile) on project hms: Compilation failure"),
+        ]),
+      ).toEqual([]);
+      // 소문자로 적은 글은 제품을 가리키더라도 싣지 않는다
+      expect(
+        await relatedIds("JEUS", [
+          knowledge("k1", "jeus 설정 문의", "jeus 8 에서 기동할 때 오류가 납니다."),
+          knowledge("k2", "WAS 기동 오류", "JEUS 8 에서 기동할 때 오류가 납니다."),
+        ]),
+      ).toEqual(["k2"]);
+    });
+
+    it("다섯 글자 이상의 제품명은 대소문자가 달라도 찾고, 한글이 바로 붙어 있어도 찾는다", async () => {
+      expect(
+        await relatedIds("DevOnFrame", [
+          knowledge("k1", "DevonFrame과 전자정부Frame과 어떤차이점이 있나요?", "차이가 궁금합니다."),
+          knowledge("k2", "프레임워크 비교", "devonframe은 LG CNS 의 제품입니다."),
+          knowledge("k3", "다른 문의", "DevOnFrameworks 는 다른 이름입니다."),
+        ]),
+      ).toEqual(["k1", "k2"]);
     });
   });
 

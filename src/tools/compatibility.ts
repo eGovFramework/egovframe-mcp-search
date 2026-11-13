@@ -7,6 +7,7 @@ import { getHybridManager, type HybridDatabaseManager } from '../database/hybrid
 import type { SQLiteManager } from '../database/sqliteManager.js';
 import { CompatibilitySearchFilter, CompatibilitySoftwareInfo, KeywordMatchMode } from '../types/database.js';
 import { normalizeFrameworkVersion } from '../utils/frameworkVersion.js';
+import { findProductMention, lowerAscii, nameWithoutParentheses } from '../utils/productMention.js';
 
 /** 문자열 필터 값의 앞뒤 공백을 뗀다. 문자열이 아니거나 비어 있으면 undefined. */
 function cleanFilter(value: string | undefined): string | undefined {
@@ -52,11 +53,6 @@ function normalizeFilters(args: {
   }
 
   return filters;
-}
-
-/** SQLite 의 NOCASE 와 같은 기준(ASCII 영문자만)으로 소문자로 바꾼다. */
-function lowerAscii(value: string): string {
-  return value.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
 }
 
 /**
@@ -131,29 +127,6 @@ const KNOWLEDGE_WARNING =
   '관련 지식을 조회하는 중 오류가 발생해 일부 또는 전부를 싣지 못했습니다. ' +
   '호환 소프트웨어 목록은 정상입니다. 자세한 내용은 MCP 서버 로그(stderr)를 확인하세요.';
 
-/** 괄호(전각 포함)와 그 안의 내용. 안에 다른 괄호가 없는 가장 안쪽 것과 일치한다. */
-const PARENTHESIZED = /[(\uFF08][^()\uFF08\uFF09]*[)\uFF09]/g;
-
-/**
- * 제품명에서 괄호와 그 안의 내용을 뺀 이름. 지식 글이 제품을 부르는 이름과 견주는 데 쓴다.
- *
- * 제품명에는 설명이 괄호로 붙어 있는 것이 많다 ('Morpheus CMS(모피어스 CMS)', 'AI+(플러스) CMS',
- * 'ALPAS v1.0 (도서관리 시스템)'). 글은 제품을 'Morpheus CMS' 처럼 부르므로 전체 이름으로는 찾지 못한다.
- * 괄호를 빼고 남는 것이 없으면 제품명을 그대로 쓴다.
- */
-function nameWithoutParentheses(productName: string): string {
-  let name = productName;
-  let previous: string;
-  // 겹친 괄호는 안쪽부터 차례로 뺀다
-  do {
-    previous = name;
-    name = name.replace(PARENTHESIZED, ' ');
-  } while (name !== previous);
-
-  name = name.replace(/\s+/g, ' ').trim();
-  return name === '' ? productName.trim() : name;
-}
-
 /**
  * 개발자 지식 매니저를 준비한다 (LanceDB 테이블 열기).
  * 실패하면 원인을 서버 로그에 남기고 null 을 돌려준다.
@@ -172,7 +145,9 @@ async function openKnowledge(manager: HybridDatabaseManager) {
  * 제품명마다 그 제품을 언급하는 지식을 찾는다.
  *
  * 벡터 검색은 관련이 없어도 가까운 순으로 항상 요청한 건수를 돌려준다. 그래서 제품명으로 의미 검색한 후보
- * 가운데 제목이나 본문에 제품의 이름(nameWithoutParentheses, 대소문자 무시)이 들어 있는 지식만 남긴다.
+ * 가운데 제목이나 본문이 제품의 이름(괄호를 뺀 이름, nameWithoutParentheses)을 언급하는 지식만 남긴다.
+ * 이름이 다른 낱말의 일부로 들어 있을 뿐인 글은 언급으로 보지 않는다 (findProductMention 의 낱말 경계와
+ * 대소문자 규칙).
  * 제품을 실제로 언급하는 글이 가까운 몇 건 안에 든다는 보장이 없으므로 (제품명이 짧으면 다른 글이 앞 순위를
  * 차지한다), 후보를 KNOWLEDGE_CANDIDATES_PER_PRODUCT 건까지 보고 그 가운데 앞의 MAX_KNOWLEDGE_PER_PRODUCT 건을
  * 싣는다. 그런 지식이 하나도 없는 제품은 결과에 넣지 않는다.
@@ -199,11 +174,11 @@ async function findRelatedKnowledge(
 
   for (const productName of productNames) {
     try {
-      const needle = nameWithoutParentheses(productName).toLowerCase();
+      const name = nameWithoutParentheses(productName);
       const candidates = await knowledge.searchKnowledge(productName, { limit: KNOWLEDGE_CANDIDATES_PER_PRODUCT });
       const mentioning = candidates
         .filter((item) =>
-          [item.title, item.content].some((text) => typeof text === 'string' && text.toLowerCase().includes(needle)),
+          [item.title, item.content].some((text) => typeof text === 'string' && findProductMention(text, name) !== -1),
         )
         .slice(0, MAX_KNOWLEDGE_PER_PRODUCT);
       searchedProducts += 1;
