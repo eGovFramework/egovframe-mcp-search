@@ -39,11 +39,13 @@ export interface CompatibilityQueryOptions {
   query?: string;  // 키워드 질의
   filters?: CompatibilitySearchFilter;  // 키워드와 함께(AND) 적용할 필터
   limit?: number;  // 최대 행 수 (생략하면 제한 없음)
+  offset?: number;  // 건너뛸 행 수 (기본 0)
 }
 
 // 호환성 소프트웨어 조회 결과
 export interface CompatibilityQueryResult {
-  rows: CompatibilitySoftware[];
+  rows: CompatibilitySoftware[];  // offset 부터 limit 건
+  total: number;  // 같은 조건에 맞는 전체 건수 (limit/offset 적용 전)
   matchMode?: KeywordMatchMode;  // 키워드 검색을 수행했을 때만 채워진다
 }
 

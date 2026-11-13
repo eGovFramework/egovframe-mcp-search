@@ -5,7 +5,7 @@
 
 import { getInitializedHybridManager } from '../database/hybridManager.js';
 import type { SQLiteManager } from '../database/sqliteManager.js';
-import { CompatibilitySearchFilter } from '../types/database.js';
+import { CompatibilitySearchFilter, CompatibilitySoftware, KeywordMatchMode } from '../types/database.js';
 
 /** 문자열 필터 값의 앞뒤 공백을 뗀다. 문자열이 아니거나 비어 있으면 undefined. */
 function cleanFilter(value: string | undefined): string | undefined {
@@ -88,12 +88,63 @@ function findAvailableValues(
   return unknownVersion || unknownCategory ? { frameworkVersions, categories } : undefined;
 }
 
+/** limit 을 주지 않았을 때 돌려주는 건수 */
+const DEFAULT_LIMIT = 20;
+/** 한 번에 돌려주는 최대 건수. 그 이상은 offset 으로 이어서 조회한다 */
+const MAX_LIMIT = 100;
+
+/** limit 을 1 이상 MAX_LIMIT 이하의 정수로 맞춘다. 숫자가 아니면 기본값을 쓴다. */
+function normalizeLimit(limit: number | undefined): number {
+  if (typeof limit !== 'number' || Number.isNaN(limit)) {
+    return DEFAULT_LIMIT;
+  }
+  return Math.min(Math.max(1, Math.floor(limit)), MAX_LIMIT);
+}
+
+/** offset 을 0 이상의 정수로 맞춘다. 숫자가 아니면 0 을 쓴다. */
+function normalizeOffset(offset: number | undefined): number {
+  if (typeof offset !== 'number' || Number.isNaN(offset)) {
+    return 0;
+  }
+  return Math.min(Math.max(0, Math.floor(offset)), Number.MAX_SAFE_INTEGER);
+}
+
+/** includeKnowledge 로 함께 돌려주는 관련 지식 한 건 */
+export interface RelatedKnowledgeItem {
+  title: string;
+  type: string;
+  importance: number;
+  tags: string[];
+}
+
+/** 호환성 소프트웨어 검색 응답 */
+export interface CompatibilitySearchResponse {
+  success: true;
+  /** 같은 조건에 맞는 전체 건수 (limit/offset 적용 전) */
+  total: number;
+  /** 이번에 돌려준 건수 (software 의 길이) */
+  count: number;
+  /** 실제로 적용한 limit (1~100) */
+  limit: number;
+  /** 실제로 적용한 offset */
+  offset: number;
+  /** 실제로 적용한 필터 */
+  filters: CompatibilitySearchFilter;
+  /** 키워드 검색이 결과를 찾은 방식. 키워드 검색을 하지 않았으면 없다 */
+  matchMode?: KeywordMatchMode;
+  /** 결과가 0건이고 frameworkVersion·category 가 데이터에 없는 값일 때: 쓸 수 있는 값 */
+  available?: { frameworkVersions: string[]; categories: string[] };
+  software: CompatibilitySoftware[];
+  relatedKnowledge?: Array<{ product: string; knowledge: RelatedKnowledgeItem[] }>;
+}
+
 /**
  * 호환성 소프트웨어 검색 (통합)
  * - 기본: 호환 소프트웨어 검색
  * - includeKnowledge=true: 검색 결과의 소프트웨어에 대한 개발자 경험/지식도 함께 반환
- * 
- * See: docs/TODO_TOOL_OPTIMIZATION.md Phase 3-B
+ *
+ * 한 번에 limit 건(기본 20, 최대 100)을 돌려준다. 응답의 total 이 count 보다 크면
+ * offset 을 늘려 다음 페이지를 조회할 수 있다.
  */
 export async function searchCompatibleSoftware(args: {
   query?: string;
@@ -103,52 +154,52 @@ export async function searchCompatibleSoftware(args: {
   vendor?: string;
   productName?: string;
   limit?: number;
+  offset?: number;
   includeKnowledge?: boolean;
-}) {
+}): Promise<CompatibilitySearchResponse> {
   const manager = await getInitializedHybridManager();
   const sqlite = manager.getSQLite();
-  const limit = args.limit && Number.isFinite(args.limit) && args.limit > 0
-    ? Math.floor(args.limit)
-    : 20;
+  const limit = normalizeLimit(args.limit);
+  const offset = normalizeOffset(args.offset);
 
   // 실제로 적용하는 필터. 응답의 filters 로 그대로 되돌려준다.
   const filters = normalizeFilters(args);
 
   // 키워드와 필터를 한 번의 조회로 처리한다 (필터는 SQL 에서 LIMIT 보다 먼저 적용된다).
   // matchMode 는 키워드 검색이 결과를 찾은 방식이다 (all-terms: 모든 검색어 일치, any-term: 일부만 일치).
-  const { rows: results, matchMode } = sqlite.queryCompatibleSoftware({
+  const { rows: results, total, matchMode } = sqlite.queryCompatibleSoftware({
     query: args.query?.trim(),
     filters,
     limit,
+    offset,
   });
 
-  const response: any = {
+  // 결과가 없고 frameworkVersion·category 가 데이터에 없는 값이면, 쓸 수 있는 값을 알려 준다.
+  const available = total === 0 ? findAvailableValues(sqlite, filters) : undefined;
+
+  const response: CompatibilitySearchResponse = {
     success: true,
+    total,
     count: results.length,
+    limit,
+    offset,
     filters,
     ...(matchMode ? { matchMode } : {}),
+    ...(available ? { available } : {}),
     software: results,
   };
 
-  // 결과가 없고 frameworkVersion·category 가 데이터에 없는 값이면, 쓸 수 있는 값을 알려 준다.
-  if (results.length === 0) {
-    const available = findAvailableValues(sqlite, filters);
-    if (available) {
-      response.available = available;
-    }
-  }
-
   // includeKnowledge=true: 검색된 소프트웨어에 대한 개발자 경험 포함
   if (args.includeKnowledge && results.length > 0) {
-    const productNames = [...new Set(results.map((s: any) => s.product_name))].slice(0, 5);
-    const knowledgeResults: any[] = [];
+    const productNames = [...new Set(results.map((software) => software.product_name))].slice(0, 5);
+    const knowledgeResults: Array<{ product: string; knowledge: RelatedKnowledgeItem[] }> = [];
 
     for (const productName of productNames) {
       const knowledge = await manager.findKnowledgeForSoftware(productName);
       if (knowledge.length > 0) {
         knowledgeResults.push({
           product: productName,
-          knowledge: knowledge.map((k: any) => ({
+          knowledge: knowledge.map((k) => ({
             title: k.title,
             type: k.type,
             importance: k.importance,
@@ -163,4 +214,3 @@ export async function searchCompatibleSoftware(args: {
 
   return response;
 }
-

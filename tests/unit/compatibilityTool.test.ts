@@ -83,6 +83,18 @@ const CROWDED: SoftwareSeed[] = [
   },
 ];
 
+/** 상한(100건)보다 많은 120행. 제품명은 모두 "Bulk" 로 시작한다. */
+const BULK: SoftwareSeed[] = Array.from({ length: 120 }, (_, index): SoftwareSeed => ({
+  product_name: `Bulk${index}`,
+  product_version: `Bulk${index} 1.0`,
+  framework_version: "4.3",
+  category: "CMS Solution",
+  compatibility_level: 2,
+  vendor: "대량벤더",
+  verified_date: "2024-01-01",
+  description: "Bulk 제품",
+}));
+
 describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () => {
   beforeEach(() => {
     hybrid.initialize.mockClear();
@@ -239,6 +251,67 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       const response = await searchCompatibleSoftware({ frameworkVersion: "4.3" });
       expect(response.count).toBe(2);
       expect(response).not.toHaveProperty("available");
+    });
+  });
+
+  describe("전체 건수와 페이지", () => {
+    useCatalogue(BULK);
+
+    it("응답에 total, count, limit, offset 을 넣는다", async () => {
+      const response = await searchCompatibleSoftware({ limit: 5 });
+      expect(response).toMatchObject({ success: true, total: BULK.length, count: 5, limit: 5, offset: 0 });
+      expect(response.software).toHaveLength(5);
+    });
+
+    it("limit 을 주지 않으면 20건을 돌려주고, 잘린 사실을 total 로 알 수 있다", async () => {
+      const response = await searchCompatibleSoftware({});
+      expect(response).toMatchObject({ total: BULK.length, count: 20, limit: 20, offset: 0 });
+    });
+
+    it("offset 으로 다음 페이지를 이어서 조회한다", async () => {
+      const first = await searchCompatibleSoftware({ limit: 50 });
+      const second = await searchCompatibleSoftware({ limit: 50, offset: 50 });
+      const third = await searchCompatibleSoftware({ limit: 50, offset: 100 });
+      expect([first.count, second.count, third.count]).toEqual([50, 50, BULK.length - 100]);
+      expect(third).toMatchObject({ total: BULK.length, limit: 50, offset: 100 });
+
+      const seen = new Set([...first.software, ...second.software, ...third.software].map((s) => s.product_name));
+      expect(seen.size).toBe(BULK.length);
+    });
+
+    it("query 가 있을 때도 total 과 offset 을 적용한다", async () => {
+      const response = await searchCompatibleSoftware({ query: "Bulk", limit: 10, offset: 115 });
+      expect(response).toMatchObject({ total: BULK.length, count: BULK.length - 115, limit: 10, offset: 115 });
+      expect(response.matchMode).toBe("all-terms");
+    });
+
+    it("limit 은 1 이상 100 이하의 정수로 맞춘다", async () => {
+      const applied = async (limit: number) => {
+        const response = await searchCompatibleSoftware({ limit });
+        return [response.limit, response.count];
+      };
+      expect(await applied(1000)).toEqual([100, 100]);
+      expect(await applied(1e300)).toEqual([100, 100]);
+      expect(await applied(2.7)).toEqual([2, 2]);
+      // 1 보다 작은 값이 '제한 없음'(전체 반환)으로 바뀌면 안 된다
+      expect(await applied(0.5)).toEqual([1, 1]);
+      expect(await applied(0)).toEqual([1, 1]);
+      expect(await applied(-5)).toEqual([1, 1]);
+      expect(await applied(Number.NaN)).toEqual([20, 20]);
+    });
+
+    it("query 가 있을 때도 같은 limit 규칙을 따른다", async () => {
+      expect((await searchCompatibleSoftware({ query: "Bulk", limit: 0.5 })).count).toBe(1);
+      expect((await searchCompatibleSoftware({ query: "Bulk", limit: 1000 })).count).toBe(100);
+    });
+
+    it("offset 은 0 이상의 정수로 맞춘다", async () => {
+      expect((await searchCompatibleSoftware({ offset: -3 })).offset).toBe(0);
+      expect((await searchCompatibleSoftware({ offset: 1.5 })).offset).toBe(1);
+      expect((await searchCompatibleSoftware({ offset: Number.NaN })).offset).toBe(0);
+
+      const beyond = await searchCompatibleSoftware({ offset: 1e300 });
+      expect(beyond).toMatchObject({ total: BULK.length, count: 0 });
     });
   });
 

@@ -318,26 +318,30 @@ export class SQLiteManager {
    *   그런 행이 없으면 일부 검색어가 부분 문자열로 들어 있는 행을 찾는다(any-term).
    * - query 가 없거나 검색어가 하나도 추출되지 않으면("*", "?" 등) 필터에 맞는 행을
    *   확인일자가 최근인 순으로 돌려준다.
+   *
+   * total 은 같은 조건에 맞는 전체 건수이고, rows 는 그 가운데 offset 부터 limit 건이다.
    */
   queryCompatibleSoftware(options: CompatibilityQueryOptions = {}): CompatibilityQueryResult {
     const filter = this.buildCompatibilityFilter(options.filters ?? {});
-    const limit = toSqlLimit(options.limit);
+    const page: SqlPage = { limit: toSqlLimit(options.limit), offset: toSqlOffset(options.offset) };
 
     const terms = extractSearchTerms(options.query ?? '');
     if (terms.length > 0) {
-      return this.keywordSearch<CompatibilitySoftware>(COMPATIBILITY_SEARCH, terms, filter, limit);
+      return this.keywordSearch<CompatibilitySoftware>(COMPATIBILITY_SEARCH, terms, filter, page);
     }
 
+    const from = `FROM ${COMPATIBILITY_SEARCH.table} WHERE 1=1${filter.sql}`;
+    const total = (
+      this.db.prepare(`SELECT COUNT(*) AS count ${from}`).get(...filter.params) as { count: number }
+    ).count;
     const rows = this.db
       .prepare(
-        `SELECT ${COMPATIBILITY_SEARCH.columns}
-         FROM ${COMPATIBILITY_SEARCH.table}
-         WHERE 1=1${filter.sql}
-         ORDER BY ${COMPATIBILITY_SEARCH.defaultOrder}
-         LIMIT ?`,
+        `SELECT ${COMPATIBILITY_SEARCH.columns} ${from}
+         ORDER BY ${COMPATIBILITY_SEARCH.defaultOrder}, ${COMPATIBILITY_SEARCH.rowid}
+         LIMIT ? OFFSET ?`,
       )
-      .all(...filter.params, limit) as CompatibilitySoftware[];
-    return { rows };
+      .all(...filter.params, page.limit, page.offset) as CompatibilitySoftware[];
+    return { rows, total };
   }
 
   /**
@@ -391,28 +395,32 @@ export class SQLiteManager {
    *
    * 1) 모든 검색어를 접두 일치 AND 로 묶은 FTS5 MATCH 로 찾는다.
    * 2) 필터까지 적용한 결과가 0건이면 부분 일치 대체 검색(partialTermSearch)으로 넘어간다.
+   *    0건인지는 페이지가 아니라 전체 건수로 판단한다 (offset 이 끝을 넘었다고 검색 방식을 바꾸지 않는다).
    */
   private keywordSearch<Row>(
     target: KeywordSearchTarget,
     terms: string[],
     filter: SqlCondition,
-    limit: number,
-  ): { rows: Row[]; matchMode: KeywordMatchMode } {
+    page: SqlPage,
+  ): { rows: Row[]; total: number; matchMode: KeywordMatchMode } {
     const match = buildFts5MatchQuery(terms);
     if (match) {
-      try {
-        const rows = this.db
-          .prepare(
-            `SELECT ${target.columns}
-             FROM ${target.ftsTable} fts
+      const from = `FROM ${target.ftsTable} fts
              JOIN ${target.table} ON ${target.rowid} = fts.rowid
-             WHERE ${target.ftsTable} MATCH ?${filter.sql}
-             ORDER BY rank, ${target.rowid}
-             LIMIT ?`,
-          )
-          .all(match, ...filter.params, limit) as Row[];
-        if (rows.length > 0) {
-          return { rows, matchMode: 'all-terms' };
+             WHERE ${target.ftsTable} MATCH ?${filter.sql}`;
+      try {
+        const total = (
+          this.db.prepare(`SELECT COUNT(*) AS count ${from}`).get(match, ...filter.params) as { count: number }
+        ).count;
+        if (total > 0) {
+          const rows = this.db
+            .prepare(
+              `SELECT ${target.columns} ${from}
+               ORDER BY rank, ${target.rowid}
+               LIMIT ? OFFSET ?`,
+            )
+            .all(match, ...filter.params, page.limit, page.offset) as Row[];
+          return { rows, total, matchMode: 'all-terms' };
         }
       } catch (error) {
         // MATCH 식을 FTS5 가 해석하지 못한 경우에만 부분 일치 검색으로 넘어간다.
@@ -423,7 +431,7 @@ export class SQLiteManager {
       }
     }
 
-    return { rows: this.partialTermSearch<Row>(target, terms, filter, limit), matchMode: 'any-term' };
+    return { ...this.partialTermSearch<Row>(target, terms, filter, page), matchMode: 'any-term' };
   }
 
   /**
@@ -439,8 +447,8 @@ export class SQLiteManager {
     target: KeywordSearchTarget,
     terms: string[],
     filter: SqlCondition,
-    limit: number,
-  ): Row[] {
+    page: SqlPage,
+  ): { rows: Row[]; total: number } {
     const termMatches = `(${target.likeColumns.map((column) => `${column} LIKE ? ESCAPE '\\'`).join(' OR ')})`;
     const bindPattern = (pattern: string) => target.likeColumns.map(() => pattern);
 
@@ -472,21 +480,28 @@ export class SQLiteManager {
 
     const required = Math.ceil(distinctiveTerms / 2);
     if (distinctiveTerms === 0 || patterns.length < required) {
-      return [];
+      return { rows: [], total: 0 };
     }
 
     const matchedTerms = patterns.map(() => `(CASE WHEN ${termMatches} THEN 1 ELSE 0 END)`).join(' + ');
     const matchedTermsParams = patterns.flatMap(bindPattern);
+    const from = `FROM ${target.table} WHERE (${matchedTerms}) >= ?${filter.sql}`;
+    const fromParams = [...matchedTermsParams, required, ...filter.params];
 
-    return this.db
+    const total = (this.db.prepare(`SELECT COUNT(*) AS count ${from}`).get(...fromParams) as { count: number })
+      .count;
+    if (total === 0) {
+      return { rows: [], total: 0 };
+    }
+
+    const rows = this.db
       .prepare(
-        `SELECT ${target.columns}
-         FROM ${target.table}
-         WHERE (${matchedTerms}) >= ?${filter.sql}
+        `SELECT ${target.columns} ${from}
          ORDER BY (${matchedTerms}) DESC, ${target.defaultOrder}, ${target.rowid}
-         LIMIT ?`,
+         LIMIT ? OFFSET ?`,
       )
-      .all(...matchedTermsParams, required, ...filter.params, ...matchedTermsParams, limit) as Row[];
+      .all(...fromParams, ...matchedTermsParams, page.limit, page.offset) as Row[];
+    return { rows, total };
   }
 
   /**
@@ -1030,12 +1045,26 @@ function containsPattern(term: string): string | null {
   return Buffer.byteLength(pattern, 'utf8') > MAX_LIKE_PATTERN_BYTES ? null : pattern;
 }
 
+/** 조회할 범위. SQL 의 LIMIT / OFFSET 에 그대로 넣는 정수다. */
+interface SqlPage {
+  limit: number;
+  offset: number;
+}
+
 /** SQL LIMIT 에 넣을 값. 생략하면 -1(제한 없음), 그 밖에는 1 이상의 정수로 맞춘다. */
 function toSqlLimit(limit: number | undefined): number {
   if (typeof limit !== 'number' || Number.isNaN(limit)) {
     return -1;
   }
   return Math.min(Math.max(1, Math.floor(limit)), Number.MAX_SAFE_INTEGER);
+}
+
+/** SQL OFFSET 에 넣을 값. 생략하면 0, 그 밖에는 0 이상의 정수로 맞춘다. */
+function toSqlOffset(offset: number | undefined): number {
+  if (typeof offset !== 'number' || Number.isNaN(offset)) {
+    return 0;
+  }
+  return Math.min(Math.max(0, Math.floor(offset)), Number.MAX_SAFE_INTEGER);
 }
 
 /** FTS5 가 MATCH 식을 해석하지 못해 낸 오류인지 판별한다. */

@@ -226,6 +226,78 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     });
   });
 
+  describe("전체 건수와 페이지", () => {
+    it("total 은 limit 과 무관하게 조건에 맞는 전체 건수다", () => {
+      const result = sqlite.queryCompatibleSoftware({ filters: { category: "WAS" }, limit: 2 });
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(result.total).toBe(3);
+      expect(sqlite.queryCompatibleSoftware().total).toBe(CATALOGUE.length);
+    });
+
+    it("offset 만큼 건너뛴 다음 행부터 돌려준다", () => {
+      const result = sqlite.queryCompatibleSoftware({ filters: { category: "WAS" }, limit: 2, offset: 2 });
+      expect(versionsOf(result.rows)).toEqual(["WebLogic 12c"]);
+      expect(result.total).toBe(3);
+    });
+
+    it("키워드 검색(all-terms)에도 total 과 offset 을 적용한다", () => {
+      const all = sqlite.queryCompatibleSoftware({ query: "표준프레임워크" });
+      expect(all.total).toBe(CATALOGUE.length);
+      expect(all.matchMode).toBe("all-terms");
+
+      const paged = [0, 2, 4].flatMap(
+        (offset) => sqlite.queryCompatibleSoftware({ query: "표준프레임워크", limit: 2, offset }).rows,
+      );
+      expect(versionsOf(paged)).toEqual(versionsOf(all.rows));
+    });
+
+    it("부분 일치 대체 검색(any-term)에도 total 과 offset 을 적용한다", () => {
+      const result = sqlite.queryCompatibleSoftware({ query: "맥스 JEUS", limit: 1, offset: 2 });
+      expect(versionsOf(result.rows)).toEqual(["Tibero 7"]);
+      expect(result.total).toBe(3);
+      expect(result.matchMode).toBe("any-term");
+    });
+
+    it("offset 이 전체 건수를 넘으면 빈 페이지를 돌려주되, 검색 방식은 바꾸지 않는다", () => {
+      const result = sqlite.queryCompatibleSoftware({ query: "JEUS", offset: 10 });
+      expect(result.rows).toEqual([]);
+      expect(result.total).toBe(2);
+      expect(result.matchMode).toBe("all-terms");
+    });
+
+    it("확인일자가 같은 행이 있어도 페이지를 넘길 때 순서가 흔들리지 않는다", () => {
+      sqlite.addCompatibilitySoftwareBatch(
+        Array.from({ length: 5 }, (_, index) => ({
+          ...CATALOGUE[5],
+          product_name: `SameDay${index}`,
+          product_version: `SameDay${index} 1.0`,
+        })),
+      );
+      const all = sqlite.queryCompatibleSoftware();
+      const paged = Array.from({ length: all.total }, (_, offset) =>
+        sqlite.queryCompatibleSoftware({ limit: 1, offset }).rows,
+      ).flat();
+      expect(all.total).toBe(CATALOGUE.length + 5);
+      expect(versionsOf(paged)).toEqual(versionsOf(all.rows));
+      expect(new Set(versionsOf(paged)).size).toBe(all.total);
+    });
+
+    it("limit 과 offset 은 정수로 맞추고, 범위를 벗어난 값도 SQL 오류 없이 처리한다", () => {
+      const count = (limit?: number, offset?: number) => sqlite.queryCompatibleSoftware({ limit, offset }).rows.length;
+      expect(count(2.7)).toBe(2);
+      expect(count(0)).toBe(1);
+      expect(count(-5)).toBe(1);
+      expect(count(1e300)).toBe(CATALOGUE.length);
+      expect(count(undefined)).toBe(CATALOGUE.length);
+      expect(count(undefined, -1)).toBe(CATALOGUE.length);
+      expect(count(undefined, 1.9)).toBe(CATALOGUE.length - 1);
+      expect(count(undefined, Number.NaN)).toBe(CATALOGUE.length);
+      expect(count(undefined, 1e300)).toBe(0);
+      // 키워드 검색 경로도 같다
+      expect(sqlite.queryCompatibleSoftware({ query: "JEUS", limit: 1.5, offset: 0.5 }).rows).toHaveLength(1);
+    });
+  });
+
   describe("필터에 쓸 수 있는 값 목록", () => {
     it("getFrameworkVersions 는 major, minor 를 정수로 비교해 최신 버전부터 돌려준다", () => {
       // 문자열로 정렬하면 3.10 이 3.2 와 3.9 보다 작은 값으로 취급된다
