@@ -411,6 +411,25 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       }
     });
 
+    it("level 은 그 호환성 레벨의 행만 돌려주고 응답의 filters 에 싣는다", async () => {
+      const response = await searchCompatibleSoftware({ level: 1 });
+      expect(versionsOf(response.software)).toEqual(["SampleCMS 1.0"]);
+      expect(response.filters).toEqual({ level: 1 });
+      // minLevel 1 은 모든 행이다 ('이상' 비교)
+      expect((await searchCompatibleSoftware({ minLevel: 1 })).total).toBe(CATALOGUE.length);
+    });
+
+    it("level 과 minLevel 을 함께 주면 둘 다 적용하고 둘 다 filters 에 싣는다", async () => {
+      const response = await searchCompatibleSoftware({ level: 1, minLevel: 2 });
+      expect(response).toMatchObject({ total: 0, count: 0, software: [] });
+      expect(response.filters).toEqual({ level: 1, minLevel: 2 });
+      // 필터 값은 모두 유효하므로 쓸 수 있는 값 안내는 붙지 않는다
+      expect(response).not.toHaveProperty("available");
+
+      const narrowed = await searchCompatibleSoftware({ query: "CMS", level: 2, minLevel: 1 });
+      expect(versionsOf(narrowed.software)).toEqual(["OtherCMS 2.0"]);
+    });
+
     it("공백뿐인 필터는 주지 않은 것으로 보고 응답의 filters 에도 넣지 않는다", async () => {
       const response = await searchCompatibleSoftware({ frameworkVersion: "  ", category: "", vendor: " " });
       expect(response.count).toBe(CATALOGUE.length);

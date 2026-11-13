@@ -393,6 +393,13 @@ export class SQLiteManager {
       params.push(category);
     }
 
+    // level 은 그 레벨과 같은 행, minLevel 은 그 레벨 이상인 행이다. 함께 주면 둘 다 적용한다.
+    // minLevel 만으로는 레벨 1 인 행만 고를 수 없다 (minLevel 1 은 모든 행이다).
+    if (typeof filters.level === 'number') {
+      clauses.push('cs.compatibility_level = ?');
+      params.push(filters.level);
+    }
+
     if (filters.minLevel) {
       clauses.push('cs.compatibility_level >= ?');
       params.push(filters.minLevel);

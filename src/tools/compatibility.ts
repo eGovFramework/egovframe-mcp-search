@@ -21,6 +21,7 @@ function cleanFilter(value: string | undefined): string | undefined {
 function normalizeFilters(args: {
   frameworkVersion?: string;
   category?: string;
+  level?: 1 | 2;
   minLevel?: 1 | 2;
   vendor?: string;
   productName?: string;
@@ -34,6 +35,9 @@ function normalizeFilters(args: {
   const category = cleanFilter(args.category);
   if (category) {
     filters.category = category;
+  }
+  if (args.level !== undefined) {
+    filters.level = args.level;
   }
   if (args.minLevel !== undefined) {
     filters.minLevel = args.minLevel;
@@ -284,6 +288,8 @@ export async function searchCompatibleSoftware(args: {
   query?: string;
   frameworkVersion?: string;
   category?: string;
+  /** 호환성 레벨이 이 값과 같은 행만 (minLevel 은 이 값 이상인 행. 함께 주면 둘 다 적용한다) */
+  level?: 1 | 2;
   minLevel?: 1 | 2;
   vendor?: string;
   productName?: string;

@@ -695,6 +695,37 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       ).toEqual(["OtherCMS 2.0"]);
     });
 
+    it("level 은 호환성 레벨이 그 값과 같은 행만 통과시킨다", () => {
+      // 레벨 1 은 SampleCMS 하나다. minLevel 은 '이상' 비교라 레벨 1 인 행만 고를 수 없다
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ filters: { level: 1 } }).rows)).toEqual(["SampleCMS 1.0"]);
+      expect(sqlite.queryCompatibleSoftware({ filters: { minLevel: 1 } }).total).toBe(CATALOGUE.length);
+      const level2 = sqlite.queryCompatibleSoftware({ filters: { level: 2 } });
+      expect(level2.total).toBe(CATALOGUE.length - 1);
+      expect(versionsOf(level2.rows)).not.toContain("SampleCMS 1.0");
+      expect(versionsOf(sqlite.searchCompatibleSoftware({ level: 1 }))).toEqual(["SampleCMS 1.0"]);
+    });
+
+    it("level 과 minLevel 을 함께 주면 둘 다 적용한다", () => {
+      // 레벨이 1 이면서 2 이상인 행은 없다
+      expect(sqlite.queryCompatibleSoftware({ filters: { level: 1, minLevel: 2 } })).toEqual({ rows: [], total: 0 });
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ filters: { level: 1, minLevel: 1 } }).rows)).toEqual([
+        "SampleCMS 1.0",
+      ]);
+      expect(sqlite.queryCompatibleSoftware({ filters: { level: 2, minLevel: 2 } }).total).toBe(CATALOGUE.length - 1);
+    });
+
+    it("level 도 키워드 검색과 같은 문에서 적용한다", () => {
+      // 'CMS' 는 SampleCMS(레벨 1)와 OtherCMS(레벨 2)에 일치한다
+      const byLevel = (level: 1 | 2) =>
+        versionsOf(sqlite.queryCompatibleSoftware({ query: "CMS", filters: { level } }).rows);
+      expect(byLevel(1)).toEqual(["SampleCMS 1.0"]);
+      expect(byLevel(2)).toEqual(["OtherCMS 2.0"]);
+      // 대체 검색의 대상도 level 로 좁힌다: 'JEUS' 는 레벨 1 안에 없다
+      const fallback = sqlite.queryCompatibleSoftware({ query: "JEUS CMS", filters: { level: 1 } });
+      expect(versionsOf(fallback.rows)).toEqual(["SampleCMS 1.0"]);
+      expect(fallback.terms).toEqual({ used: ["CMS"], ignored: ["JEUS"], required: 1 });
+    });
+
     it("필터는 LIMIT 보다 먼저 적용한다", () => {
       // 필터를 나중에 적용하면 상위 1건(다른 버전)만 남긴 뒤 걸러 0건이 된다
       for (const frameworkVersion of ["4.0", "4.3"]) {

@@ -25,9 +25,10 @@ export type CompatibilitySoftwareInfo = Omit<CompatibilitySoftware, 'id' | 'crea
 export interface CompatibilitySearchFilter {
   frameworkVersion?: string;
   category?: string;
-  minLevel?: 1 | 2;
-  vendor?: string;
-  productName?: string;
+  level?: 1 | 2;  // 호환성 레벨이 이 값과 같은 행
+  minLevel?: 1 | 2;  // 호환성 레벨이 이 값 이상인 행 (level 과 함께 주면 둘 다 적용한다)
+  vendor?: string;  // 업체명의 부분 문자열 (법인 표기와 공백의 차이는 가리지 않는다)
+  productName?: string;  // 제품명 또는 제품 버전 표기의 부분 문자열
 }
 
 /**
