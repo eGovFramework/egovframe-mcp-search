@@ -14,7 +14,7 @@ update CLI 가 호환 소프트웨어 목록(SQLite 리소스 `compatibility`)�
 - 패키지가 갱신되어 번들이 바뀌면 오버레이 사본을 무효로 보고, 다음 update 실행이 보관해 둔 적용 원본을 새 번들 위에 다시 적용합니다.
 - `--rollback` 으로 적용분을 지우면 오버레이의 SQLite 사본도 지워져서 번들만 쓰는 상태로 돌아갑니다.
 
-현재 `src/cli/update.ts` 는 SQLite 리소스의 갱신과 롤백 호출을 주석으로 막아 두었습니다. 이 테스트의 첫 케이스와 같은 인자(`update --resource=compatibility --from-file <디렉터리> --yes`)로 실행하면 `SQLite 리소스 갱신은 현재 비활성화되어 있어 건너뜁니다.` 라고 알리고 종료 코드 0 으로 끝나며, 오버레이에는 아무것도 만들지 않습니다. 호환 소프트웨어 목록은 패키지를 올릴 때만 바뀝니다. 그래서 이 테스트도 건너뛰고 있습니다.
+현재 `src/cli/update.ts` 는 SQLite 리소스의 갱신과 롤백 호출을 주석으로 막아 두었습니다. 이 테스트의 첫 케이스와 같은 인자(`update --resource=compatibility --from-file <디렉터리> --yes`)로 실행하면 `SQLite 리소스 갱신은 현재 비활성화되어 있어 건너뜁니다.` 라고 알리고 종료 코드 0 으로 끝납니다. 오버레이에는 빈 디렉터리만 생기고 SQLite 사본이나 상태 파일은 만들어지지 않습니다. 호환 소프트웨어 목록은 패키지를 올릴 때만 바뀝니다. 그래서 이 테스트도 건너뛰고 있습니다.
 
 ## 2. 파일 구조와 헬퍼
 
@@ -64,7 +64,7 @@ npx vitest run tests/integration/updateSqliteResources.test.ts
 
 건너뛰는 동안에는 저장소의 파일을 바꾸지 않습니다. 되살리면 다음 두 가지가 저장소의 파일에 영향을 주므로, 되살리기 전에 테스트를 먼저 고칩니다.
 
-- `beforeAll` 과 둘째 케이스가 `knowledge-base/state.json` 을 덮어씁니다. `afterAll` 은 이 파일이 원래 없었을 때만 지우므로, 원래 있던 `state.json` 은 테스트가 쓴 내용으로 남습니다. 지금 저장소에는 이 파일이 없습니다.
+- `beforeAll` 과 둘째 케이스가 `knowledge-base/state.json` 을 덮어씁니다. `afterAll` 은 이 파일이 원래 없었을 때만 지우므로, 원래 있던 `state.json` 은 테스트가 쓴 내용으로 남습니다. 지금 저장소에는 이 파일이 들어 있고 git 이 추적합니다. 되살린 테스트를 그대로 실행하면 리소스별 버전이 기록된 동봉 `state.json` 이 `resources` 가 빈 내용으로 바뀐 채 남습니다. 원래 내용을 보관했다가 되돌리도록 고쳐야 합니다.
 - `countRows` 가 번들의 `knowledge-base/egovframe.db` 를 `SQLiteManager` 의 기본 모드인 쓰기 모드로 엽니다. 쓰기 모드는 저널 모드를 WAL 로 바꾸고 스키마 스크립트를 다시 실행하므로 git 이 추적하는 DB 파일이 바뀝니다. 읽기 전용(`{ readonly: true }`)으로 열도록 고쳐야 합니다.
 
 ## 6. 흔한 실패와 진단
@@ -73,4 +73,4 @@ npx vitest run tests/integration/updateSqliteResources.test.ts
 |---|---|---|
 | 모든 케이스가 `skipped` 로 표시됨 | `describe.skip` 으로 건너뛰고 있습니다 | 실패가 아닙니다. 기능이 꺼져 있는 동안의 정상 상태입니다 |
 | 기능을 켜지 않고 `describe.skip` 만 풀었을 때 첫 케이스가 실패 | `runUpdate` 가 호환 소프트웨어 갱신을 건너뛰어서 오버레이 SQLite 사본이 만들어지지 않습니다 | `src/cli/update.ts` 의 `[SQLite 갱신 비활성화]` 블록을 함께 되살립니다 |
-| 되살린 뒤 `git status` 에 `knowledge-base/egovframe.db` 나 `knowledge-base/state.json` 이 나타남 | 5절에 적은 대로 테스트가 번들의 파일을 씁니다 | `git restore knowledge-base/egovframe.db` 로 DB 를 되돌리고 `state.json` 을 테스트 전의 상태로 되돌린 뒤, 테스트가 번들의 파일을 쓰지 않게 고칩니다 |
+| 되살린 뒤 `git status` 에 `knowledge-base/egovframe.db` 나 `knowledge-base/state.json` 이 나타남 | 5절에 적은 대로 테스트가 번들의 파일을 씁니다 | `git restore knowledge-base/egovframe.db knowledge-base/state.json` 으로 두 파일을 되돌린 뒤, 테스트가 번들의 파일을 쓰지 않게 고칩니다 |
