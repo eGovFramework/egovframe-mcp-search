@@ -109,6 +109,21 @@ function headingLevelsOf(lines: string[]): number[] {
   return levels;
 }
 
+/**
+ * 제목 문구가 section 의 제목 경로에 한 마디로 실려 있는지 본다. 다른 제목의 일부로 들어 있는 것은 세지 않는다
+ * (예: 'JunitTest 구성' 은 'JunitTest 구성 및 수행' 에 실린 것이 아니다).
+ */
+function namesHeading(section: string, phrase: string): boolean {
+  for (let at = section.indexOf(phrase); at >= 0; at = section.indexOf(phrase, at + 1)) {
+    const before = section.slice(0, at);
+    const after = section.slice(at + phrase.length);
+    const starts = before === "" || before.endsWith(" > ") || before.endsWith(" / ");
+    const ends = after === "" || /^( > | \/ | 외 \d+개| \[\d+\]$)/.test(after);
+    if (starts && ends) return true;
+  }
+  return false;
+}
+
 describe.skipIf(GUIDE_FILES.length === 0)("가이드 원문 전체의 청킹", () => {
   const documents = loadDocuments();
   const allSections = documents.flatMap((document) => document.sections.map((section) => ({ document, section })));
@@ -189,7 +204,7 @@ describe.skipIf(GUIDE_FILES.length === 0)("가이드 원문 전체의 청킹", (
     expect(open).toEqual([]);
   });
 
-  it("색인에서 빠지는 글은 50자 미만인 ## 절이나 개요 전체뿐이고, 본문에서 빠진 제목 줄의 문구는 그 문서의 청크에 있다", () => {
+  it("색인에서 빠지는 글은 50자 미만인 ## 절이나 개요 전체뿐이고, 본문에서 빠진 제목 줄의 문구는 바로 뒤 절의 제목 경로에 있다", () => {
     const lostText: string[] = [];
     const lostHeadings: string[] = [];
     let droppedSections = 0;
@@ -245,7 +260,8 @@ describe.skipIf(GUIDE_FILES.length === 0)("가이드 원문 전체의 청킹", (
           if (text.length >= GUIDE_SECTION_MIN_CHARS) lostText.push(`${label} 절 전체 ${text.length}자`);
           continue;
         }
-        // 색인된 절에서 본문에 없는 줄은 title 로 올라간 제목 줄(### 이하)뿐이다
+        // 색인된 절에서 본문에 없는 줄은 제목 경로로 올라간 제목 줄(### 이하)뿐이다. 그 문구는 그 줄 바로 뒤에서
+        // 시작하는 절의 제목 경로에 한 마디로 실려 있다 (다른 제목이나 본문에 같은 글자가 들어 있는 것으로는 부족하다)
         for (const index of content) {
           if (isCovered(index)) continue;
           if (levels[index] < 3) {
@@ -253,14 +269,27 @@ describe.skipIf(GUIDE_FILES.length === 0)("가이드 원문 전체의 청킹", (
             continue;
           }
           liftedHeadings += 1;
-          const phrase = phraseOf(index);
-          if (!document.chunks.some((chunk) => chunk.title.includes(phrase) || chunk.content.includes(phrase))) {
+          const next = document.sections.find((section) => section.offset > starts[index]);
+          if (!next || !namesHeading(next.section, phraseOf(index))) {
             lostHeadings.push(`${document.relativePath}:${index + 1} ${JSON.stringify(lines[index].slice(0, 60))}`);
           }
         }
-        // ## 제목의 문구는 그 절에서 나온 청크의 title 에 있다
-        if (range.head >= 0 && !document.chunks.some((chunk) => chunk.title.includes(phraseOf(range.head)))) {
-          lostHeadings.push(`${label} ${JSON.stringify(lines[range.head].slice(0, 60))}`);
+        // ## 제목의 문구는 그 절에서 나온 모든 절의 제목 경로의 첫 마디다 (title 은 '문서 제목: 제목 경로' 다)
+        if (range.head >= 0) {
+          const phrase = phraseOf(range.head);
+          const rangeEnd = range.to < lines.length ? starts[range.to] : document.body.length + 1;
+          const inRange = document.sections.filter((section) => section.offset > starts[range.head] && section.offset < rangeEnd);
+          const named = (section: GuideSection) => {
+            const rest = section.section.slice(phrase.length);
+            return (
+              section.section.startsWith(phrase) &&
+              (rest === "" || rest.startsWith(" > ") || / \[\d+\]$/.test(rest)) &&
+              section.title.endsWith(`: ${section.section}`)
+            );
+          };
+          if (inRange.length === 0 || !inRange.every(named)) {
+            lostHeadings.push(`${label} ${JSON.stringify(lines[range.head].slice(0, 60))}`);
+          }
         }
       }
     }

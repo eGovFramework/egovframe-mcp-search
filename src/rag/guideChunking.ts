@@ -826,8 +826,9 @@ export function splitGuideSections(
    *
    * 소절로 시작하는 묶음은 그 소절의 이름 뒤에 합쳐진 소절의 이름을 MAX_MERGED_NAMES 개까지 잇는다
    * (더 깊은 제목으로 내려가면 ' > ', 같은 수준이거나 얕은 제목으로 넘어가면 ' / '). 절의 도입부로 시작하는 묶음은
-   * 절의 이름만 쓴다. 다만 짧은 도입부를 소절 앞에 붙였는데 한 청크에 들어가지 않는 묶음(whole 이 false)은 조각마다
-   * 그 소절의 내용이 이어지므로 소절의 이름까지 싣는다. 개요 아래의 소절은 section 에만 '개요' 를 싣는다.
+   * 절의 이름을 쓰고 그 절에 딸린 소절은 싣지 않는다 (그 절이 끝난 뒤에 합쳐진 소절은 싣는다). 다만 짧은 도입부를
+   * 소절 앞에 붙였는데 한 청크에 들어가지 않는 묶음(whole 이 false)은 조각마다 그 소절의 내용이 이어지므로 딸린
+   * 소절의 이름까지 싣는다. 개요 아래의 소절은 section 에만 '개요' 를 싣는다.
    *
    * @param whole 묶음이 한 청크에 들어갈 때의 이름인지 (다시 나눌 묶음이면 false)
    */
@@ -852,15 +853,19 @@ export function splitGuideSections(
     const startLevel = startPath.length > 0 ? startPath[startPath.length - 1].level : SECTION_LEVEL;
     const startsWithIntro = merged.length > 0 && merged[0].level > startLevel;
     const namesSection = startsWithIntro && (whole || charsOf(from, firstMerged) >= shortChars);
-    const listed = namesSection ? [] : merged.slice(0, MAX_MERGED_NAMES);
+    // 절의 이름을 쓰는 묶음에서 그 절에 딸린 소절은 싣지 않는다. 그 절이 끝난 뒤의 소절(수준이 같거나 얕은 제목부터)은
+    // 그 절의 내용이 아니므로 싣는다
+    const firstOutside = merged.findIndex((part) => part.level <= startLevel);
+    const candidates = namesSection ? (firstOutside < 0 ? [] : merged.slice(firstOutside)) : merged;
+    const listed = candidates.slice(0, MAX_MERGED_NAMES);
 
     const parts = [...startPath, ...listed];
     let trail = '';
     parts.forEach((part, index) => {
       trail += index === 0 ? part.text : `${part.level > parts[index - 1].level ? ' > ' : ' / '}${part.text}`;
     });
-    if (listed.length > 0 && merged.length > listed.length) {
-      trail += ` 외 ${merged.length - listed.length}개`;
+    if (candidates.length > listed.length) {
+      trail += ` 외 ${candidates.length - listed.length}개`;
     }
     if (overview) {
       return {
@@ -919,7 +924,7 @@ export function splitGuideSections(
     }
 
     // 수준 level 이하의 제목 줄에서 도입부(첫 제목 앞의 글)와 소절로 나누고, 짧은 것은 이웃과 묶는다.
-    // floor 이하의 제목 줄은 이 묶음에 붙여 둔 짧은 소절의 제목이다. 그 자리에서도 나누어 다시 묶는다
+    // floor 이하의 제목 줄은 이 묶음에 붙여 둔 소절의 제목이다. 그 자리에서도 나누어 다시 묶는다
     const heads: number[] = [];
     for (let i = from; i < to; i++) {
       const candidate = innerLevel(i);
@@ -936,7 +941,9 @@ export function splitGuideSections(
       estimateTokens(textOf(trimmedSpan(scanned, group.from, upTo))) <=
       contentBudget(nameOf(overview, group.startPath, group.from, upTo, level, true).title);
 
-    if (charsOf(from, heads[0]) > 0) {
+    // 도입부가 비어 있어도 첫 제목 줄이 이 묶음에 붙여 둔 소절의 제목이면 도입부 자리의 묶음을 둔다. 이 묶음의 이름에 실린
+    // 제목(본문이 없는 제목 줄)이 그 소절의 조상이 아니어서, 여기서 이어받지 않으면 어느 청크의 이름에도 남지 않는다
+    if (charsOf(from, heads[0]) > 0 || innerLevel(heads[0]) <= floor) {
       groups.push({ startPath, from, to: heads[0] });
     }
     heads.forEach((head, index) => {
