@@ -421,6 +421,29 @@ export function formatComponentSummary(summary: ComponentSummary): string {
 // ================================================================
 
 /**
+ * 공통컴포넌트 소스 트리가 설치되어 있는지 확인한다.
+ *
+ * 소스 트리는 git 서브모듈이라 저장소만 클론하면 비어 있다. 그대로 두면 sourceFiles,
+ * readSource, ddl, dml 이 평범한 "없음" 응답을 돌려줘 원인을 알 수 없으므로,
+ * 루트에 pom.xml(오버레이 유효성 판정과 같은 표지)이 없으면 설치 방법을 담은 오류로 알린다.
+ */
+export function assertComponentSourcesInstalled(srcRoot: string): void {
+  if (!fs.existsSync(path.join(srcRoot, 'pom.xml'))) {
+    throw new UserFacingError(
+      '공통컴포넌트 소스가 설치되어 있지 않습니다. 저장소를 클론해 쓰는 경우 ' +
+      'git submodule update --init templates/common-components-src 를 실행하세요.'
+    );
+  }
+}
+
+/** 설치되어 있는지 확인한 공통컴포넌트 소스 루트 */
+function requireComponentSrcRoot(): string {
+  const srcRoot = getComponentSrcRoot();
+  assertComponentSourcesInstalled(srcRoot);
+  return srcRoot;
+}
+
+/**
  * 컴포넌트의 소스 파일 목록 조회
  * 패키지명 기반으로 Java, Mapper XML, JSP, CSS, Config, Message 파일을 탐색
  */
@@ -439,15 +462,17 @@ export interface ComponentSourceFiles {
 }
 
 export function getComponentSourceFiles(componentId: string): ComponentSourceFiles | null {
+  const srcRoot = requireComponentSrcRoot();
+
   const db = getDB();
   let component = db.getComponentById(componentId);
-  
+
   if (!component) {
     component = db.getComponentByPackage(componentId);
     if (!component) return null;
   }
 
-  return collectComponentSourceFiles(getComponentSrcRoot(), component);
+  return collectComponentSourceFiles(srcRoot, component);
 }
 
 /**
@@ -637,7 +662,7 @@ export function readComponentSource(
   filePath: string,
   options: ReadComponentSourceOptions = {}
 ): ComponentSourceContent | null {
-  return readSourceFileInRoot(getComponentSrcRoot(), filePath, options);
+  return readSourceFileInRoot(requireComponentSrcRoot(), filePath, options);
 }
 
 /** 소스 루트 안에서 해석한 파일 경로 */
@@ -844,7 +869,9 @@ export interface ComponentDDLResult {
 export function getComponentDDL(componentId: string, dbType: string = 'mysql'): ComponentDDLResult | null {
   // 지원하지 않는 dbType 은 컴포넌트 없음(null)과 구분되도록 오류로 알린다
   const normalizedDbType = requireDbType(dbType);
-  
+  // 소스 트리가 없으면 컴포넌트를 조회하기 전에 알린다
+  const srcRoot = requireComponentSrcRoot();
+
   const db = getDB();
   let component = db.getComponentById(componentId);
   if (!component) {
@@ -876,7 +903,7 @@ export function getComponentDDL(componentId: string, dbType: string = 'mysql'): 
   }
   
   // DDL 파일 읽기
-  const fullDDL = readDbScript(getComponentSrcRoot(), 'ddl', normalizedDbType);
+  const fullDDL = readDbScript(srcRoot, 'ddl', normalizedDbType);
 
   if (fullDDL === null) {
     return {
@@ -977,6 +1004,8 @@ export function getComponentDML(
 ): ComponentDMLResult | null {
   // 지원하지 않는 dbType 은 컴포넌트 없음(null)과 구분되도록 오류로 알린다
   const normalizedDbType = requireDbType(dbType);
+  // 소스 트리가 없으면 컴포넌트를 조회하기 전에 알린다
+  const srcRoot = requireComponentSrcRoot();
 
   const db = getDB();
   let component = db.getComponentById(componentId);
@@ -1013,7 +1042,7 @@ export function getComponentDML(
   }
 
   // DML 파일 읽기
-  const fullDML = readDbScript(getComponentSrcRoot(), 'dml', normalizedDbType);
+  const fullDML = readDbScript(srcRoot, 'dml', normalizedDbType);
 
   if (fullDML === null) {
     return {
