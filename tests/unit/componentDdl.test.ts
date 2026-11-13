@@ -3,13 +3,14 @@
  *
  * 추출기는 줄 단위로 CREATE 문을 모은다. 시작과 끝이 같은 줄에 있는 문(goldilocks·cubrid
  * 스크립트의 한 줄짜리 CREATE INDEX)을 닫지 못하면 뒤따르는 무관한 테이블이 출력에 섞이고
- * 인덱스가 사라진다. 작은 SQL 문자열로 규칙을 고정하고, 저장소에 동봉된 8개 DB 스크립트
- * 전체에 대해 독립적인 문 단위 분할 결과와 비교해 회귀를 막는다.
+ * 인덱스가 사라진다. 뷰(CREATE VIEW)는 테이블 뒤에 따로 세어 출력하고, 요청한 이름 가운데
+ * DDL 을 찾지 못한 것은 이름을 밝혀야 한다. 작은 SQL 문자열로 규칙을 고정하고, 저장소에
+ * 동봉된 8개 DB 스크립트 전체에 대해 독립적인 문 단위 분할 결과와 비교해 회귀를 막는다.
  */
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { extractTableDDLs } from '../../src/tools/commonComponents.js';
+import { extractTableDDLs, formatComponentDDL } from '../../src/tools/commonComponents.js';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SRC_ROOT = path.join(REPO_ROOT, 'templates', 'common-components-src');
@@ -169,6 +170,94 @@ describe('extractTableDDLs — 한 줄짜리 문 처리', () => {
   });
 });
 
+describe('extractTableDDLs — 뷰와 찾지 못한 객체', () => {
+  const sql = [
+    'CREATE TABLE BASE_A (ID CHAR(20) NOT NULL);',
+    '',
+    'CREATE VIEW V_USERS (ID, NAME)',
+    'AS',
+    '\tSELECT ID, NAME',
+    '\tFROM BASE_A',
+    'ORDER BY ID;',
+    '',
+    'CREATE OR REPLACE VIEW V_OTHER AS SELECT ID FROM BASE_A;',
+    '',
+    'CREATE TABLE BASE_B',
+    '(',
+    '\tID CHAR(20) NOT NULL',
+    ');',
+    'CREATE INDEX BASE_B_i01 ON BASE_B (ID ASC);',
+  ].join('\n');
+
+  it('CREATE VIEW 로 정의된 객체를 추출해 테이블 뒤에 출력하고 따로 센다', () => {
+    const result = extractTableDDLs(sql, ['BASE_A', 'V_USERS', 'BASE_B']);
+
+    expect(summarize(result.ddl)).toEqual(['table BASE_A', 'table BASE_B', 'index BASE_B', 'view V_USERS']);
+    expect(result.ddl).toContain('ORDER BY ID;');
+    expect(result.ddl).not.toContain('V_OTHER');
+    expect(result.foundCount).toBe(2);
+    expect(result.viewCount).toBe(1);
+    expect(result.missing).toEqual([]);
+  });
+
+  it('CREATE OR REPLACE VIEW 도 뷰로 추출한다', () => {
+    const result = extractTableDDLs(sql, ['v_other']);
+
+    expect(summarize(result.ddl)).toEqual(['view V_OTHER']);
+    expect(result.foundCount).toBe(0);
+    expect(result.viewCount).toBe(1);
+    expect(result.missing).toEqual([]);
+  });
+
+  it('요청한 이름 가운데 DDL 이 없는 것을 요청한 표기 그대로 돌려준다', () => {
+    const result = extractTableDDLs(sql, ['BASE_A', 'UserConnection', 'v_users', 'COMTNSIEMAP', 'userconnection']);
+
+    expect(result.foundCount).toBe(1);
+    expect(result.viewCount).toBe(1);
+    expect(result.missing).toEqual(['UserConnection', 'COMTNSIEMAP']);
+  });
+
+  it('아무것도 찾지 못하면 요청한 이름 전체가 찾지 못한 객체다', () => {
+    const result = extractTableDDLs(sql, ['NOPE_A', 'NOPE_B']);
+
+    expect(summarize(result.ddl)).toEqual([]);
+    expect(result.foundCount).toBe(0);
+    expect(result.viewCount).toBe(0);
+    expect(result.missing).toEqual(['NOPE_A', 'NOPE_B']);
+  });
+});
+
+describe('formatComponentDDL', () => {
+  const base = {
+    componentId: 'bbs',
+    componentName: '게시판',
+    dbType: 'mysql',
+    tables: ['COMTNBBS', 'COMVNUSERMASTER', 'COMTNSIEMAP', 'UserConnection'],
+    ddl: 'CREATE TABLE COMTNBBS (NTT_ID NUMERIC(20) NOT NULL);',
+    tableCount: 1,
+    viewCount: 1,
+    missing: ['COMTNSIEMAP', 'UserConnection'],
+  };
+
+  it('테이블 수와 뷰 수를 따로 적고 DDL 을 찾지 못한 객체를 나열한다', () => {
+    const text = formatComponentDDL(base);
+
+    expect(text).toContain('## 게시판 DDL (mysql)');
+    expect(text).toContain('- **필요 테이블**: 4개');
+    expect(text).toContain('- **추출된 DDL**: 1개 테이블, 1개 뷰');
+    expect(text).toContain('DDL 을 찾지 못한 객체: COMTNSIEMAP, UserConnection');
+    expect(text).toContain('```sql\nCREATE TABLE COMTNBBS');
+  });
+
+  it('모두 찾았으면 찾지 못한 객체 줄을 넣지 않고, 뷰가 없으면 뷰 수를 적지 않는다', () => {
+    const text = formatComponentDDL({ ...base, tables: ['COMTNBBS'], viewCount: 0, missing: [] });
+
+    expect(text).toContain('- **추출된 DDL**: 1개 테이블\n');
+    expect(text).not.toContain('뷰');
+    expect(text).not.toContain('DDL 을 찾지 못한 객체');
+  });
+});
+
 describe.skipIf(!hasComponentSources)('extractTableDDLs — 동봉 스크립트 회귀 (8개 DB 타입)', () => {
   /** 컴포넌트 메타데이터의 useTables (DB 를 열지 않도록 원본 JSON 을 읽는다) */
   const components: Array<{ id: string; useTables: string[] }> = hasComponentSources
@@ -178,7 +267,7 @@ describe.skipIf(!hasComponentSources)('extractTableDDLs — 동봉 스크립트 
   const readScript = (dbType: string) =>
     fs.readFileSync(path.join(SRC_ROOT, 'script', 'ddl', dbType, `com_DDL_${dbType}.sql`), 'utf-8');
 
-  it.each(DB_TYPES)('%s: 요청한 테이블의 CREATE TABLE·CREATE INDEX 만, 빠짐없이 추출한다', (dbType) => {
+  it.each(DB_TYPES)('%s: 요청한 테이블·뷰의 CREATE 문과 인덱스만, 빠짐없이 추출한다', (dbType) => {
     const script = readScript(dbType);
     const all = parseStatements(script);
     expect(all.filter((s) => s.kind === 'other')).toEqual([]);
@@ -188,19 +277,27 @@ describe.skipIf(!hasComponentSources)('extractTableDDLs — 동봉 스크립트 
       const requested = new Set((component.useTables ?? []).map((t) => t.toUpperCase()));
       if (requested.size === 0) continue;
 
-      const expected = all.filter((s) => s.kind !== 'view' && requested.has(s.target));
+      // 기대 출력: 테이블·인덱스는 스크립트 순서, 뷰는 그 뒤
+      const wanted = all.filter((s) => requested.has(s.target));
+      const expected = [...wanted.filter((s) => s.kind !== 'view'), ...wanted.filter((s) => s.kind === 'view')];
       const result = extractTableDDLs(script, component.useTables);
-      const actual = parseStatements(result.ddl).filter((s) => s.kind !== 'view');
+      const actual = parseStatements(result.ddl);
 
       const expectedTables = expected.filter((s) => s.kind === 'table').length;
+      const expectedViews = expected.filter((s) => s.kind === 'view').length;
+      const defined = new Set(wanted.filter((s) => s.kind !== 'index').map((s) => s.target));
+      const expectedMissing = [...requested].filter((name) => !defined.has(name));
       const same =
         actual.length === expected.length &&
         actual.every((s, i) => s.text === expected[i].text) &&
-        result.foundCount === expectedTables;
+        result.foundCount === expectedTables &&
+        result.viewCount === expectedViews &&
+        JSON.stringify(result.missing.map((name) => name.toUpperCase())) === JSON.stringify(expectedMissing);
       if (!same) {
         const foreign = actual.filter((s) => !requested.has(s.target)).map((s) => s.target);
         mismatches.push(
           `${component.id}: 문 ${actual.length}/${expected.length}개, foundCount ${result.foundCount}/${expectedTables}` +
+            `, viewCount ${result.viewCount}/${expectedViews}, missing ${JSON.stringify(result.missing)}/${JSON.stringify(expectedMissing)}` +
             (foreign.length > 0 ? `, 요청하지 않은 대상 ${[...new Set(foreign)].join(',')}` : ''),
         );
       }
@@ -219,5 +316,27 @@ describe.skipIf(!hasComponentSources)('extractTableDDLs — 동봉 스크립트 
     expect(statements.filter((s) => s.kind === 'index')).toHaveLength(8);
     expect(statements.filter((s) => !requested.has(s.target))).toEqual([]);
     expect(result.foundCount).toBe(12);
+  });
+
+  it.each(DB_TYPES)('%s: 게시판(bbs)의 테이블 19개와 COMVNUSERMASTER 뷰를 추출한다', (dbType) => {
+    const bbs = components.find((c) => c.id === 'bbs');
+    expect(bbs).toBeDefined();
+    const result = extractTableDDLs(readScript(dbType), bbs!.useTables);
+    const statements = parseStatements(result.ddl);
+
+    expect(result.foundCount).toBe(19);
+    expect(result.viewCount).toBe(1);
+    expect(result.missing).toEqual([]);
+    // 뷰는 자신이 조회하는 테이블 뒤, 출력의 맨 끝에 온다
+    expect(statements[statements.length - 1]).toMatchObject({ kind: 'view', target: 'COMVNUSERMASTER' });
+  });
+
+  it('mysql: 스크립트에 정의가 없는 이름(mpm 의 COMTNSIEMAP)은 찾지 못한 객체로 알린다', () => {
+    const mpm = components.find((c) => c.id === 'mpm');
+    expect(mpm).toBeDefined();
+    const result = extractTableDDLs(readScript('mysql'), mpm!.useTables);
+
+    expect(result.missing).toEqual(['COMTNSIEMAP']);
+    expect(result.foundCount + result.viewCount).toBe(new Set(mpm!.useTables).size - 1);
   });
 });

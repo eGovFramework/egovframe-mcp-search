@@ -645,18 +645,27 @@ export function formatComponentSourceFiles(result: ComponentSourceFiles): string
 // Tier 2: DB 스크립트 추출
 // ================================================================
 
-/**
- * 컴포넌트에 필요한 DDL(CREATE TABLE) 추출
- * useTables 기반으로 해당 테이블의 DDL만 골라서 반환
- */
-export function getComponentDDL(componentId: string, dbType: string = 'mysql'): {
+/** getComponentDDL 의 결과 */
+export interface ComponentDDLResult {
   componentId: string;
   componentName: string;
   dbType: string;
+  /** 컴포넌트가 사용하는 테이블·뷰 이름 (use_tables) */
   tables: string[];
   ddl: string;
+  /** DDL 을 추출한 테이블 수 (뷰 제외) */
   tableCount: number;
-} | null {
+  /** DDL 을 추출한 뷰 수 */
+  viewCount: number;
+  /** tables 가운데 스크립트에서 CREATE TABLE / CREATE VIEW 를 찾지 못한 이름 */
+  missing: string[];
+}
+
+/**
+ * 컴포넌트에 필요한 DDL(CREATE TABLE, CREATE VIEW) 추출
+ * useTables 기반으로 해당 테이블·뷰의 DDL만 골라서 반환
+ */
+export function getComponentDDL(componentId: string, dbType: string = 'mysql'): ComponentDDLResult | null {
   const db = getDB();
   let component = db.getComponentById(componentId);
   if (!component) {
@@ -685,6 +694,8 @@ export function getComponentDDL(componentId: string, dbType: string = 'mysql'): 
       tables: [],
       ddl: '-- 이 컴포넌트에는 사용 테이블이 정의되어 있지 않습니다.',
       tableCount: 0,
+      viewCount: 0,
+      missing: [],
     };
   }
   
@@ -700,6 +711,8 @@ export function getComponentDDL(componentId: string, dbType: string = 'mysql'): 
       tables,
       ddl: `-- DDL 파일을 찾을 수 없습니다: ${normalizedDbType}`,
       tableCount: 0,
+      viewCount: 0,
+      missing: [...tables],
     };
   }
   
@@ -713,6 +726,8 @@ export function getComponentDDL(componentId: string, dbType: string = 'mysql'): 
     tables,
     ddl: extractedDDL.ddl,
     tableCount: extractedDDL.foundCount,
+    viewCount: extractedDDL.viewCount,
+    missing: extractedDDL.missing,
   };
 }
 
@@ -807,37 +822,58 @@ function normalizeDbType(dbType: string): DbType | null {
 
 /** 추출 중인 CREATE 문 한 개 */
 interface DdlBlock {
-  kind: 'table' | 'index';
+  kind: 'table' | 'index' | 'view';
+  /** 문이 대상으로 삼는 테이블(뷰) 이름 — 대문자 */
+  target: string;
   lines: string[];
 }
 
 /**
- * CREATE 문의 첫 줄에서 종류를 읽는다.
- * 대상 테이블이 요청 목록에 없거나 추출 대상이 아닌 문이면 null.
+ * CREATE 문의 첫 줄에서 종류와 대상을 읽는다.
+ * 대상이 요청 목록에 없거나 추출 대상이 아닌 문이면 null.
  */
 function openDdlBlock(trimmedLine: string, upperTableNames: Set<string>): DdlBlock | null {
-  // CREATE TABLE TABLENAME
-  const tableMatch = trimmedLine.match(/^CREATE\s+TABLE\s+(\w+)/i);
-  if (tableMatch) {
-    return upperTableNames.has(tableMatch[1].toUpperCase()) ? { kind: 'table', lines: [] } : null;
-  }
-  // CREATE [UNIQUE] INDEX 인덱스명 ON TABLENAME
-  const indexMatch = trimmedLine.match(/^CREATE\s+(?:UNIQUE\s+)?INDEX\s+\S+\s+ON\s+(\w+)/i);
-  if (indexMatch) {
-    return upperTableNames.has(indexMatch[1].toUpperCase()) ? { kind: 'index', lines: [] } : null;
+  const patterns: Array<[DdlBlock['kind'], RegExp]> = [
+    // CREATE TABLE TABLENAME
+    ['table', /^CREATE\s+TABLE\s+(\w+)/i],
+    // CREATE [UNIQUE] INDEX 인덱스명 ON TABLENAME
+    ['index', /^CREATE\s+(?:UNIQUE\s+)?INDEX\s+\S+\s+ON\s+(\w+)/i],
+    // CREATE [OR REPLACE] VIEW VIEWNAME
+    ['view', /^CREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+(\w+)/i],
+  ];
+  for (const [kind, pattern] of patterns) {
+    const match = trimmedLine.match(pattern);
+    if (match) {
+      const target = match[1].toUpperCase();
+      return upperTableNames.has(target) ? { kind, target, lines: [] } : null;
+    }
   }
   return null;
 }
 
+/** extractTableDDLs 의 결과 */
+export interface ExtractedDDL {
+  ddl: string;
+  /** CREATE TABLE 을 찾은 테이블 수 */
+  foundCount: number;
+  /** CREATE VIEW 를 찾은 뷰 수 */
+  viewCount: number;
+  /** 요청한 이름 가운데 CREATE TABLE / CREATE VIEW 를 찾지 못한 것 (요청한 표기 그대로) */
+  missing: string[];
+}
+
 /**
- * 전체 DDL에서 특정 테이블의 CREATE TABLE 문 추출
- * CREATE TABLE ~ ; 블록을 파싱하고 해당 테이블의 INDEX도 포함
+ * 전체 DDL에서 특정 테이블·뷰의 CREATE 문 추출
+ * CREATE TABLE ~ ; 블록을 파싱하고 해당 테이블의 INDEX도 포함한다.
+ * CREATE VIEW 로 정의된 객체는 자신이 조회하는 테이블 뒤에 오도록 맨 끝에 모은다.
  */
-export function extractTableDDLs(fullDDL: string, tableNames: string[]): { ddl: string; foundCount: number } {
+export function extractTableDDLs(fullDDL: string, tableNames: string[]): ExtractedDDL {
   const upperTableNames = new Set(tableNames.map(t => t.toUpperCase()));
   const lines = fullDDL.split('\n');
-  const extractedBlocks: string[] = [];
-  let foundCount = 0;
+  const tableBlocks: string[] = [];
+  const viewBlocks: string[] = [];
+  const foundTables = new Set<string>();
+  const foundViews = new Set<string>();
 
   let block: DdlBlock | null = null;
 
@@ -846,8 +882,14 @@ export function extractTableDDLs(fullDDL: string, tableNames: string[]): { ddl: 
     while (open.lines.length > 0 && open.lines[open.lines.length - 1].trim() === '') {
       open.lines.pop();
     }
-    extractedBlocks.push(open.lines.join('\n'));
-    if (open.kind === 'table') foundCount++;
+    const text = open.lines.join('\n');
+    if (open.kind === 'view') {
+      viewBlocks.push(text);
+      foundViews.add(open.target);
+    } else {
+      tableBlocks.push(text);
+      if (open.kind === 'table') foundTables.add(open.target);
+    }
   };
 
   for (const line of lines) {
@@ -871,18 +913,37 @@ export function extractTableDDLs(fullDDL: string, tableNames: string[]): { ddl: 
   }
   if (block) closeBlock(block);
 
+  // 요청한 이름 가운데 정의를 찾지 못한 것 (대소문자만 다른 중복 요청은 한 번만)
+  const seen = new Set<string>();
+  const missing: string[] = [];
+  for (const name of tableNames) {
+    const upper = name.toUpperCase();
+    if (seen.has(upper)) continue;
+    seen.add(upper);
+    if (!foundTables.has(upper) && !foundViews.has(upper)) missing.push(name);
+  }
+
+  const foundCount = foundTables.size;
+  const viewCount = foundViews.size;
+  const extractedBlocks = [...tableBlocks, ...viewBlocks];
+
   if (extractedBlocks.length === 0) {
     return {
       ddl: `-- 요청된 테이블(${tableNames.join(', ')})에 대한 DDL을 찾을 수 없습니다.`,
       foundCount: 0,
+      viewCount: 0,
+      missing,
     };
   }
-  
-  const header = `-- =============================================\n-- ${tableNames.length}개 테이블 중 ${foundCount}개 DDL 추출\n-- 테이블: ${tableNames.join(', ')}\n-- =============================================\n`;
-  
+
+  const counts = `테이블 ${foundCount}개` + (viewCount > 0 ? `, 뷰 ${viewCount}개` : '');
+  const header = `-- =============================================\n-- 요청 ${seen.size}개 중 ${counts} DDL 추출\n-- 요청: ${tableNames.join(', ')}\n-- =============================================\n`;
+
   return {
     ddl: header + '\n' + extractedBlocks.join('\n\n\n'),
     foundCount,
+    viewCount,
+    missing,
   };
 }
 
@@ -949,20 +1010,21 @@ function extractTableDMLs(fullDML: string, tableNames: string[]): { dml: string;
 /**
  * DDL 결과 포맷팅
  */
-export function formatComponentDDL(result: {
-  componentId: string;
-  componentName: string;
-  dbType: string;
-  tables: string[];
-  ddl: string;
-  tableCount: number;
-}): string {
+export function formatComponentDDL(result: ComponentDDLResult): string {
   let output = `## ${result.componentName} DDL (${result.dbType})\n\n`;
   output += `- **컴포넌트**: ${result.componentId}\n`;
   output += `- **DB 종류**: ${result.dbType}\n`;
   output += `- **필요 테이블**: ${result.tables.length}개\n`;
-  output += `- **추출된 DDL**: ${result.tableCount}개 테이블\n\n`;
-  output += '```sql\n';
+  output += `- **추출된 DDL**: ${result.tableCount}개 테이블`;
+  if (result.viewCount > 0) {
+    output += `, ${result.viewCount}개 뷰`;
+  }
+  output += '\n';
+  if (result.missing.length > 0) {
+    // 스크립트에 정의가 없는 이름을 밝혀, 빠진 객체를 호출자가 알 수 있게 한다
+    output += `- DDL 을 찾지 못한 객체: ${result.missing.join(', ')}\n`;
+  }
+  output += '\n```sql\n';
   output += result.ddl;
   output += '\n```\n';
   
