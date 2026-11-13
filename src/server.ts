@@ -17,7 +17,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { COMPONENT_ACTIONS, egovSearchKnowledge } from "./tools/egovSearchKnowledge.js";
+import Database from "better-sqlite3";
+import { toUserMessage } from "./utils/errors.js";
+import { COMPONENT_ACTIONS, runEgovSearchKnowledge } from "./tools/egovSearchKnowledge.js";
 
 const server = new McpServer({
   name: "egovframe-mcp-search",
@@ -77,22 +79,33 @@ server.registerTool(
     },
   },
   async (args) => {
-    try {
-      const result = await egovSearchKnowledge(args as any);
-      return { content: [{ type: "text", text: result }] };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`[egovframe-mcp-search] egov_search_knowledge failed:`, error);
-      return {
-        content: [{ type: "text", text: message }],
-        isError: true,
-      };
-    }
+    const result = await runEgovSearchKnowledge(args);
+    return {
+      content: [{ type: "text", text: result.text }],
+      ...(result.isError ? { isError: true } : {}),
+    };
   },
 );
 
+/**
+ * 번들된 네이티브 모듈(better-sqlite3)이 현재 Node 에서 로드되는지 시작 시점에 한 번 확인한다.
+ *
+ * 배포 tgz 의 바이너리는 패키징 시점의 Node ABI(Node 22)에 고정되어 있어, 다른 메이저 버전에서는
+ * 서버는 정상적으로 뜨지만 첫 SQLite 조회에서야 실패한다. 원인을 바로 알 수 있도록 stderr 에
+ * 한 줄을 남기고, 서버는 계속 띄운다 (가이드 검색 등 SQLite 를 쓰지 않는 기능은 동작한다).
+ */
+function warnIfNativeModuleUnavailable(): void {
+  try {
+    new Database(":memory:").close();
+  } catch (error) {
+    console.error(`[egovframe-mcp-search] ⚠ ${toUserMessage(error)}`);
+  }
+}
+
 async function main() {
   try {
+    warnIfNativeModuleUnavailable();
+
     console.error("[egovframe-mcp-search] Creating transport...");
     const transport = new StdioServerTransport();
 

@@ -7,6 +7,7 @@
  */
 
 import { getInitializedGuideManager } from "../rag/guideManager.js";
+import { UserFacingError, toUserMessage } from "../utils/errors.js";
 import { searchKnowledge } from "./knowledge.js";
 import { searchCompatibleSoftware } from "./compatibility.js";
 import {
@@ -83,7 +84,7 @@ function formatJson(title: string, value: unknown): string {
 
 function requireQuery(query: string | undefined, scope: string): string {
   if (!query) {
-    throw new Error(`query is required for ${scope} search`);
+    throw new UserFacingError(`query is required for ${scope} search`);
   }
   return query;
 }
@@ -99,47 +100,31 @@ function getLimit(args: EgovSearchKnowledgeArgs, fallback: number): number {
 async function searchGuide(args: EgovSearchKnowledgeArgs): Promise<string> {
   const filters = getFilters(args);
   const query = requireQuery(args.query, "guide");
-  try {
-    const guideManager = await getInitializedGuideManager();
-    const results = await guideManager.searchGuide(query, {
-      limit: getLimit(args, 5),
-      layer: asString(filters.layer),
-      category: asString(filters.category),
-    });
+  const guideManager = await getInitializedGuideManager();
+  const results = await guideManager.searchGuide(query, {
+    limit: getLimit(args, 5),
+    layer: asString(filters.layer),
+    category: asString(filters.category),
+  });
 
-    const formatted = results.map((result, idx) => {
-      const baseUrl = "https://www.egovframe.go.kr/wiki/doku.php";
-      const docUrl = result.url ? `${baseUrl}?id=egovframework:rte${result.url.replaceAll("/", ":")}` : "";
-      return [
-        `### ${idx + 1}. ${result.title}`,
-        `- **문서**: ${result.docTitle}`,
-        `- **분류**: ${result.layer} > ${result.category}`,
-        `- **소스**: ${result.source}`,
-        ...(docUrl ? [`- **URL**: ${docUrl}`] : []),
-        `- **유사도**: ${(1 - result.score).toFixed(4)}`,
-        "",
-        result.content.length > 1500 ? `${result.content.substring(0, 1500)}\n\n... (truncated)` : result.content,
-      ].join("\n");
-    });
+  const formatted = results.map((result, idx) => {
+    const baseUrl = "https://www.egovframe.go.kr/wiki/doku.php";
+    const docUrl = result.url ? `${baseUrl}?id=egovframework:rte${result.url.replaceAll("/", ":")}` : "";
+    return [
+      `### ${idx + 1}. ${result.title}`,
+      `- **문서**: ${result.docTitle}`,
+      `- **분류**: ${result.layer} > ${result.category}`,
+      `- **소스**: ${result.source}`,
+      ...(docUrl ? [`- **URL**: ${docUrl}`] : []),
+      `- **유사도**: ${(1 - result.score).toFixed(4)}`,
+      "",
+      result.content.length > 1500 ? `${result.content.substring(0, 1500)}\n\n... (truncated)` : result.content,
+    ].join("\n");
+  });
 
-    return formatted.length > 0
-      ? `## eGovFrame 가이드 검색 결과 (${results.length}건)\n\n${formatted.join("\n\n---\n\n")}`
-      : "검색 결과가 없습니다. 다른 키워드로 검색해 보세요.";
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    if (/lance|LanceError|not found:/i.test(msg)) {
-      return [
-        "## eGovFrame 가이드 검색",
-        "",
-        "공식 가이드 벡터 인덱스(LanceDB)를 읽지 못했습니다. `knowledge-base/egovframe_guide.lance`가 없거나 손상·불완전한 경우에 이런 오류가 납니다.",
-        "",
-        "프로젝트 루트에서 `npm run build-index`로 인덱스를 다시 생성한 뒤 MCP를 재시작해 주세요.",
-        "",
-        `_기술 정보: ${msg}_`,
-      ].join("\n");
-    }
-    throw error;
-  }
+  return formatted.length > 0
+    ? `## eGovFrame 가이드 검색 결과 (${results.length}건)\n\n${formatted.join("\n\n---\n\n")}`
+    : "검색 결과가 없습니다. 다른 키워드로 검색해 보세요.";
 }
 
 async function searchPersonalKnowledge(args: EgovSearchKnowledgeArgs): Promise<string> {
@@ -167,7 +152,7 @@ function getComponentId(filters: Record<string, unknown>): string | undefined {
 function requireComponentId(filters: Record<string, unknown>, purpose: string): string {
   const componentId = getComponentId(filters);
   if (!componentId) {
-    throw new Error(`filters.componentId is required for ${purpose}`);
+    throw new UserFacingError(`filters.componentId is required for ${purpose}`);
   }
   return componentId;
 }
@@ -186,7 +171,7 @@ function formatComponentDependencyLookup(filters: Record<string, unknown>): stri
     ...new Set([...(asStringArray(filters.componentIds) ?? []), ...(single ? [single] : [])]),
   ];
   if (componentIds.length === 0) {
-    throw new Error(
+    throw new UserFacingError(
       "filters.componentIds (or filters.componentId) is required for component dependency resolution",
     );
   }
@@ -202,7 +187,7 @@ function formatComponentSourceFileLookup(filters: Record<string, unknown>): stri
 function formatComponentSourceRead(filters: Record<string, unknown>): string {
   const filePath = asString(filters.filePath);
   if (!filePath) {
-    throw new Error("filters.filePath is required for component source reading");
+    throw new UserFacingError("filters.filePath is required for component source reading");
   }
   const result = readComponentSource(filePath);
   if (!result) {
@@ -267,7 +252,7 @@ function searchComponentsGateway(args: EgovSearchKnowledgeArgs): string {
   }
 
   if (!isComponentAction(action)) {
-    throw new Error(
+    throw new UserFacingError(
       `Unsupported action for components scope: ${action}. Supported actions: ${COMPONENT_ACTIONS.join(", ")}`,
     );
   }
@@ -317,7 +302,8 @@ async function searchAll(args: EgovSearchKnowledgeArgs): Promise<string> {
       try {
         return await (run as () => Promise<string>)();
       } catch (error) {
-        return `## ${title}\n\n검색 중 오류가 발생했습니다: ${error instanceof Error ? error.message : String(error)}`;
+        logToolError(error);
+        return `## ${title}\n\n검색 중 오류가 발생했습니다: ${toUserMessage(error)}`;
       }
     })
   );
@@ -378,6 +364,34 @@ export async function egovSearchKnowledge(args: EgovSearchKnowledgeArgs): Promis
     case "auto":
       return egovSearchKnowledge({ ...args, scope: inferScope(args) });
     default:
-      throw new Error(`Unsupported egov_search_knowledge scope: ${scope}`);
+      throw new UserFacingError(`Unsupported egov_search_knowledge scope: ${scope}`);
+  }
+}
+
+/** 호출자 입력이 원인인 오류는 한 줄만, 그 밖의 오류는 원인 추적을 위해 전체를 stderr 에 남긴다. */
+function logToolError(error: unknown): void {
+  if (error instanceof UserFacingError) {
+    console.error(`[egovframe-mcp-search] egov_search_knowledge rejected: ${error.message}`);
+    return;
+  }
+  console.error("[egovframe-mcp-search] egov_search_knowledge failed:", error);
+}
+
+/** MCP 도구 응답의 본문과 오류 여부. */
+export interface EgovSearchKnowledgeResult {
+  text: string;
+  isError: boolean;
+}
+
+/**
+ * MCP 핸들러 본체. egovSearchKnowledge 를 실행하고, 오류는 도구 응답에 실어도 되는 문구로 바꾼다.
+ * 스택 트레이스·절대 경로·내부 SQL 은 응답에 넣지 않고 stderr 에만 남긴다.
+ */
+export async function runEgovSearchKnowledge(args: EgovSearchKnowledgeArgs): Promise<EgovSearchKnowledgeResult> {
+  try {
+    return { text: await egovSearchKnowledge(args), isError: false };
+  } catch (error) {
+    logToolError(error);
+    return { text: toUserMessage(error), isError: true };
   }
 }
