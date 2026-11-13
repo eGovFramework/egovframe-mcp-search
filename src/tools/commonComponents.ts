@@ -805,67 +805,72 @@ function normalizeDbType(dbType: string): DbType | null {
   return aliases[normalized] || null;
 }
 
+/** 추출 중인 CREATE 문 한 개 */
+interface DdlBlock {
+  kind: 'table' | 'index';
+  lines: string[];
+}
+
+/**
+ * CREATE 문의 첫 줄에서 종류를 읽는다.
+ * 대상 테이블이 요청 목록에 없거나 추출 대상이 아닌 문이면 null.
+ */
+function openDdlBlock(trimmedLine: string, upperTableNames: Set<string>): DdlBlock | null {
+  // CREATE TABLE TABLENAME
+  const tableMatch = trimmedLine.match(/^CREATE\s+TABLE\s+(\w+)/i);
+  if (tableMatch) {
+    return upperTableNames.has(tableMatch[1].toUpperCase()) ? { kind: 'table', lines: [] } : null;
+  }
+  // CREATE [UNIQUE] INDEX 인덱스명 ON TABLENAME
+  const indexMatch = trimmedLine.match(/^CREATE\s+(?:UNIQUE\s+)?INDEX\s+\S+\s+ON\s+(\w+)/i);
+  if (indexMatch) {
+    return upperTableNames.has(indexMatch[1].toUpperCase()) ? { kind: 'index', lines: [] } : null;
+  }
+  return null;
+}
+
 /**
  * 전체 DDL에서 특정 테이블의 CREATE TABLE 문 추출
  * CREATE TABLE ~ ; 블록을 파싱하고 해당 테이블의 INDEX도 포함
  */
-function extractTableDDLs(fullDDL: string, tableNames: string[]): { ddl: string; foundCount: number } {
+export function extractTableDDLs(fullDDL: string, tableNames: string[]): { ddl: string; foundCount: number } {
   const upperTableNames = new Set(tableNames.map(t => t.toUpperCase()));
   const lines = fullDDL.split('\n');
   const extractedBlocks: string[] = [];
   let foundCount = 0;
-  
-  let currentBlock: string[] = [];
-  let currentTable = '';
-  let inCreateTable = false;
-  let inCreateIndex = false;
-  
+
+  let block: DdlBlock | null = null;
+
+  const closeBlock = (open: DdlBlock) => {
+    // 종결자 없이 닫히는 블록은 뒤따른 빈 줄을 떼어 낸다
+    while (open.lines.length > 0 && open.lines[open.lines.length - 1].trim() === '') {
+      open.lines.pop();
+    }
+    extractedBlocks.push(open.lines.join('\n'));
+    if (open.kind === 'table') foundCount++;
+  };
+
   for (const line of lines) {
     const trimmedLine = line.trim();
-    const upperLine = trimmedLine.toUpperCase();
-    
-    // CREATE TABLE 시작 감지
-    if (upperLine.startsWith('CREATE TABLE') || upperLine.startsWith('CREATE UNIQUE INDEX') || upperLine.startsWith('CREATE INDEX')) {
-      if (upperLine.startsWith('CREATE TABLE')) {
-        // CREATE TABLE TABLENAME 에서 테이블명 추출
-        const match = trimmedLine.match(/CREATE\s+TABLE\s+(\w+)/i);
-        if (match) {
-          currentTable = match[1].toUpperCase();
-          inCreateTable = upperTableNames.has(currentTable);
-          if (inCreateTable) {
-            currentBlock = [line];
-            continue;
-          }
-        }
-      } else {
-        // CREATE [UNIQUE] INDEX ... ON TABLENAME
-        const match = trimmedLine.match(/ON\s+(\w+)/i);
-        if (match) {
-          const indexTable = match[1].toUpperCase();
-          inCreateIndex = upperTableNames.has(indexTable);
-          if (inCreateIndex) {
-            currentBlock = [line];
-            continue;
-          }
-        }
-      }
+
+    // 새 CREATE 문 시작 감지
+    if (/^CREATE\s/i.test(trimmedLine)) {
+      // 종결자를 만나지 못해 열려 있던 블록은 여기서 닫는다 (다음 문을 삼키지 않도록)
+      if (block) closeBlock(block);
+      block = openDdlBlock(trimmedLine, upperTableNames);
     }
-    
-    // 현재 블록에 포함
-    if (inCreateTable || inCreateIndex) {
-      currentBlock.push(line);
-      
-      // 세미콜론으로 문 종료 감지
-      if (trimmedLine.endsWith(';')) {
-        extractedBlocks.push(currentBlock.join('\n'));
-        if (inCreateTable) foundCount++;
-        currentBlock = [];
-        inCreateTable = false;
-        inCreateIndex = false;
-      }
+
+    if (!block) continue;
+    block.lines.push(line);
+
+    // 세미콜론으로 문 종료 감지 — 블록을 연 줄도 검사한다 (시작과 끝이 같은 줄인 문)
+    if (trimmedLine.endsWith(';')) {
+      closeBlock(block);
+      block = null;
     }
   }
-  
+  if (block) closeBlock(block);
+
   if (extractedBlocks.length === 0) {
     return {
       ddl: `-- 요청된 테이블(${tableNames.join(', ')})에 대한 DDL을 찾을 수 없습니다.`,
