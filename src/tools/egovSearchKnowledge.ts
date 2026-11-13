@@ -12,7 +12,12 @@ import { GUIDE_SITE_BASE_URL } from "../kb/guideSite.js";
 import { UserFacingError, isIndexReadFailure, toUserMessage } from "../utils/errors.js";
 import { markOverlayUnusable, type ResourceName } from "../utils/dataPaths.js";
 import { extractSearchTerms } from "../utils/fts5Query.js";
-import { KNOWLEDGE_TYPES, type KnowledgeType } from "../types/knowledge.js";
+import {
+  INDEXED_KNOWLEDGE_TAGS,
+  INDEXED_KNOWLEDGE_TYPES,
+  KNOWLEDGE_TYPES,
+  type KnowledgeType,
+} from "../types/knowledge.js";
 import type { CommonComponent } from "../types/database.js";
 import { searchKnowledge } from "./knowledge.js";
 import { searchCompatibleSoftware } from "./compatibility.js";
@@ -618,6 +623,9 @@ async function searchDeveloperKnowledge(args: EgovSearchKnowledgeArgs, options: 
   const query = sortRecent ? undefined : requireQuery(args.query, "knowledge");
   const limit = resolveLimit(args, "knowledge", options);
   const excerptLength = options.knowledgeExcerptLength;
+  const type = asString(filters.type);
+  // 색인된 태그는 모두 소문자이므로 소문자로 바꿔 대응시킨다 (대소문자만 다른 태그로 0건이 되지 않게 한다).
+  const tags = asStringArray(filters.tags)?.map((tag) => tag.toLowerCase());
   const result = await withIndexRetry("developer_knowledge", "개발자 지식", resetHybridManager, () =>
     searchKnowledge({
       query,
@@ -625,8 +633,8 @@ async function searchDeveloperKnowledge(args: EgovSearchKnowledgeArgs, options: 
       sort: sortRecent ? "recent" : "relevance",
       limit: limit.value,
       // type 값이 유효한지는 지식 매니저가 검증한다 (허용되지 않은 값이면 쓸 수 있는 값을 알려 준다).
-      type: asString(filters.type) as KnowledgeType | undefined,
-      tags: asStringArray(filters.tags),
+      type: type as KnowledgeType | undefined,
+      tags,
       minImportance: asNumber(filters.minImportance) as 1 | 2 | 3 | 4 | 5 | undefined,
       verifiedOnly: asBoolean(filters.verifiedOnly),
       excerptLength,
@@ -648,11 +656,46 @@ async function searchDeveloperKnowledge(args: EgovSearchKnowledgeArgs, options: 
     formatJson("개발자 지식 검색 결과", result),
     limit.note,
     excerptNote,
+    ...(countKnowledgeResults(result) === 0 ? unknownKnowledgeFilterNotes(type, tags) : []),
     ignoredFiltersNote(filters, usedKeys, options, {
       knowledgeScope: 'knowledgeScope 은(는) sort 가 "recent" 이면 쓰이지 않습니다.',
     }),
     unusedParamsNote(args, { query: !sortRecent, limit: true }, options),
   );
+}
+
+/** 개발자 지식 조회 결과에 든 지식 항목의 수. 결과의 꼴을 알 수 없으면 undefined. */
+function countKnowledgeResults(result: unknown): number | undefined {
+  const { results, knowledge } = result as { results?: unknown; knowledge?: unknown };
+  if (Array.isArray(results)) {
+    return results.length;
+  }
+  return Array.isArray(knowledge) ? knowledge.length : undefined;
+}
+
+/**
+ * 개발자 지식 결과가 0건일 때, 데이터에 없는 태그나 type 을 준 것이 원인이면 쓸 수 있는 값을 알린다.
+ * (태그와 type 은 색인 코드가 정한 값만 데이터에 들어 있다.)
+ */
+function unknownKnowledgeFilterNotes(type: string | undefined, tags: string[] | undefined): string[] {
+  const notes: string[] = [];
+
+  const unknownTags = (tags ?? []).filter((tag) => !(INDEXED_KNOWLEDGE_TAGS as readonly string[]).includes(tag));
+  if (unknownTags.length > 0) {
+    notes.push(
+      `> filters.tags 의 ${unknownTags.map((tag) => `"${tag}"`).join(", ")} 은(는) 데이터에 없는 태그입니다. ` +
+        `데이터에 있는 태그: ${INDEXED_KNOWLEDGE_TAGS.join(", ")} (대소문자는 가리지 않습니다).`,
+    );
+  }
+
+  if (type !== undefined && !(INDEXED_KNOWLEDGE_TYPES as readonly string[]).includes(type)) {
+    notes.push(
+      `> filters.type "${type}" 인 항목은 데이터에 없습니다. 데이터에 있는 type: ` +
+        "solution (묻고답하기 Q&A, FAQ), best-practice (적용가이드 PDF).",
+    );
+  }
+
+  return notes;
 }
 
 /**

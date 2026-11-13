@@ -1111,6 +1111,41 @@ describe("integration — egov_search_knowledge 개발자 지식·통합 검색"
     expect(body.count).toBe(2);
   });
 
+  it("tags 는 대소문자를 가리지 않고 대응시킨다", async () => {
+    const res = await search({ scope: "knowledge", filters: { sort: "recent", tags: ["FAQ"] }, limit: 1 });
+    expect(res.isError).toBe(false);
+    const body = parseJsonBlock(res.text);
+    expect(body.count).toBe(1);
+    expect(body.results[0].tags).toContain("faq");
+  });
+
+  it("데이터에 없는 태그로 0건이면 쓸 수 있는 태그를 알려 준다", async () => {
+    const res = await search({ scope: "knowledge", filters: { sort: "recent", tags: ["mybatis"] }, limit: 1 });
+    expect(res.isError).toBe(false);
+    expect(parseJsonBlock(res.text).count).toBe(0);
+    const note = res.text.split("\n").find((line) => line.includes("filters.tags")) ?? "";
+    expect(note).toContain("mybatis");
+    expect(note).toContain("faq");
+    expect(note).toContain("qa");
+  });
+
+  it("데이터에 행이 없는 type 으로 0건이면 데이터에 있는 type 을 알려 준다", async () => {
+    const res = await search({ scope: "knowledge", filters: { sort: "recent", type: "tip" }, limit: 1 });
+    expect(res.isError).toBe(false);
+    expect(parseJsonBlock(res.text).count).toBe(0);
+    const note = res.text.split("\n").find((line) => line.includes("filters.type")) ?? "";
+    expect(note).toContain("solution");
+    expect(note).toContain("best-practice");
+  });
+
+  it("결과가 있으면 태그와 type 안내를 붙이지 않는다", async () => {
+    const res = await search({ scope: "knowledge", filters: { sort: "recent", tags: ["faq"], type: "solution" }, limit: 1 });
+    expect(res.isError).toBe(false);
+    expect(parseJsonBlock(res.text).count).toBe(1);
+    expect(res.text).not.toContain("filters.tags");
+    expect(res.text).not.toContain("filters.type");
+  });
+
   it.skipIf(!hasEmbeddingModel())("통합 검색의 개발자 지식 섹션은 id 와 본문 발췌를 싣는다", async () => {
     const res = await search({ scope: "all", query: "로그인이 안됩니다" });
     expect(res.isError).toBe(false);

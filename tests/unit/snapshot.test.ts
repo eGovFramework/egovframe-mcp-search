@@ -6,6 +6,7 @@ import fs from 'fs-extra';
 import path from 'node:path';
 import os from 'node:os';
 import XLSX from 'xlsx';
+import { INDEXED_KNOWLEDGE_TAGS, INDEXED_KNOWLEDGE_TYPES } from '../../src/types/knowledge.js';
 import {
   parseSnapshotFile,
   writeSnapshotFile,
@@ -180,6 +181,19 @@ describe('snapshotRowToKnowledgeInput — 민감한 식별번호', () => {
 });
 
 describe('snapshotRowToKnowledgeInput', () => {
+  it('붙이는 태그와 type 은 없는 값을 안내할 때 쓰는 목록(INDEXED_KNOWLEDGE_*)에 들어 있다', () => {
+    for (const kind of ['qa', 'faq'] as const) {
+      const input = snapshotRowToKnowledgeInput({ ...ROW_A, kind });
+
+      expect(input.tags.length).toBeGreaterThan(0);
+      for (const tag of input.tags) {
+        expect(INDEXED_KNOWLEDGE_TAGS as readonly string[], tag).toContain(tag);
+        expect(tag, tag).toBe(tag.toLowerCase());
+      }
+      expect(INDEXED_KNOWLEDGE_TYPES as readonly string[]).toContain(input.type);
+    }
+  });
+
   it('기존 xlsx 인덱싱과 동일한 매핑을 유지한다', () => {
     const input = snapshotRowToKnowledgeInput(ROW_A);
     expect(input.type).toBe('solution');

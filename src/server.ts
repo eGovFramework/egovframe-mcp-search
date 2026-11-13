@@ -99,13 +99,15 @@ const filtersSchema = z.strictObject({
     .enum(KNOWLEDGE_TYPES)
     .optional()
     .describe(
-      "knowledge: entry type. The bundled data holds only solution (portal Q&A and FAQ) and best-practice (application guide PDF).",
+      "knowledge: entry type. The data holds only solution (portal Q&A and FAQ) and best-practice (application guide PDF); any other type returns no result and the response says so.",
     ),
   tags: z
     .array(z.string().max(100))
     .max(20)
     .optional()
-    .describe("knowledge: keep entries that carry any of these tags (at most 20). Bundled tags: qa, faq, guide, pdf."),
+    .describe(
+      "knowledge: keep entries that carry any of these tags (at most 20, case-insensitive). Tags in the data: egovframe, developer_knowledge, qa, faq, guide, pdf. When a tag that is not in the data leaves no result, the response lists these tags.",
+    ),
   minImportance: z
     .number()
     .int()

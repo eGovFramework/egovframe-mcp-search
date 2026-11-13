@@ -21,6 +21,16 @@ export function isKnowledgeType(value: unknown): value is KnowledgeType {
   return (KNOWLEDGE_TYPES as readonly unknown[]).includes(value);
 }
 
+/**
+ * 색인 코드가 개발자 지식에 붙이는 태그 (모두 소문자).
+ * Q&A·FAQ 행은 kb/snapshot 의 snapshotRowToKnowledgeInput 이, 적용가이드 PDF 청크는 scripts/buildIndex 의
+ * readPdfKnowledge 가 붙인다. 없는 태그를 준 호출에 쓸 수 있는 값을 안내할 때 쓴다.
+ */
+export const INDEXED_KNOWLEDGE_TAGS = ['egovframe', 'developer_knowledge', 'qa', 'faq', 'guide', 'pdf'] as const;
+
+/** 색인 코드가 만드는 개발자 지식의 type (Q&A·FAQ 는 solution, 적용가이드 PDF 는 best-practice). */
+export const INDEXED_KNOWLEDGE_TYPES = ['solution', 'best-practice'] as const satisfies readonly KnowledgeType[];
+
 // 개발자 지식 문서
 export interface DeveloperKnowledge {
   id: string;
