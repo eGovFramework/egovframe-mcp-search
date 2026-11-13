@@ -12,6 +12,37 @@ function paragraphOfLines(label: string, lineCount: number, lineLength: number):
   return Array.from({ length: lineCount }, (_, i) => `${label}${i + 1} `.padEnd(lineLength, "가")).join("\n");
 }
 
+describe("chunkPdfText — 본문 정리", () => {
+  it("꺾쇠로 감싼 글자를 지우지 않는다", () => {
+    // PDF 본문의 꺾쇠는 HTML 태그가 아니다. 태그로 보고 지우면 "<" 부터 다음 ">" 까지가 통째로 사라진다
+    const text = [
+      "<Ver. 5.0>",
+      "185 요소기술 포맷/계산/변환 특수문자열처리",
+      "HTML 특수문자를 처리하는 기능을 제",
+      "공함( '<' 문자열을 '&LT;'로, '&' 문자",
+      "열을 '&amp' 로 변환하여 처리)",
+      "186 요소기술 포맷/계산/변환 환율계산",
+      "< 표준프레임워크 세부 적용 기준 >",
+    ].join("\n");
+
+    expect(chunkPdfText(text)).toEqual([text]);
+  });
+
+  it("HTML 엔티티와 태그 모양의 글자를 바꾸지 않는다", () => {
+    const text = "A &amp; B 는 &lt;tag&gt; 와 &quot;인용&quot;, &nbsp; 를 쓴다. 줄바꿈 태그 <br> 와 <br /> 도 글자 그대로다.";
+
+    expect(chunkPdfText(text)).toEqual([text]);
+  });
+
+  it("공백을 정리한다: 이어진 공백과 탭은 한 칸으로, 줄바꿈은 LF 로, 이어진 빈 줄은 하나로 줄인다", () => {
+    const text = "  정보시스템 \t구축 \t발주자를   위한\r\n표준프레임워크 \t적용가이드\r\n\r\n\r\n\r\n-- 1 of 113 --\n\n\n목 \t차  ";
+
+    expect(chunkPdfText(text)).toEqual([
+      "정보시스템 구축 발주자를 위한\n표준프레임워크 적용가이드\n\n-- 1 of 113 --\n\n목 차",
+    ]);
+  });
+});
+
 describe("pdfTextToKnowledge — 청크를 개발자 지식 입력으로 만든다", () => {
   const pdfPath = path.join(TEMPLATES_DIR, "developer_knowledge", "application-guide.pdf");
   // 어느 상한에서도 청크가 여러 개 나오도록 1,000자 문단을 여섯 개 둔다
