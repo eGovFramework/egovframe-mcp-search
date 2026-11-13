@@ -22,6 +22,8 @@ import {
   writeOverlaySqliteBase,
   writeOverlayStateAtomic,
   readOverlayState,
+  markOverlayUnusable,
+  resetUnusableOverlays,
   type StateFile,
 } from '../../src/utils/dataPaths.js';
 import { getKnowledgeBasePath } from '../../src/utils/projectPath.js';
@@ -45,6 +47,7 @@ describe('dataPaths overlay resolution', () => {
       process.env.EGOV_MCP_DATA_DIR = savedEnv;
     }
     await fs.remove(tmpDir);
+    resetUnusableOverlays();
   });
 
   /** 오버레이에 리소스 디렉토리 + 마커를 만들고 state.json 을 기록한다 */
@@ -113,6 +116,20 @@ describe('dataPaths overlay resolution', () => {
     const dir = await seedOverlay('guide', 'egovframe_guide.lance');
     await fs.remove(path.join(dir, 'egovframe_guide.lance'));
     expect(resolveGuideDbDir(REPO_ROOT)).toBe(getKnowledgeBasePath(REPO_ROOT));
+  });
+
+  it('읽지 못한 오버레이로 표시하면 그 리소스만 번들로 폴백한다', async () => {
+    const guideDir = await seedOverlay('guide', 'egovframe_guide.lance');
+    expect(resolveGuideDbDir(REPO_ROOT)).toBe(guideDir);
+
+    // 마커는 있지만 테이블을 읽을 수 없는 오버레이: 서버가 읽기에 실패한 뒤 표시한다
+    expect(markOverlayUnusable('guide', REPO_ROOT)).toBe(true);
+    expect(resolveGuideDbDir(REPO_ROOT)).toBe(getKnowledgeBasePath(REPO_ROOT));
+    expect(resolveResource('guide', REPO_ROOT).source).toBe('bundled');
+
+    // 이미 번들을 쓰고 있으면 더 물러날 곳이 없다
+    expect(markOverlayUnusable('guide', REPO_ROOT)).toBe(false);
+    expect(markOverlayUnusable('developer_knowledge', REPO_ROOT)).toBe(false);
   });
 
   it('common_components 는 임베딩 모델과 무관하게 유효하다', async () => {

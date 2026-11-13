@@ -55,6 +55,7 @@ describe("runEgovSearchKnowledge 의 오류 응답", () => {
     vi.doUnmock("../../src/tools/knowledge.js");
     vi.doUnmock("../../src/tools/compatibility.js");
     vi.doUnmock("../../src/tools/commonComponents.js");
+    vi.doUnmock("../../src/database/hybridManager.js");
     vi.restoreAllMocks();
   });
 
@@ -82,6 +83,7 @@ describe("runEgovSearchKnowledge 의 오류 응답", () => {
       getInitializedGuideManager: async () => {
         throw new Fresh("가이드 인덱스 없음");
       },
+      resetGuideManager: vi.fn(),
     }));
     vi.doMock("../../src/tools/knowledge.js", () => ({ searchKnowledge: async () => failing("지식 인덱스 없음")() }));
     vi.doMock("../../src/tools/compatibility.js", () => ({
@@ -109,6 +111,7 @@ describe("runEgovSearchKnowledge 의 오류 응답", () => {
       getInitializedGuideManager: async () => {
         throw new Fresh("가이드 인덱스 없음");
       },
+      resetGuideManager: vi.fn(),
     }));
     vi.doMock("../../src/tools/knowledge.js", () => ({
       searchKnowledge: async () => ({ success: true, resultCount: 0, results: [] }),
@@ -129,12 +132,91 @@ describe("runEgovSearchKnowledge 의 오류 응답", () => {
     expect(result.text).toContain("## 호환 소프트웨어 검색 결과");
   });
 
+  /** LanceDB 가 데이터 파일을 찾지 못했을 때 던지는 오류와 같은 꼴 */
+  const lanceIoError = () =>
+    new Error("lance error: LanceError(IO): External error: Not found: /Users/someone/kb/egovframe_guide.lance/data/x.lance");
+
+  it("가이드 인덱스를 읽지 못하면 연결을 버리고 한 번 다시 시도한다", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const resetGuideManager = vi.fn();
+    const searchGuide = vi
+      .fn()
+      .mockRejectedValueOnce(lanceIoError())
+      .mockResolvedValueOnce([]);
+    vi.doMock("../../src/rag/guideManager.js", () => ({
+      getInitializedGuideManager: async () => ({ searchGuide }),
+      resetGuideManager,
+    }));
+
+    const { runEgovSearchKnowledge } = await import("../../src/tools/egovSearchKnowledge.js");
+    const result = await runEgovSearchKnowledge({ scope: "guide", query: "트랜잭션" });
+
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("가이드 검색 결과 (0건)");
+    expect(searchGuide).toHaveBeenCalledTimes(2);
+    expect(resetGuideManager).toHaveBeenCalledTimes(1);
+  });
+
+  it("다시 시도해도 읽지 못하면 조치 방법을 알려 준다 (경로는 싣지 않는다)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const searchGuide = vi.fn().mockRejectedValue(lanceIoError());
+    vi.doMock("../../src/rag/guideManager.js", () => ({
+      getInitializedGuideManager: async () => ({ searchGuide }),
+      resetGuideManager: vi.fn(),
+    }));
+
+    const { runEgovSearchKnowledge } = await import("../../src/tools/egovSearchKnowledge.js");
+    const result = await runEgovSearchKnowledge({ scope: "guide", query: "트랜잭션" });
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("공식 가이드 인덱스를 읽지 못했습니다");
+    expect(result.text).toContain("재시작");
+    expect(result.text).not.toContain("/Users/someone");
+    expect(searchGuide).toHaveBeenCalledTimes(2);
+  });
+
+  it("인덱스와 무관한 오류는 다시 시도하지 않고 고정 문구로 응답한다", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const searchGuide = vi.fn().mockRejectedValue(new TypeError("Cannot read properties of undefined"));
+    vi.doMock("../../src/rag/guideManager.js", () => ({
+      getInitializedGuideManager: async () => ({ searchGuide }),
+      resetGuideManager: vi.fn(),
+    }));
+
+    const { runEgovSearchKnowledge } = await import("../../src/tools/egovSearchKnowledge.js");
+    const result = await runEgovSearchKnowledge({ scope: "guide", query: "트랜잭션" });
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toBe(INTERNAL_ERROR_MESSAGE);
+    expect(searchGuide).toHaveBeenCalledTimes(1);
+  });
+
+  it("개발자 지식 인덱스를 읽지 못해도 같은 방식으로 다시 시도하고 안내한다", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const searchKnowledge = vi.fn().mockRejectedValue(lanceIoError());
+    const resetHybridManager = vi.fn();
+    vi.doMock("../../src/tools/knowledge.js", () => ({ searchKnowledge }));
+    vi.doMock("../../src/database/hybridManager.js", () => ({
+      getHybridManager: () => ({ getSQLite: () => ({ getCategories: () => [] }) }),
+      resetHybridManager,
+    }));
+
+    const { runEgovSearchKnowledge } = await import("../../src/tools/egovSearchKnowledge.js");
+    const result = await runEgovSearchKnowledge({ scope: "knowledge", query: "로그인" });
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("개발자 지식 인덱스를 읽지 못했습니다");
+    expect(searchKnowledge).toHaveBeenCalledTimes(2);
+    expect(resetHybridManager).toHaveBeenCalled();
+  });
+
   it("내부 오류의 절대 경로와 SQL 은 응답에 넣지 않는다", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.doMock("../../src/rag/guideManager.js", () => ({
       getInitializedGuideManager: async () => {
-        throw new Error("lance error: SELECT 1 FROM t WHERE layer = 'x' at /Users/someone/secret/dir");
+        throw new Error("unexpected failure: SELECT 1 FROM t WHERE layer = 'x' at /Users/someone/secret/dir");
       },
+      resetGuideManager: vi.fn(),
     }));
     const { runEgovSearchKnowledge } = await import("../../src/tools/egovSearchKnowledge.js");
     const result = await runEgovSearchKnowledge({ scope: "guide", query: "설정" });

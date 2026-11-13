@@ -720,6 +720,15 @@ export function getGuideManager(): GuideSearchManager {
 let guideManagerReady: Promise<GuideSearchManager> | null = null;
 
 /**
+ * 열어 둔 가이드 인덱스 연결을 버린다. 다음 호출에서 경로를 다시 해석해 새로 연다.
+ * 실행 중에 인덱스가 교체되어 읽기에 실패했을 때 쓴다.
+ */
+export function resetGuideManager(): void {
+  guideManagerInstance = null;
+  guideManagerReady = null;
+}
+
+/**
  * 초기화된 GuideSearchManager 인스턴스 반환 (검색 서버용)
  *
  * 테이블은 한 번만 열어 재사용하고, 없는 테이블을 새로 만들지 않는다.

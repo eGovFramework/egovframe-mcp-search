@@ -51,6 +51,20 @@ function nativeModuleMessage(): string {
   );
 }
 
+/**
+ * LanceDB 인덱스를 읽지 못한 오류인지 판별한다.
+ *
+ * 실행 중에 인덱스가 교체되거나 정리되면(지식베이스 갱신, 재구축) 열어 둔 테이블이 가리키는 파일이
+ * 사라져 이런 오류가 난다. 인덱스 디렉토리가 불완전하게 남은 경우에도 같다.
+ * 판별에는 오류 문구를 쓰지만, 그 문구(절대 경로 포함)를 응답에 싣지는 않는다.
+ */
+export function isIndexReadFailure(error: unknown): boolean {
+  if (!(error instanceof Error) || error instanceof UserFacingError) {
+    return false;
+  }
+  return /lance\s*error|LanceError|Not found:|was not found|No such file or directory/i.test(error.message);
+}
+
 /** 오류를 도구 응답에 실을 문구로 바꾼다. */
 export function toUserMessage(error: unknown): string {
   if (error instanceof UserFacingError) {

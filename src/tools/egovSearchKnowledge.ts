@@ -6,10 +6,11 @@
  * capabilities internally.
  */
 
-import { getInitializedGuideManager } from "../rag/guideManager.js";
-import { getHybridManager } from "../database/hybridManager.js";
+import { getInitializedGuideManager, resetGuideManager } from "../rag/guideManager.js";
+import { getHybridManager, resetHybridManager } from "../database/hybridManager.js";
 import { GUIDE_SITE_BASE_URL } from "../kb/guideSite.js";
-import { UserFacingError, toUserMessage } from "../utils/errors.js";
+import { UserFacingError, isIndexReadFailure, toUserMessage } from "../utils/errors.js";
+import { markOverlayUnusable, type ResourceName } from "../utils/dataPaths.js";
 import { extractSearchTerms } from "../utils/fts5Query.js";
 import { KNOWLEDGE_TYPES, type KnowledgeType } from "../types/knowledge.js";
 import type { CommonComponent } from "../types/database.js";
@@ -356,6 +357,47 @@ async function findCategoryOwner(filters: Record<string, unknown>): Promise<Cate
   return { guide: await isGuideCategory(category), compatibility: isCompatibilityCategory(category) };
 }
 
+/**
+ * LanceDB 인덱스를 읽는 조회를 실행한다.
+ *
+ * 인덱스를 읽지 못하면(실행 중에 교체·정리되었거나 불완전한 경우) 열어 둔 연결을 버리고 한 번 다시
+ * 시도한다. 사용자 갱신분(오버레이)을 읽다가 실패했으면 동봉 인덱스로 물러나서 다시 시도한다.
+ * 그래도 읽지 못하면 고정 내부 오류 문구 대신 조치 방법을 알려 준다.
+ */
+async function withIndexRetry<T>(
+  resource: ResourceName,
+  label: string,
+  reset: () => void,
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (!isIndexReadFailure(error)) {
+      throw error;
+    }
+    logToolError(error);
+    if (markOverlayUnusable(resource)) {
+      console.error(`[egovframe-mcp-search] ${label} 갱신분을 읽지 못해 동봉 인덱스를 사용합니다.`);
+    }
+    reset();
+  }
+
+  try {
+    return await run();
+  } catch (error) {
+    if (!isIndexReadFailure(error)) {
+      throw error;
+    }
+    logToolError(error);
+    reset();
+    throw new UserFacingError(
+      `${label} 인덱스를 읽지 못했습니다. 지식베이스를 갱신하거나 다시 구축한 직후라면 MCP 서버를 재시작하세요. ` +
+        "문제가 계속되면 패키지를 다시 설치하거나 npm run build-index 로 인덱스를 다시 구축하세요.",
+    );
+  }
+}
+
 /** 가이드 결과 하나에 싣는 본문의 최대 길이(문자 수). */
 const GUIDE_CONTENT_MAX_CHARS = 1500;
 
@@ -407,12 +449,10 @@ async function searchGuide(args: EgovSearchKnowledgeArgs, options: SectionOption
   const limit = resolveLimit(args, "guide", options);
   const layer = asString(filters.layer);
   const category = asString(filters.category);
-  const guideManager = await getInitializedGuideManager();
   // 본문이 같은 청크(같은 절을 가진 두 문서)는 한 번만 싣는다. 걸러 낸 뒤에도 limit 건을 채우도록 조금 더 가져온다.
-  const candidates = await guideManager.searchGuide(query, {
-    limit: limit.value + GUIDE_DEDUPE_EXTRA,
-    layer,
-    category,
+  const candidates = await withIndexRetry("guide", "공식 가이드", resetGuideManager, async () => {
+    const guideManager = await getInitializedGuideManager();
+    return guideManager.searchGuide(query, { limit: limit.value + GUIDE_DEDUPE_EXTRA, layer, category });
   });
   const seenContents = new Set<string>();
   const results = candidates
@@ -458,18 +498,20 @@ async function searchDeveloperKnowledge(args: EgovSearchKnowledgeArgs, options: 
   const query = sortRecent ? undefined : requireQuery(args.query, "knowledge");
   const limit = resolveLimit(args, "knowledge", options);
   const excerptLength = options.knowledgeExcerptLength;
-  const result = await searchKnowledge({
-    query,
-    scope: asString(filters.knowledgeScope) === "all" ? "all" : "knowledge",
-    sort: sortRecent ? "recent" : "relevance",
-    limit: limit.value,
-    // type 값이 유효한지는 지식 매니저가 검증한다 (허용되지 않은 값이면 쓸 수 있는 값을 알려 준다).
-    type: asString(filters.type) as KnowledgeType | undefined,
-    tags: asStringArray(filters.tags),
-    minImportance: asNumber(filters.minImportance) as 1 | 2 | 3 | 4 | 5 | undefined,
-    verifiedOnly: asBoolean(filters.verifiedOnly),
-    excerptLength,
-  });
+  const result = await withIndexRetry("developer_knowledge", "개발자 지식", resetHybridManager, () =>
+    searchKnowledge({
+      query,
+      scope: asString(filters.knowledgeScope) === "all" ? "all" : "knowledge",
+      sort: sortRecent ? "recent" : "relevance",
+      limit: limit.value,
+      // type 값이 유효한지는 지식 매니저가 검증한다 (허용되지 않은 값이면 쓸 수 있는 값을 알려 준다).
+      type: asString(filters.type) as KnowledgeType | undefined,
+      tags: asStringArray(filters.tags),
+      minImportance: asNumber(filters.minImportance) as 1 | 2 | 3 | 4 | 5 | undefined,
+      verifiedOnly: asBoolean(filters.verifiedOnly),
+      excerptLength,
+    }),
+  );
 
   const excerptNote =
     excerptLength !== undefined && !sortRecent

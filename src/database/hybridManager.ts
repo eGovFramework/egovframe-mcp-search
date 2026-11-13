@@ -346,6 +346,21 @@ export function getHybridManager(): HybridDatabaseManager {
 }
 
 /**
+ * 열어 둔 연결(SQLite, 개발자 지식 인덱스)을 버린다. 다음 호출에서 경로를 다시 해석해 새로 연다.
+ * 실행 중에 인덱스가 교체되어 읽기에 실패했을 때 쓴다.
+ */
+export function resetHybridManager(): void {
+  if (hybridInstance) {
+    try {
+      hybridInstance.close();
+    } catch {
+      // 닫는 중의 오류는 무시한다 (어차피 버리는 연결이다)
+    }
+  }
+  hybridInstance = null;
+}
+
+/**
  * 초기화된 하이브리드 매니저 가져오기
  */
 export async function getInitializedHybridManager(): Promise<HybridDatabaseManager> {

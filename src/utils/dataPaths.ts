@@ -175,9 +175,35 @@ export interface EffectiveResource {
   dir: string;
 }
 
+/**
+ * 이번 실행에서 읽기에 실패한 오버레이 리소스.
+ * 마커 검사는 통과하지만 테이블을 읽을 수 없는 오버레이(불완전한 갱신, 실행 중 삭제)는 번들로 물러난다.
+ */
+const unusableOverlays = new Set<ResourceName>();
+
+/**
+ * 오버레이의 리소스를 읽지 못했다고 표시한다. 이후 이 프로세스에서는 그 리소스를 번들에서 읽는다
+ * (서버를 다시 시작하면 오버레이를 다시 시도한다).
+ *
+ * @returns 오버레이를 쓰고 있었으면 true. 이미 번들을 쓰고 있었으면(물러날 곳이 없으면) false.
+ */
+export function markOverlayUnusable(name: ResourceName, startPath?: string): boolean {
+  if (resolveResource(name, startPath).source !== 'overlay') {
+    return false;
+  }
+  unusableOverlays.add(name);
+  return true;
+}
+
+/** 읽지 못한 오버레이 표시를 모두 지운다 (테스트용). */
+export function resetUnusableOverlays(): void {
+  unusableOverlays.clear();
+}
+
 /** 오버레이 항목이 이 리소스에 대해 유효한지 (마커·스키마·모델 검사) */
 function isOverlayEntryValid(name: ResourceName, overlay: StateFile | null): overlay is StateFile {
   if (!overlay) return false;
+  if (unusableOverlays.has(name)) return false;
   if (overlay.schema_version !== SCHEMA_VERSION) return false;
 
   const entry = overlay.resources[name];
