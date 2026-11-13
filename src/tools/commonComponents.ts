@@ -7,6 +7,7 @@
 
 import { SQLiteManager } from '../database/sqliteManager.js';
 import { resolveComponentsSrcRoot, resolveSQLiteDbPath } from '../utils/dataPaths.js';
+import { UserFacingError } from '../utils/errors.js';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import fs from 'fs';
@@ -37,8 +38,8 @@ function getComponentSrcRoot(): string {
 }
 
 /** 지원 DB 종류 */
-const SUPPORTED_DB_TYPES = ['mysql', 'maria', 'oracle', 'postgres', 'tibero', 'cubrid', 'altibase', 'goldilocks'] as const;
-type DbType = typeof SUPPORTED_DB_TYPES[number];
+export const SUPPORTED_DB_TYPES = ['mysql', 'maria', 'oracle', 'postgres', 'tibero', 'cubrid', 'altibase', 'goldilocks'] as const;
+export type DbType = typeof SUPPORTED_DB_TYPES[number];
 
 /**
  * 컴포넌트 카테고리 목록 조회
@@ -666,15 +667,15 @@ export interface ComponentDDLResult {
  * useTables 기반으로 해당 테이블·뷰의 DDL만 골라서 반환
  */
 export function getComponentDDL(componentId: string, dbType: string = 'mysql'): ComponentDDLResult | null {
+  // 지원하지 않는 dbType 은 컴포넌트 없음(null)과 구분되도록 오류로 알린다
+  const normalizedDbType = requireDbType(dbType);
+  
   const db = getDB();
   let component = db.getComponentById(componentId);
   if (!component) {
     component = db.getComponentByPackage(componentId);
     if (!component) return null;
   }
-  
-  const normalizedDbType = normalizeDbType(dbType);
-  if (!normalizedDbType) return null;
   
   // useTables 파싱
   let tables: string[] = [];
@@ -742,15 +743,15 @@ export function getComponentDML(componentId: string, dbType: string = 'mysql'): 
   dml: string;
   statementCount: number;
 } | null {
+  // 지원하지 않는 dbType 은 컴포넌트 없음(null)과 구분되도록 오류로 알린다
+  const normalizedDbType = requireDbType(dbType);
+  
   const db = getDB();
   let component = db.getComponentById(componentId);
   if (!component) {
     component = db.getComponentByPackage(componentId);
     if (!component) return null;
   }
-  
-  const normalizedDbType = normalizeDbType(dbType);
-  if (!normalizedDbType) return null;
   
   // useTables 파싱
   let tables: string[] = [];
@@ -801,23 +802,39 @@ export function getComponentDML(componentId: string, dbType: string = 'mysql'): 
   };
 }
 
-/** DB 타입 정규화 */
-function normalizeDbType(dbType: string): DbType | null {
+/** DB 타입 별칭 → 정규 이름 */
+const DB_TYPE_ALIASES: ReadonlyMap<string, DbType> = new Map<string, DbType>([
+  ['mariadb', 'maria'],
+  ['postgresql', 'postgres'],
+  ['pgsql', 'postgres'],
+]);
+
+/**
+ * DB 타입 정규화. 지원하지 않는 값이면 null.
+ * 지원 목록(배열)과 별칭 Map 만 조회하므로 'constructor', '__proto__' 같은
+ * Object.prototype 속성 이름이 지원 타입으로 통과하지 않는다.
+ */
+export function normalizeDbType(dbType: string): DbType | null {
+  if (typeof dbType !== 'string') return null;
   const normalized = dbType.toLowerCase().trim();
-  const aliases: Record<string, DbType> = {
-    'mysql': 'mysql',
-    'maria': 'maria',
-    'mariadb': 'maria',
-    'oracle': 'oracle',
-    'postgres': 'postgres',
-    'postgresql': 'postgres',
-    'pgsql': 'postgres',
-    'tibero': 'tibero',
-    'cubrid': 'cubrid',
-    'altibase': 'altibase',
-    'goldilocks': 'goldilocks',
-  };
-  return aliases[normalized] || null;
+  const supported = SUPPORTED_DB_TYPES.find(type => type === normalized);
+  return supported ?? DB_TYPE_ALIASES.get(normalized) ?? null;
+}
+
+/** 오류 문구에 싣는 dbType 입력값의 최대 길이 */
+const DB_TYPE_ECHO_MAX_LENGTH = 40;
+
+/** DB 타입을 정규화하고, 지원하지 않는 값이면 지원 목록을 담은 오류를 던진다 */
+function requireDbType(dbType: string): DbType {
+  const normalized = normalizeDbType(dbType);
+  if (normalized) return normalized;
+  
+  const given = String(dbType).trim();
+  const shown = given.length > DB_TYPE_ECHO_MAX_LENGTH ? `${given.slice(0, DB_TYPE_ECHO_MAX_LENGTH)}…` : given;
+  throw new UserFacingError(
+    `지원하지 않는 DB 타입입니다: ${shown} ` +
+    `(지원: ${SUPPORTED_DB_TYPES.join(', ')}. 별칭: ${[...DB_TYPE_ALIASES.keys()].join(', ')})`
+  );
 }
 
 /** 추출 중인 CREATE 문 한 개 */
