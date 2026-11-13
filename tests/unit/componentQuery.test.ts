@@ -272,6 +272,30 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
       expect(clauses).toHaveLength(1);
       expect(clauses[0]).not.toContain("GLOB");
     });
+
+    it("영문 검색어와 일치하지 않은 컴포넌트는 뒤로 보내지 않는다 (한글 검색어가 이름에 든 컴포넌트가 밀리지 않는다)", () => {
+      // '게시판 API': 설명에 'Open API' 가 든 컴포넌트(이름도 더 짧다)가, 이름에 '게시판' 이 든 컴포넌트보다 앞서지 않는다.
+      // 낱말의 처음에서 일치한 영문 검색어 수가 많은 컴포넌트를 먼저 놓던 때에는 영문 검색어가 일치한 쪽이 언제나 앞이었다
+      sqlite.addCommonComponentsBatch([extra("adr", "주소", "Address", "Open API 로 주소를 찾음")]);
+      const result = sqlite.queryComponents({ query: "게시판 API" });
+      expect(result.matchMode).toBe("any-term");
+      expect(idsOf(result.rows)).toEqual(["bbs", "tpl", "adr"]);
+    });
+
+    it("이름 컬럼 안에서 낱말의 가운데에서만 일치한 영문 검색어가 적은 컴포넌트를 먼저 돌려준다", () => {
+      // 'Q&A': 두 컴포넌트 모두 'Q' 와 'A' 가 낱말의 처음에서 일치하고(qri 는 ID 와 설명의 'answering') 이름 컬럼에도
+      // 들어 있다. qri 는 이름 컬럼에서 'A' 가 'Management' 의 가운데에만 들어 있어, 이름이 더 짧아도 qna 뒤에 온다
+      sqlite.addCommonComponentsBatch([
+        extra("qna", "Q&A관리", "Q&A Management", "질문과 답변을 관리함"),
+        extra("qri", "설문조사", "Survey Management", "answering 을 모음"),
+      ]);
+      for (const query of ["Q&A", "Q A"]) {
+        const result = sqlite.queryComponents({ query });
+        expect(result.matchMode, `query=${query}`).toBe("all-terms");
+        expect(result.terms, `query=${query}`).toEqual({ used: ["Q", "A"], ignored: [], dropped: [], required: 2 });
+        expect(idsOf(result.rows), `query=${query}`).toEqual(["qna", "qri"]);
+      }
+    });
   });
 
   describe("가려 주지 못하는 낱말 (영어 기능어, 목록의 모든 항목에 해당하는 낱말)", () => {

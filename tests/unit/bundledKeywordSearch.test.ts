@@ -18,6 +18,8 @@
  *   전체 컴포넌트, "REST-API 게시판" 에서 게시판이 4위, 주소를 적은 query 가 여러 건).
  * - 가려 주지 못하는 낱말을 일치 여부와 관계없이 빼, 제품명에 그 낱말이 든 제품이 묻히거나("eGov CMS"),
  *   남은 낱말로는 한 행도 찾지 못하거나("컴포넌트 목록"), 한 글자 검색이 되었다 ("eGovFrame 8", "in S").
+ * - 일부 검색어만 일치한 결과에서, 영문 검색어가 일치한 행이 한글 검색어가 이름에 든 행보다 언제나 앞에 왔다
+ *   ("게시판 API", "티맥스 OR LG"). 이름이 더 짧은 설문조사가 Q&A관리보다 앞에 왔다 ("Q&A").
  * - 두세 글자 영문 검색어가 다른 낱말 속에서 일치한 행이, 낱말로 일치한 행보다 앞에 왔다 ("ECM Solution", "ERS",
  *   컴포넌트 ID "ist").
  * - OR 로 이은 낱말이 모두 든 행만 돌려줬다 ("게시판 OR 댓글", "CMS OR Portal").
@@ -276,20 +278,40 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       expect(idsOf(either.rows).slice(0, both.total).sort()).toEqual(idsOf(both.rows).sort());
     });
 
-    it('"Q&A" 는 두 글자가 모두 낱말의 처음에 든 컴포넌트를 앞에 돌려준다', () => {
+    it('"Q&A" 와 "Q A" 는 Q&A관리를 맨 앞에 돌려준다', () => {
       // 'Q' 와 'A' 가 어딘가에 든 컴포넌트는 서른 개가 넘는다. 낱말의 처음에서 일치했는지를 가리지 않던 때에는
       // Q&A관리(qna)가 이름이 더 짧은 컴포넌트들에 밀려 여섯 번째였다
-      const result = sqlite.queryComponents({ query: "Q&A" });
-      expect(result.matchMode).toBe("all-terms");
-      expect(result.terms).toEqual({ used: ["Q", "A"], ignored: [], dropped: [], required: 2 });
-      const ids = idsOf(result.rows);
-      // 두 글자가 모두 낱말의 처음에 든 컴포넌트는 여럿이고(설문조사는 ID 'qri' 와 영문 설명의 'answering'),
-      // 그 안에서는 이름이 짧은 순이다. Q&A관리는 앞의 두 건 안에 들고, 'Q' 가 낱말의 가운데에 든 FAQ관리보다 앞이다
-      expect(ids.slice(0, 2)).toContain("qna");
-      expect(ids).toContain("faq");
-      expect(ids.indexOf("qna")).toBeLessThan(ids.indexOf("faq"));
+      for (const query of ["Q&A", "Q A"]) {
+        const result = sqlite.queryComponents({ query });
+        expect(result.matchMode, `query=${query}`).toBe("all-terms");
+        // 띄어 쓴 'A' 는 영어 기능어지만, 두 글자 이상인 다른 낱말이 없어 빼지 않는다
+        expect(result.terms, `query=${query}`).toEqual({ used: ["Q", "A"], ignored: [], dropped: [], required: 2 });
+        const ids = idsOf(result.rows);
+        // 설문조사(qri)도 두 글자가 모두 낱말의 처음에서 일치하고(ID 'qri' 와 영문 설명의 'answering') 이름 컬럼에도
+        // 들어 있으며 이름이 더 짧다. 이름 컬럼 안에서는 'A' 가 'Survey Management' 의 가운데에만 들어 있어 뒤에 온다
+        expect(ids[0], `query=${query}`).toBe("qna");
+        expect(ids, `query=${query}`).toContain("qri");
+        // 'Q' 가 낱말의 가운데에 든 FAQ관리보다 앞이다
+        expect(ids, `query=${query}`).toContain("faq");
+        expect(ids.indexOf("qri"), `query=${query}`).toBeLessThan(ids.indexOf("faq"));
+      }
       // '관리' 를 함께 적으면 세 검색어가 모두 이름에 든 Q&A관리가 맨 앞이다
       expect(idsOf(sqlite.queryComponents({ query: "Q&A 관리" }).rows)[0]).toBe("qna");
+    });
+
+    it('"게시판 API" 는 게시판을 맨 앞에 돌려준다', () => {
+      // 낱말의 처음에서 일치한 영문 검색어 수가 많은 컴포넌트를 먼저 놓던 때에는, 설명에 'Open API' 가 든
+      // 도로명주소관리(adr)가 이름에 '게시판' 이 든 컴포넌트들보다 앞에 왔다 (한글 검색어는 그 기준에서 세지 않는다)
+      const result = sqlite.queryComponents({ query: "게시판 API" });
+      expect(result.matchMode).toBe("any-term");
+      expect(result.terms).toEqual({ used: ["게시판", "API"], ignored: [], dropped: [], required: 1 });
+      const ids = idsOf(result.rows);
+      expect(ids[0]).toBe("bbs");
+      expect(ids).toContain("adr");
+      // 이름에 '게시판' 이 든 컴포넌트가 모두 adr 보다 앞이다
+      const boards = result.rows.filter((row) => row.name.includes("게시판"));
+      expect(boards.length).toBeGreaterThan(1);
+      expect(Math.max(...boards.map((row) => ids.indexOf(row.component_id)))).toBeLessThan(ids.indexOf("adr"));
     });
   });
 
@@ -391,9 +413,28 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       expect(result.rows.some((row) => /^(aXis|WISE|WITHCMS)/i.test(row.product_name) && row.framework_version !== "4.3")).toBe(
         false,
       );
-      // 제품명이 낱말로 일치한 Tibero 행이 맨 앞이다. 이름에 '4.3' 이 든 다른 제품(확인일자가 더 최근이다)이 앞서지 않는다
+      // 이름에 검색어가 든 행이 앞에 온다: 제품명이 Tibero 인 두 행과, 제품 버전 표기에 '4.3' 이 든 한 행
+      // ('JINIRAM Portal 4.3')이 앞의 세 행이다. 영문 검색어와 일치하지 않은 행을 뒤로 보내지 않으므로,
+      // 확인일자가 더 최근인 그 한 행이 Tibero 보다 앞이다
       const tibero = compatible("Tibero");
-      expect(rowKeys(result).slice(0, tibero.total)).toEqual(rowKeys(tibero));
+      expect(tibero.total).toBe(2);
+      const top = result.rows.slice(0, 3);
+      expect(top.filter((row) => row.product_name === "Tibero").map(keyOf)).toEqual(rowKeys(tibero));
+      expect(top.every((row) => row.product_name === "Tibero" || row.product_version.includes("4.3"))).toBe(true);
+      expect(result.rows.slice(3).some((row) => row.product_name === "Tibero")).toBe(false);
+    });
+
+    it('"티맥스 OR LG" 는 두 업체의 행을 확인일자 순으로 돌려준다', () => {
+      // 낱말의 처음에서 일치한 영문 검색어 수가 많은 행을 먼저 놓던 때에는 LG CNS 의 다섯 행이 티맥스의 행들보다
+      // 앞에 와서, limit 5 이면 티맥스 행이 보이지 않았다 (한글 검색어 '티맥스' 는 그 기준에서 세지 않는다)
+      const result = compatible("티맥스 OR LG");
+      expect(result.terms).toEqual({ used: ["티맥스", "LG"], ignored: [], dropped: [], required: 1, orQuery: true });
+      expect(result.rows.some((row) => row.vendor.includes("티맥스"))).toBe(true);
+      expect(result.rows.some((row) => row.vendor.includes("LG"))).toBe(true);
+      // 두 낱말 모두 업체명에만 들어 있어 다른 기준으로는 순서가 갈리지 않는다
+      const dates = result.rows.map((row) => row.verified_date);
+      expect(dates).toEqual([...dates].sort().reverse());
+      expect(result.rows[0].vendor).toContain("티맥스");
     });
 
     it('"CMS 추천" 은 any-term 으로 CMS 행을 돌려준다', () => {
@@ -671,6 +712,13 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       // CMS 가 든 행을 모두 돌려주되, 제품명에 eGov 가 든 행이 맨 앞이다
       expect(rowSet(result)).toEqual(rowSet(compatible("CMS")));
       expect(rowKeys(result).slice(0, named.total).sort()).toEqual(rowSet(named));
+      // 그 안에서는 이름에서 'CMS' 가 낱말의 처음에 든 MC@CMS eGov 세 행이, 'WCMS' 의 가운데에 든 DL-WCMS 보다 먼저다
+      expect(result.rows.slice(0, 4).map((row) => row.product_name)).toEqual([
+        "MC@CMS eGov",
+        "MC@CMS eGov",
+        "MC@CMS eGov",
+        "DL-WCMS for eGovframe",
+      ]);
 
       // 다른 낱말, 버전, 프레임워크 버전과 함께 적어도 그 제품이 맨 앞이다
       const first = (query: string) => compatible(query).rows[0];
@@ -725,7 +773,13 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       expect(result.matchMode).toBe("all-terms");
       expect(result.terms).toEqual({ used: ["in", "S"], ignored: [], dropped: [], required: 2 });
       expect(result.total).toBeLessThanOrEqual(compatible("in").total);
-      expect(result.rows.some((row) => row.product_name === "in_S")).toBe(true);
+      // 두 낱말이 모두 이름의 낱말 처음에 든 행이 앞에 온다. in_S 는 앞의 다섯 행 안에 든다
+      expect(result.rows.slice(0, 5).some((row) => row.product_name === "in_S")).toBe(true);
+
+      // "I ON" 도 같다: 'ON' 을 빼던 때에는 'I' 가 든 450건 남짓이 나와 I-ON Content Server 가 27번째였다
+      const ion = compatible("I ON");
+      expect(ion.terms).toEqual({ used: ["I", "ON"], ignored: [], dropped: [], required: 2 });
+      expect(ion.rows[0].product_name).toBe("I-ON Content Server");
     });
 
     it('분류 이름 "WAS" 는 영어 기능어로 빼지 않는다', () => {

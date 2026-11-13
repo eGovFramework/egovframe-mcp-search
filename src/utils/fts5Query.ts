@@ -314,7 +314,8 @@ export function trimEdgeSeparators(candidate: string): string {
  * 영문 검색어인지: ASCII 영문자와 숫자로만 되어 있고 영문자가 하나 이상 든 검색어 ('ECM', 'K2Web', 'R6').
  * 한글이나 기호(검색어 안쪽의 `.` `-` `_` 포함)가 든 검색어, 숫자뿐인 검색어('7', '2025'), 빈 문자열은 아니다.
  *
- * 키워드 검색은 이런 검색어에만 "낱말의 처음에서 일치했는가" 를 정렬 기준으로 쓴다 (wordStartGlobPattern).
+ * 키워드 검색은 이런 검색어에만 "낱말의 처음에서 일치했는가" 를 따져, 낱말의 가운데에서만 일치한 행을 뒤로
+ * 보낸다 (wordStartGlobPattern, database/sqliteManager 의 selectByMatchedTerms).
  * 두세 글자 영문 검색어는 다른 낱말 속에서도 일치하지만('TimeCMS' 의 'ECM'), 한국어 복합어의 가운데에 든
  * 낱말('공통코드' 의 '코드')은 정상적인 일치라 한글이 든 검색어에는 그 기준을 쓰지 않는다.
  * 숫자뿐인 검색어에도 쓰지 않는다. 버전 숫자는 'v7', 'R6' 처럼 영문자 바로 뒤에 적는 일이 많은데, 그 자리는

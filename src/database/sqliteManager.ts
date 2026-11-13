@@ -483,9 +483,9 @@ export class SQLiteManager {
    * 찾는 것이라, 둘 다 든 행이 있다고 거기서 끝내면 한쪽만 든 행이 빠진다. 이때는 일치하는 행이 있는 검색어 가운데
    * 하나 이상이 일치하는 행을 모두 돌려준다 (일치 기준 1, 흔한 검색어만 일치한 행도 돌려준다).
    *
-   * 어느 경로에서나 일치한 검색어가 많은 행, 뺀 대상 낱말이 이름 컬럼(nameColumns)에 든 행, 낱말의 처음에서 일치한
-   * 영문 검색어가 많은 행, 이름 컬럼에 일치한 검색어가 많은 행, 대상의 기본 정렬, rowid 순으로 돌려준다
-   * (selectByMatchedTerms).
+   * 어느 경로에서나 일치한 검색어가 많은 행, 뺀 대상 낱말이 이름 컬럼(nameColumns)에 든 행, 낱말의 가운데에서만
+   * 일치한 영문 검색어가 적은 행, 이름 컬럼에 일치한 검색어가 많은 행, 이름 컬럼 안에서 낱말의 가운데에서만 일치한
+   * 영문 검색어가 적은 행, 대상의 기본 정렬, rowid 순으로 돌려준다 (selectByMatchedTerms).
    *
    * 결과의 terms 는 실제로 쓴 검색어(used), 일치하는 행이 없어 쓰지 않은 검색어(ignored), 일치하는 행이 있는지와
    * 관계없이 검색에서 뺀 검색어(dropped: 가려 주지 못하는 낱말과 한 글자 검색어), 결과의 행마다 일치한 검색어의
@@ -703,12 +703,20 @@ export class SQLiteManager {
    * (2) 뺀 대상 낱말이 이름 컬럼에 든 수가 많은 행 (droppedInName. selectSearchTerms 의 (라)). 대상 낱말은 검색어에서
    *     빼지만, 그 낱말이 제품명에 든 제품('MC@CMS eGov')을 찾는 query 일 수 있어 그런 행을 앞에 놓는다.
    *     뺀 대상 낱말이 없는 조회에는 이 기준이 없다.
-   * (3) 낱말의 처음에서 일치한 영문 검색어 수가 많은 행 (TermMatcher.startsWord). 두세 글자 영문 검색어는 다른
+   * (3) 낱말의 가운데에서만 일치한 영문 검색어 수가 적은 행 (TermMatcher.midWordOnly). 두세 글자 영문 검색어는 다른
    *     낱말 속에서도 일치해('TimeCMS' 의 'ECM'), 낱말로 일치한 행('ECM Solution')이 그런 행에 밀리지 않게 한다.
-   *     한글이나 기호가 든 검색어와 숫자뿐인 검색어는 세지 않으므로, 영문 검색어가 없는 조회에는 이 기준이 없다.
+   *     그 검색어와 일치하지 않은 행은 세지 않는다. "낱말의 처음에서 일치한 검색어가 많은 행" 으로 세면, 일부 검색어만
+   *     일치한 결과에서 영문 검색어가 일치한 행이 한글 검색어가 이름에 일치한 행보다 언제나 앞에 온다
+   *     ("게시판 API" 에서 설명에 'Open API' 가 든 컴포넌트가 게시판보다 앞에 온다). 한글 검색어는 이 기준에서
+   *     세지 않기 때문이다. 모든 검색어가 일치한 결과에서는 두 가지로 센 순서가 같다.
    * (4) 이름 컬럼에 일치한 검색어 수가 많은 행. 설명에만 검색어가 든 행은 버리지 않고 뒤로 보낸다.
-   * (5) 대상의 기본 정렬.
-   * (6) rowid.
+   * (5) 이름 컬럼 안에서 낱말의 가운데에서만 일치한 영문 검색어 수가 적은 행 (TermMatcher.midWordOnlyInName).
+   *     "Q&A" 에서 'A' 가 영문명 'Survey Management' 의 가운데에만 든 설문조사가, 이름이 더 짧다고 Q&A관리보다
+   *     앞에 오지 않게 한다.
+   * (6) 대상의 기본 정렬.
+   * (7) rowid.
+   * (3)과 (5)는 영문 검색어(isEnglishTerm)만 센다. 한글이나 기호가 든 검색어, 숫자뿐인 검색어, 유연한 꼴로 쓴 검색어는
+   * 세지 않으므로, 영문 검색어가 없는 조회에는 이 두 기준이 없다.
    * (흔한 검색어만 일치한 행을 거르는 일은 대체 검색이 filter 에 조건을 더해서 한다. distinctiveScope 참조.)
    */
   private selectByMatchedTerms<Row>(
@@ -720,10 +728,6 @@ export class SQLiteManager {
     droppedInName: SqlExpression[],
   ): { rows: Row[]; total: number } {
     const matchedTerms = countOf(matchers.map((matcher) => matcher.matches));
-    const matchedInName = countOf(matchers.map((matcher) => matcher.inName));
-    // 낱말의 처음을 따지는 검색어가 하나도 없으면 그 정렬 기준을 두지 않는다 (모든 행이 0 이라 순서를 바꾸지 않는다)
-    const wordStarts = matchers.flatMap((matcher) => (matcher.startsWord === null ? [] : [matcher.startsWord]));
-    const matchedAtWordStart = wordStarts.length > 0 ? countOf(wordStarts) : null;
 
     const from = `FROM ${target.table} ${target.joins ?? ''} WHERE (${matchedTerms.sql}) >= ?${filter.sql}`;
     const fromParams = [...matchedTerms.params, required, ...filter.params];
@@ -734,21 +738,28 @@ export class SQLiteManager {
       return { rows: [], total: 0 };
     }
 
+    /** 조건 가운데 채운 것의 수로 정렬하는 기준. 조건이 하나도 없으면 기준을 두지 않는다 (모든 행이 0 이라 순서를 바꾸지 않는다) */
+    const rankBy = (conditions: SqlExpression[], direction: 'DESC' | 'ASC'): RankingCriterion[] =>
+      conditions.length > 0 ? [{ count: countOf(conditions), direction }] : [];
+    const present = (conditions: Array<SqlExpression | null>): SqlExpression[] =>
+      conditions.flatMap((condition) => (condition === null ? [] : [condition]));
+
     // 정렬 기준과 그 바인딩 값을 같은 순서로 잇는다
-    const ranking = [
-      matchedTerms,
-      ...(droppedInName.length > 0 ? [countOf(droppedInName)] : []),
-      ...(matchedAtWordStart ? [matchedAtWordStart] : []),
-      matchedInName,
+    const ranking: RankingCriterion[] = [
+      { count: matchedTerms, direction: 'DESC' },
+      ...rankBy(droppedInName, 'DESC'),
+      ...rankBy(present(matchers.map((matcher) => matcher.midWordOnly)), 'ASC'),
+      { count: countOf(matchers.map((matcher) => matcher.inName)), direction: 'DESC' },
+      ...rankBy(present(matchers.map((matcher) => matcher.midWordOnlyInName)), 'ASC'),
     ];
     const rows = this.db
       .prepare(
         `SELECT ${target.columns} ${from}
-         ORDER BY ${ranking.map((count) => `(${count.sql}) DESC`).join(', ')},
+         ORDER BY ${ranking.map(({ count, direction }) => `(${count.sql}) ${direction}`).join(', ')},
                   ${target.defaultOrder}, ${target.rowid}
          LIMIT ? OFFSET ?`,
       )
-      .all(...fromParams, ...ranking.flatMap((count) => count.params), page.limit, page.offset) as Row[];
+      .all(...fromParams, ...ranking.flatMap(({ count }) => count.params), page.limit, page.offset) as Row[];
     return { rows, total };
   }
 
@@ -1492,8 +1503,8 @@ interface KeywordSearchTarget {
   genericTerms: ReadonlySet<string>;
   /**
    * 기본 정렬. 키워드 검색에서는 selectByMatchedTerms 의 정렬 기준(일치한 검색어 수, 뺀 대상 낱말이 이름에 든 수,
-   * 낱말의 처음에서 일치한 영문 검색어 수, 이름에 일치한 검색어 수) 다음에 적용하고, 호환성 소프트웨어는 키워드 없는
-   * 필터 조회에도 이 정렬을 쓴다
+   * 낱말의 가운데에서만 일치한 영문 검색어 수, 이름에 일치한 검색어 수 등) 다음에 적용하고, 호환성 소프트웨어는
+   * 키워드 없는 필터 조회에도 이 정렬을 쓴다
    */
   defaultOrder: string;
 }
@@ -1511,11 +1522,20 @@ interface TermMatcher {
   /** 검색어가 이름 컬럼(nameColumns)에서 일치한다 (matches 와 같은 방법으로 견준다) */
   inName: SqlExpression;
   /**
-   * 검색어가 낱말의 처음에서 일치한다: 검색 컬럼(searchColumns) 가운데 하나에서 값의 맨 앞이거나 바로 앞 글자가
-   * ASCII 영문자가 아닌 자리에 들어 있다. 영문 검색어(ASCII 영문자와 숫자로만 되어 있고 영문자가 든 검색어)에만
-   * 있고, 한글이나 기호가 든 검색어와 숫자뿐인 검색어는 null 이다
+   * 검색어가 낱말의 가운데에서만 일치한다: 검색 컬럼(searchColumns)에 부분 문자열로 들어 있지만, 어느 검색 컬럼에서도
+   * 낱말의 처음(값의 맨 앞이거나 바로 앞 글자가 ASCII 영문자가 아닌 자리)에는 들어 있지 않다.
+   * 그 검색어가 들어 있지 않은 행은 채우지 않는다. 영문 검색어(ASCII 영문자와 숫자로만 되어 있고 영문자가 든
+   * 검색어)에만 있고, 한글이나 기호가 든 검색어, 숫자뿐인 검색어, 유연한 꼴은 null 이다
    */
-  startsWord: SqlExpression | null;
+  midWordOnly: SqlExpression | null;
+  /** 검색어가 이름 컬럼(nameColumns) 안에서 낱말의 가운데에서만 일치한다 (midWordOnly 와 같은 뜻을 이름 컬럼만으로 본다) */
+  midWordOnlyInName: SqlExpression | null;
+}
+
+/** 조회 결과의 정렬 기준 하나: 조건을 채운 수(count)가 많은 행(DESC) 또는 적은 행(ASC)을 먼저 놓는다 */
+interface RankingCriterion {
+  count: SqlExpression;
+  direction: 'DESC' | 'ASC';
 }
 
 /** 대체 검색이 쓰기로 한 검색어 하나 */
@@ -1584,8 +1604,8 @@ function countOf(conditions: SqlExpression[]): SqlExpression {
  * 판정)가 검색어 그대로와 조사를 뗀 꼴을 이 조건으로 견주므로, 일치 규칙을 바꿀 때는 여기만 바꾼다.
  * (구분 기호의 자리를 너그럽게 견주는 유연한 꼴의 조건은 flexibleTermMatcher 가 따로 만든다.)
  *
- * 영문 검색어(isEnglishTerm)에는 낱말의 처음에서 일치했는지를 가리는 조건(startsWord)도 만든다.
- * 정렬에만 쓰고, 행이 일치하는지는 바꾸지 않는다 (selectByMatchedTerms).
+ * 영문 검색어(isEnglishTerm)에는 낱말의 가운데에서만 일치했는지를 가리는 조건(midWordOnly, midWordOnlyInName)도
+ * 만든다. 정렬에만 쓰고, 행이 일치하는지는 바꾸지 않는다 (selectByMatchedTerms).
  * 대상이 따로 정한 조건(termConditions)은 이 조건에 넣지 않는다. 그 조건이 견주는 프레임워크 버전('4.3')과
  * 확인일자('2025', '2024-11')는 '.' 이나 '-' 가 들었거나 숫자뿐이라 영문 검색어가 아니다.
  *
@@ -1596,11 +1616,32 @@ function termMatcher(target: KeywordSearchTarget, term: string): TermMatcher | n
   if (pattern === null) {
     return null;
   }
+  const inSearchColumns = likeAnyColumn(target.searchColumns, pattern);
+  const inName = likeAnyColumn(target.nameColumns, pattern);
+  const wordStart = isEnglishTerm(term) ? wordStartGlobPattern(term) : null;
   return {
     key: term.toLowerCase(),
-    matches: anyOf([likeAnyColumn(target.searchColumns, pattern), ...(target.termConditions?.(term) ?? [])]),
-    inName: likeAnyColumn(target.nameColumns, pattern),
-    startsWord: isEnglishTerm(term) ? wordStartAnyColumn(target.searchColumns, wordStartGlobPattern(term)) : null,
+    matches: anyOf([inSearchColumns, ...(target.termConditions?.(term) ?? [])]),
+    inName,
+    midWordOnly:
+      wordStart === null ? null : onlyMidWord(inSearchColumns, wordStartAnyColumn(target.searchColumns, wordStart)),
+    midWordOnlyInName:
+      wordStart === null ? null : onlyMidWord(inName, wordStartAnyColumn(target.nameColumns, wordStart)),
+  };
+}
+
+/**
+ * 검색어가 컬럼들에 들어 있지만(contains) 낱말의 처음에는 들어 있지 않다(startsWord 가 아니다)는 조건.
+ * 두 조건은 같은 컬럼들을 견준 것이어야 한다. 바인딩 값은 contains, startsWord 의 순서로 잇는다.
+ *
+ * `NOT` 이 아니라 `IS NOT TRUE` 로 적는다. 컬럼 가운데 값이 NULL 인 것이 있으면 startsWord 가 거짓이 아니라 NULL 이
+ * 될 수 있고(`거짓 OR NULL`), `NOT NULL` 은 NULL 이라 조건을 채우지 못한 것으로 읽힌다. 그러면 영문명이나 설명이
+ * 비어 있는 행은 낱말의 가운데에서만 일치했어도 세지 않게 된다.
+ */
+function onlyMidWord(contains: SqlExpression, startsWord: SqlExpression): SqlExpression {
+  return {
+    sql: `(${contains.sql} AND ${startsWord.sql} IS NOT TRUE)`,
+    params: [...contains.params, ...startsWord.params],
   };
 }
 
@@ -1612,8 +1653,9 @@ function termMatcher(target: KeywordSearchTarget, term: string): TermMatcher | n
  *
  * 검색 컬럼(searchColumns) 가운데 하나에서 두 패턴 가운데 하나와 일치하면 그 검색어가 일치한 것이고,
  * 이름 컬럼에서 일치했는지(inName)도 같은 패턴을 nameColumns 에 견준다.
- * 대상이 따로 정한 조건(termConditions)과 낱말의 처음 조건(startsWord)은 두지 않는다. 프레임워크 버전과
- * 확인일자는 검색어 그대로일 때만 견주고, 유연한 꼴은 낱말의 처음과 끝에서만 일치하도록 패턴이 이미 가린다.
+ * 대상이 따로 정한 조건(termConditions)과 낱말의 가운데에서만 일치했는지를 가리는 조건(midWordOnly,
+ * midWordOnlyInName)은 두지 않는다. 프레임워크 버전과 확인일자는 검색어 그대로일 때만 견주고, 유연한 꼴은 낱말의
+ * 처음과 끝에서만 일치하도록 패턴이 이미 가린다.
  *
  * GLOB 패턴마다 LIKE 패턴 하나를 짝지어 먼저 견준다 (prefilteredGlobAnyColumn). 유연한 자리에 글자 하나가 온 꼴은
  * 부분 사이를 '_'(아무 글자 하나)로 이은 패턴, 붙은 꼴은 부분을 그대로 이은 패턴이다. GLOB 과 일치하는 값은 반드시
@@ -1636,7 +1678,8 @@ function flexibleTermMatcher(target: KeywordSearchTarget, term: string): TermMat
     key: spaced,
     matches: inAnyOf(target.searchColumns),
     inName: inAnyOf(target.nameColumns),
-    startsWord: null,
+    midWordOnly: null,
+    midWordOnlyInName: null,
   };
 }
 
