@@ -14,6 +14,8 @@ import {
   UpdateKnowledgeInput,
   RecentKnowledge,
   KnowledgeType,
+  KNOWLEDGE_TYPES,
+  isKnowledgeType,
 } from '../types/knowledge.js';
 import fs from 'fs';
 import path from 'path';
@@ -21,6 +23,47 @@ import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import { resolveDeveloperKnowledgeDbDir } from '../utils/dataPaths.js';
 import { UserFacingError } from '../utils/errors.js';
+import { lanceEquals, quoteFilterValue } from '../utils/lanceFilter.js';
+
+/**
+ * type 필터 값을 검증한다.
+ * 여섯 가지 값에 속하지 않으면 유효한 값을 나열해 알린다 (조용히 0건을 돌려주지 않는다).
+ */
+function requireKnowledgeType(type: unknown): KnowledgeType {
+  if (!isKnowledgeType(type)) {
+    throw new UserFacingError(
+      `지원하지 않는 type 값입니다: ${quoteFilterValue(type)}. 사용할 수 있는 값: ${KNOWLEDGE_TYPES.join(', ')}`,
+    );
+  }
+  return type;
+}
+
+/**
+ * 검색 옵션을 LanceDB where 절로 바꾼다. 조건이 없으면 undefined.
+ *
+ * 문자열 값은 리터럴로 이스케이프해 넣는다 (utils/lanceFilter). 허용되지 않은 type 은
+ * UserFacingError 로 거부한다.
+ */
+export function buildKnowledgeFilter(options: KnowledgeSearchOptions): string | undefined {
+  const { type, minImportance = 1, verifiedOnly = false } = options;
+  const filters: string[] = [];
+
+  if (type) {
+    filters.push(lanceEquals('type', requireKnowledgeType(type)));
+  }
+
+  // 숫자로 바꾼 값만 조건에 넣는다 (유한한 수가 아니면 조건을 만들지 않는다)
+  const importance = Number(minImportance);
+  if (Number.isFinite(importance) && importance > 1) {
+    filters.push(`importance >= ${importance}`);
+  }
+
+  if (verifiedOnly) {
+    filters.push(`verified = true`);
+  }
+
+  return filters.length > 0 ? filters.join(' AND ') : undefined;
+}
 
 export class DeveloperKnowledgeManager {
   private db!: lancedb.Connection;
@@ -291,32 +334,14 @@ export class DeveloperKnowledgeManager {
     query: string,
     options: KnowledgeSearchOptions = {}
   ): Promise<KnowledgeSearchResult[]> {
-    const {
-      limit = 5,
-      type,
-      tags,
-      minImportance = 1,
-      verifiedOnly = false,
-    } = options;
-    
+    const { limit = 5, tags } = options;
+
+    // 필터 조건 생성 — 입력 오류는 임베딩 모델을 불러오기 전에 알린다
+    const filter = buildKnowledgeFilter(options);
+
     const embedder = getEmbedder();
     const queryVector = await embedder.embed(query, 'query');
-    
-    // 필터 조건 생성
-    const filters: string[] = [];
-    
-    if (type) {
-      filters.push(`type = '${type}'`);
-    }
-    
-    if (minImportance > 1) {
-      filters.push(`importance >= ${minImportance}`);
-    }
-    
-    if (verifiedOnly) {
-      filters.push(`verified = true`);
-    }
-    
+
     // 벡터 검색 쿼리 — 인덱스를 건너뛰고 전수 검색한다.
     // 동봉 테이블의 IVF_PQ 인덱스는 기본 설정으로 일부 파티션만 훑어, 필터(where)에 맞는 행이
     // 있어도 0건이나 limit 미만을 돌려주고 가장 가까운 행을 놓친다. 약 1.8만 행 규모에서는
@@ -329,10 +354,10 @@ export class DeveloperKnowledgeManager {
       .distanceType('cosine')
       .limit(limit * 2); // 태그 필터링을 위해 더 많이 가져옴
     
-    if (filters.length > 0) {
-      searchQuery = searchQuery.where(filters.join(' AND '));
+    if (filter) {
+      searchQuery = searchQuery.where(filter);
     }
-    
+
     let results = await searchQuery.toArray();
     
     // 태그 필터링 (복잡한 조건이라 결과에서 처리)
@@ -368,7 +393,7 @@ export class DeveloperKnowledgeManager {
     let query = this.table.query();
     
     if (type) {
-      query = query.where(`type = '${type}'`);
+      query = query.where(lanceEquals('type', requireKnowledgeType(type)));
     }
     
     const results = await query.toArray();

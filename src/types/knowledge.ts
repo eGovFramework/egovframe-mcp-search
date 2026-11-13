@@ -3,14 +3,23 @@
  * 비정형 개발자 지식 구조 정의
  */
 
+// 개발자 지식 타입 값 목록 (type 필터 검증과 안내 문구가 이 배열 하나를 함께 쓴다)
+export const KNOWLEDGE_TYPES = [
+  'solution',       // 해결책
+  'tip',            // 팁/힌트
+  'pattern',        // 디자인 패턴
+  'error-fix',      // 오류 수정
+  'best-practice',  // 모범 사례
+  'gotcha',         // 주의사항/함정
+] as const;
+
 // 개발자 지식 타입
-export type KnowledgeType = 
-  | 'solution'       // 해결책
-  | 'tip'           // 팁/힌트
-  | 'pattern'       // 디자인 패턴
-  | 'error-fix'     // 오류 수정
-  | 'best-practice' // 모범 사례
-  | 'gotcha';       // 주의사항/함정
+export type KnowledgeType = (typeof KNOWLEDGE_TYPES)[number];
+
+/** 값이 개발자 지식 타입 여섯 가지 가운데 하나인지. */
+export function isKnowledgeType(value: unknown): value is KnowledgeType {
+  return (KNOWLEDGE_TYPES as readonly unknown[]).includes(value);
+}
 
 // 개발자 지식 문서
 export interface DeveloperKnowledge {

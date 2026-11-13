@@ -13,6 +13,7 @@ import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import { resolveGuideDbDir } from '../utils/dataPaths.js';
 import { UserFacingError } from '../utils/errors.js';
+import { lanceEquals } from '../utils/lanceFilter.js';
 
 // ─── 타입 정의 ────────────────────────────────────────────
 
@@ -355,11 +356,11 @@ export class GuideSearchManager {
     const filters: string[] = [];
 
     if (layer) {
-      filters.push(`layer = '${layer}'`);
+      filters.push(lanceEquals('layer', layer));
     }
 
     if (category) {
-      filters.push(`category = '${category}'`);
+      filters.push(lanceEquals('category', category));
     }
 
     // 벡터 검색 — 인덱스를 건너뛰고 전수 검색한다.
