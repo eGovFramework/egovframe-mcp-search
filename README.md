@@ -521,7 +521,7 @@ MCP 서버가 검색에 쓰는 데이터는 모두 **로컬**에 있습니다.
 - `git submodule update --init`: 공통컴포넌트와 가이드 소스 (github.com)
 - `npm run fetch-model`: 임베딩 모델 (huggingface.co)
 - `update` CLI 와 `npm run build-index` 의 online 모드: 가이드, 공통컴포넌트 소스, 개발자 지식 스냅샷 (github.com, api.github.com. 내려받기 요청은 GitHub 이 응답하는 리다이렉트를 따라갑니다)
-- `npm install`, `npm run pack:platforms`, `npm run inspector`: npm 패키지 (npm 레지스트리)
+- `npm install`, `npm run pack:platforms`, `npm run inspector`: npm 패키지 (npm 레지스트리). 의존성을 설치할 때는 `better-sqlite3` 와 `sharp` 의 설치 스크립트가 플랫폼에 맞는 사전 빌드 바이너리도 내려받습니다 (github.com)
 
 폐쇄망에서는 `update --from-file` 과 `build-index` 의 bundled 또는 local 모드를 씁니다.
 
