@@ -1239,13 +1239,16 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       expect(response.matchMode).toBe("all-terms");
     });
 
-    it("limit 은 1 이상 100 이하의 정수로 맞춘다", async () => {
+    it("limit 은 1 이상 50 이하의 정수로 맞춘다", async () => {
       const applied = async (limit: number) => {
         const response = await searchCompatibleSoftware({ limit });
         return [response.limit, response.count];
       };
-      expect(await applied(1000)).toEqual([100, 100]);
-      expect(await applied(1e300)).toEqual([100, 100]);
+      expect(await applied(1000)).toEqual([50, 50]);
+      expect(await applied(1e300)).toEqual([50, 50]);
+      // 상한 바로 아래와 위: 50 은 그대로, 51 은 50 으로 줄인다
+      expect(await applied(50)).toEqual([50, 50]);
+      expect(await applied(51)).toEqual([50, 50]);
       expect(await applied(2.7)).toEqual([2, 2]);
       // 1 보다 작은 값이 '제한 없음'(전체 반환)으로 바뀌면 안 된다
       expect(await applied(0.5)).toEqual([1, 1]);
@@ -1256,7 +1259,7 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
 
     it("query 가 있을 때도 같은 limit 규칙을 따른다", async () => {
       expect((await searchCompatibleSoftware({ query: "Bulk", limit: 0.5 })).count).toBe(1);
-      expect((await searchCompatibleSoftware({ query: "Bulk", limit: 1000 })).count).toBe(100);
+      expect((await searchCompatibleSoftware({ query: "Bulk", limit: 1000 })).count).toBe(50);
     });
 
     it("offset 은 0 이상의 정수로 맞춘다", async () => {
@@ -1274,7 +1277,7 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
 
     it("정렬에서 뒤에 오는 행이어도 필터에 맞으면 빠뜨리지 않는다", async () => {
       // 필터가 없으면 TargetCMS 는 31번째(마지막)다
-      const unfiltered = await searchCompatibleSoftware({ query: "CMS", limit: 100 });
+      const unfiltered = await searchCompatibleSoftware({ query: "CMS", limit: 50 });
       expect(versionsOf(unfiltered.software).indexOf("TargetCMS 1.0")).toBe(CROWDED.length - 1);
 
       // 예전에는 상위 limit*5 건만 가져와 걸러서, 순위가 31번째인 TargetCMS 가 빠졌다

@@ -83,8 +83,14 @@ function findAvailableValues(
 
 /** limit 을 주지 않았을 때 돌려주는 건수 */
 const DEFAULT_LIMIT = 20;
-/** 한 번에 돌려주는 최대 건수. 그 이상은 offset 으로 이어서 조회한다 */
-const MAX_LIMIT = 100;
+/**
+ * 한 번에 돌려주는 최대 건수. 그 이상은 offset 으로 이어서 조회한다.
+ *
+ * MCP 클라이언트는 큰 도구 결과를 본문 대신 파일로 넘기거나 잘라 낸다 (Claude Code 는 25,000 토큰을 기본
+ * 상한으로 두고, 50,000자를 넘는 결과는 파일로 저장한다). 행 하나가 응답에서 400~500자를 차지해 100건이면
+ * 50,000자에 닿으므로, 그 절반에서 끊는다.
+ */
+const MAX_LIMIT = 50;
 
 /** limit 을 1 이상 MAX_LIMIT 이하의 정수로 맞춘다. 숫자가 아니면 기본값을 쓴다. */
 function normalizeLimit(limit: number | undefined): number {
@@ -271,7 +277,7 @@ export interface CompatibilitySearchResponse {
   total: number;
   /** 이번에 돌려준 건수 (software 의 길이) */
   count: number;
-  /** 실제로 적용한 limit (1~100) */
+  /** 실제로 적용한 limit (1~50) */
   limit: number;
   /** 실제로 적용한 offset */
   offset: number;
@@ -339,7 +345,7 @@ export interface CompatibilitySearchResponse {
  * - 기본: 호환 소프트웨어 검색
  * - includeKnowledge=true: 검색 결과의 소프트웨어에 대한 개발자 경험/지식도 함께 반환
  *
- * 한 번에 limit 건(기본 20, 최대 100)을 돌려준다. 응답의 total 이 count 보다 크면
+ * 한 번에 limit 건(기본 20, 최대 50)을 돌려준다. 응답의 total 이 count 보다 크면
  * offset 을 늘려 다음 페이지를 조회할 수 있다.
  */
 export async function searchCompatibleSoftware(args: {

@@ -601,7 +601,24 @@ describe("integration — egov_search_knowledge 입력 검증", () => {
   it("범위별 최댓값을 넘는 limit 은 최댓값으로 줄이고 그 사실을 알린다", async () => {
     const res = await search({ scope: "compatibility", filters: { frameworkVersion: "4.2" }, limit: 150 });
     expect(res.isError).toBe(false);
-    expect(res.text).toContain("최댓값 100");
+    expect(res.text).toContain("요청한 limit 150 은(는) compatibility 범위의 최댓값 50 으로 줄여 적용했습니다");
+    const body = parseJsonBlock(res.text);
+    expect(body.limit).toBe(50);
+    expect(body.software.length).toBeLessThanOrEqual(50);
+  });
+
+  it("호환 소프트웨어를 최댓값만큼 조회한 응답은 50,000자를 넘지 않는다", async () => {
+    // MCP 클라이언트는 50,000자를 넘는 결과를 본문 대신 파일로 넘기기도 한다
+    for (const args of [
+      { scope: "compatibility", limit: 50 },
+      { scope: "compatibility", query: "CMS", limit: 50 },
+      { scope: "compatibility", query: "CMS", limit: 50, filters: { includeKnowledge: true } },
+    ]) {
+      const res = await search(args);
+      expect(res.isError).toBe(false);
+      expect(parseJsonBlock(res.text).software.length).toBe(50);
+      expect(res.text.length).toBeLessThan(40_000);
+    }
   });
 });
 
@@ -899,7 +916,7 @@ describe("integration — egov_search_knowledge 호환 소프트웨어 조회", 
   });
 
   it("filters.level 은 그 호환성 레벨의 제품만 돌려준다 (scope 를 생략해도 compatibility 로 처리한다)", async () => {
-    const res = await search({ filters: { level: 1 }, limit: 100 });
+    const res = await search({ filters: { level: 1 }, limit: 50 });
     expect(res.isError).toBe(false);
     const body = parseJsonBlock(res.text);
     expect(body.filters.level).toBe(1);

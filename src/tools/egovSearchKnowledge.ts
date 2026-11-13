@@ -94,7 +94,7 @@ const LIMIT_RULES = {
   guide: { fallback: 5, max: 20 },
   knowledge: { fallback: 5, max: 20 },
   components: { fallback: 20, max: 200 },
-  compatibility: { fallback: 20, max: 100 },
+  compatibility: { fallback: 20, max: 50 },
 } as const;
 
 type LimitScope = keyof typeof LIMIT_RULES;
@@ -105,7 +105,7 @@ const ALL_SCOPE_SECTION_LIMIT = 5;
 /**
  * 통합 검색(scope all)에서 출처 하나가 싣는 최대 건수.
  *
- * 출처마다 그 범위의 최댓값(호환 소프트웨어 100건, 공통컴포넌트 200건)까지 실으면 네 출처를 합친 응답이
+ * 출처마다 그 범위의 최댓값(호환 소프트웨어 50건, 공통컴포넌트 200건)까지 실으면 네 출처를 합친 응답이
  * 수만 자를 넘어 MCP 클라이언트의 출력 상한에 걸린다. 통합 검색은 어느 출처에 무엇이 있는지 훑어보는 용도이므로
  * 출처별 건수를 작게 묶고, 한 출처의 결과를 더 보려면 그 출처를 scope 로 지정해 조회하게 한다.
  */
