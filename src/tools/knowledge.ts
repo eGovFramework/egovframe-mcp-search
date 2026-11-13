@@ -9,6 +9,7 @@ import {
   KnowledgeType,
 } from '../types/knowledge.js';
 import { UserFacingError } from '../utils/errors.js';
+import { excerptKnowledgeContent } from '../utils/knowledgeExcerpt.js';
 
 /**
  * 검색 결과의 score(코사인 거리)를 코사인 유사도로 바꾼다.
@@ -28,11 +29,25 @@ function requireQuery(query: string | undefined): string {
   return query;
 }
 
+/** 통합 검색(scope="all")의 지식 미리보기 길이 — excerptLength 를 주지 않았을 때 */
+const DEFAULT_PREVIEW_LENGTH = 200;
+
+/**
+ * excerptLength 인자를 정리한다. 1 이상의 유한한 수만 받고, 그 밖에는 지정하지 않은 것으로 본다.
+ */
+function normalizeExcerptLength(value: number | undefined): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 1 ? Math.floor(value) : undefined;
+}
+
 /**
  * 지식 검색 (통합)
  * - query + scope="knowledge" → 시맨틱 검색 (기본)
  * - sort="recent" → 최근 추가 순 조회 (질의를 쓰지 않으므로 query 없이 호출할 수 있다)
  * - query + scope="all" → 통합 검색 (지식 + 호환성)
+ *
+ * excerptLength 를 주면 결과의 content 를 그 길이 이내의 발췌로 바꾼다 (표지·생략 표시 포함).
+ * Q&A 본문은 질문과 답변에 길이를 나눠 답변의 앞부분이 반드시 들어간다 (utils/knowledgeExcerpt).
+ * 주지 않으면 시맨틱 검색은 본문 전체를, 통합 검색은 200자 미리보기를 돌려준다.
  *
  * See: docs/TODO_TOOL_OPTIMIZATION.md Phase 3-C
  */
@@ -45,9 +60,11 @@ export async function searchKnowledge(args: {
   tags?: string[];
   minImportance?: 1 | 2 | 3 | 4 | 5;
   verifiedOnly?: boolean;
+  excerptLength?: number;
 }) {
   // 최근 목록 말고는 질의가 있어야 한다 — 저장소와 임베딩 모델을 불러오기 전에 확인한다
   const query = args.sort === 'recent' ? '' : requireQuery(args.query);
+  const excerptLength = normalizeExcerptLength(args.excerptLength);
 
   const manager = await getInitializedHybridManager();
   const knowledge = manager.getKnowledge();
@@ -96,7 +113,7 @@ export async function searchKnowledge(args: {
       knowledge: results.knowledge.map((k: any) => ({
         title: k.title,
         type: k.type,
-        content: k.content.substring(0, 200) + (k.content.length > 200 ? '...' : ''),
+        content: excerptKnowledgeContent(k.content, excerptLength ?? DEFAULT_PREVIEW_LENGTH),
         tags: k.tags,
         importance: k.importance,
       })),
@@ -125,7 +142,7 @@ export async function searchKnowledge(args: {
       id: r.id,
       type: r.type,
       title: r.title,
-      content: r.content,
+      content: excerptLength === undefined ? r.content : excerptKnowledgeContent(r.content, excerptLength),
       context: r.context,
       tags: r.tags,
       importance: r.importance,
@@ -211,7 +228,7 @@ export async function smartSearch(args: {
     knowledge: results.knowledge.map(k => ({
       title: k.title,
       type: k.type,
-      content: k.content.substring(0, 200) + (k.content.length > 200 ? '...' : ''),
+      content: excerptKnowledgeContent(k.content, DEFAULT_PREVIEW_LENGTH),
       tags: k.tags,
       importance: k.importance,
       similarity: toSimilarity(k.score),

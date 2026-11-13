@@ -96,6 +96,123 @@ describe.skipIf(!HAS_BUNDLED_TABLES)("searchKnowledge 도구 — 의미 검색 �
   });
 });
 
+describe.skipIf(!HAS_BUNDLED_TABLES)("searchKnowledge 도구 — excerptLength", () => {
+  const ANSWER_MARK = "\n\n답변:\n";
+  let knowledge: DeveloperKnowledgeManager;
+  /** 질문과 답변이 모두 긴 Q&A 행 (앞에서부터 200자를 자르면 답변이 남지 않는다) */
+  let longQa: VectorRow & { content: string };
+
+  beforeAll(async () => {
+    knowledge = new DeveloperKnowledgeManager(BUNDLED_KB);
+    await knowledge.initialize();
+    hybrid.current = { getKnowledge: () => knowledge };
+
+    const rows = await loadVectorRows(await openBundledTable(KNOWLEDGE_TABLE), ["content"]);
+    const found = rows.find((row) => {
+      const content = String(row.content);
+      const at = content.indexOf(ANSWER_MARK);
+      return content.startsWith("질문:") && at > 600 && content.length - at > 600;
+    });
+    if (!found) throw new Error("질문과 답변이 모두 긴 Q&A 행을 찾지 못했습니다");
+    longQa = { ...found, content: String(found.content) };
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("excerptLength 가 없으면 본문 전체를 돌려준다", async () => {
+    useQueryVector(longQa.vector);
+    const [first] = semanticResults(await searchKnowledge({ query: "(저장된 벡터로 대체)", limit: 1 }));
+    expect(first.id).toBe(longQa.id);
+    expect(first.content).toBe(longQa.content);
+  });
+
+  it("excerptLength 를 주면 본문을 그 길이 이내로 줄이되 답변 앞부분을 남긴다", async () => {
+    useQueryVector(longQa.vector);
+    const [first] = semanticResults(
+      await searchKnowledge({ query: "(저장된 벡터로 대체)", limit: 1, excerptLength: 200 }),
+    );
+    const content = String(first.content);
+    const fullAnswer = longQa.content.slice(longQa.content.indexOf(ANSWER_MARK) + ANSWER_MARK.length).trim();
+
+    expect(first.id).toBe(longQa.id);
+    expect(content.length).toBeLessThanOrEqual(200);
+    expect(content.startsWith("질문:\n")).toBe(true);
+    const excerptAnswer = content.slice(content.indexOf(ANSWER_MARK) + ANSWER_MARK.length).replace(/\.\.\.$/, "");
+    expect(excerptAnswer.length).toBeGreaterThan(50);
+    expect(fullAnswer.startsWith(excerptAnswer)).toBe(true);
+  });
+
+  it("결과 전체에 같은 상한을 적용한다", async () => {
+    useQueryVector(longQa.vector);
+    const results = semanticResults(
+      await searchKnowledge({ query: "(저장된 벡터로 대체)", limit: 10, excerptLength: 120 }),
+    );
+    expect(results).toHaveLength(10);
+    for (const result of results) {
+      expect(String(result.content).length).toBeLessThanOrEqual(120);
+    }
+  });
+
+  it("유효한 양수가 아닌 excerptLength 는 지정하지 않은 것으로 본다", async () => {
+    useQueryVector(longQa.vector);
+    for (const excerptLength of [0, -10, Number.NaN]) {
+      const [first] = semanticResults(
+        await searchKnowledge({ query: "(저장된 벡터로 대체)", limit: 1, excerptLength }),
+      );
+      expect(first.content, String(excerptLength)).toBe(longQa.content);
+    }
+  });
+});
+
+describe("searchKnowledge 도구 — 통합 검색(scope=all)의 지식 미리보기", () => {
+  const question = "서버를 기동하면 다음과 같은 오류가 발생합니다. ".repeat(20).trim();
+  const answer = "안녕하세요. 표준프레임워크센터입니다. 설정 파일을 확인해 보시기 바랍니다. ".repeat(20).trim();
+
+  /** 통합 검색이 돌려주는 지식 행 (smartSearch 의 결과 형태) */
+  const knowledgeHit = {
+    id: "k1",
+    type: "solution",
+    title: "서버 기동 오류",
+    content: `질문:\n${question}\n\n답변:\n${answer}`,
+    context: "표준프레임워크 묻고답하기",
+    tags: ["egovframe", "qa"],
+    importance: 3,
+    score: 0.1,
+    createdAt: "2026-06-09T06:30:14.979Z",
+    metadata: {},
+  };
+
+  const previewOf = async (excerptLength?: number): Promise<string> => {
+    hybrid.current = {
+      getKnowledge: () => ({}),
+      smartSearch: async () => ({ compatibility: [], knowledge: [knowledgeHit], totalResults: 1 }),
+    };
+    const output = (await searchKnowledge({ query: "서버 기동 오류", scope: "all", excerptLength })) as {
+      scope?: string;
+      knowledge: Array<{ content: string }>;
+    };
+    expect(output.scope).toBe("all");
+    return output.knowledge[0].content;
+  };
+
+  it("기본 200자 미리보기에도 답변 앞부분이 들어간다", async () => {
+    const preview = await previewOf();
+    expect(preview.length).toBeLessThanOrEqual(200);
+    expect(preview).toContain("\n\n답변:\n안녕하세요. 표준프레임워크센터입니다.");
+  });
+
+  it("excerptLength 로 미리보기 길이를 정한다", async () => {
+    const preview = await previewOf(400);
+    expect(preview.length).toBeLessThanOrEqual(400);
+    expect(preview.length).toBeGreaterThan(300);
+    expect(preview).toContain("\n\n답변:\n안녕하세요.");
+
+    expect((await previewOf(80)).length).toBeLessThanOrEqual(80);
+  });
+});
+
 describe.skipIf(!HAS_BUNDLED_TABLES)("searchKnowledge 도구 — query 필수 여부", () => {
   let knowledge: DeveloperKnowledgeManager;
 
