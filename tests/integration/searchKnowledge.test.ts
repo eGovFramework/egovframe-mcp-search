@@ -812,6 +812,16 @@ describe("integration — egov_search_knowledge 개발자 지식·통합 검색"
     },
   );
 
+  it("통합 검색의 호환 소프트웨어 구간 안내는 scope 를 compatibility 로 지정하라고 알린다", async () => {
+    // 통합 검색은 filters.offset 을 쓰지 않으므로 '같은 호출에 offset 을 주라' 고 안내하면 안 된다
+    const res = await search({ scope: "all", query: "CMS", limit: 2 });
+    expect(res.isError).toBe(false);
+    const section = splitSections(res.text).find((part) => part.includes("호환 소프트웨어 검색 결과")) ?? "";
+    expect(section).toContain("filters.offset: 2");
+    expect(section).toContain('scope: "compatibility"');
+    expect(section).not.toContain("같은 호출에");
+  });
+
   it.skipIf(!hasEmbeddingModel())("가이드 검색에 없는 layer 값을 주면 쓸 수 있는 값을 알려 준다", async () => {
     const res = await search({ scope: "guide", query: "트랜잭션", filters: { layer: "runtime" } });
     expect(res.isError).toBe(true);

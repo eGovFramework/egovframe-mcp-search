@@ -101,6 +101,8 @@ interface SectionOptions {
   defaultLimit?: number;
   /** 개발자 지식의 본문을 이 길이 이내의 발췌로 줄인다. */
   knowledgeExcerptLength?: number;
+  /** 통합 검색의 한 섹션으로 실행되는지. 다음 구간을 조회하는 방법의 안내가 달라진다. */
+  inUnifiedSearch?: boolean;
 }
 
 /** componentId 와 그 별칭. 값이 먼저 지정된 키가 쓰인다. */
@@ -710,9 +712,13 @@ async function searchCompatibility(args: EgovSearchKnowledgeArgs, options: Secti
   // 뒤에 남은 결과가 있으면 다음 구간을 조회하는 방법을 알린다.
   const shownEnd = result.offset + result.count;
   const shownRange = result.count === 1 ? `${shownEnd}번째` : `${result.offset + 1}~${shownEnd}번째`;
+  // 통합 검색은 offset 을 쓰지 않으므로, 다음 구간은 scope 를 compatibility 로 지정해서 조회하라고 알린다.
+  const nextPageHow = options.inUnifiedSearch
+    ? `다음 구간은 \`scope: "compatibility"\` 를 지정하고 \`filters.offset: ${shownEnd}\` 을 주어 조회합니다.`
+    : `다음 구간은 같은 호출에 \`filters.offset: ${shownEnd}\` 을 주어 조회합니다.`;
   const pagingNote =
     result.count > 0 && shownEnd < result.total
-      ? `> 전체 ${result.total}건 중 ${shownRange} 결과를 표시했습니다. 다음 구간은 같은 호출에 \`filters.offset: ${shownEnd}\` 을 주어 조회합니다.`
+      ? `> 전체 ${result.total}건 중 ${shownRange} 결과를 표시했습니다. ${nextPageHow}`
       : undefined;
 
   return withNotes(
@@ -747,8 +753,10 @@ async function searchAll(args: EgovSearchKnowledgeArgs): Promise<string> {
   const options: SectionOptions = {
     defaultLimit: ALL_SCOPE_SECTION_LIMIT,
     knowledgeExcerptLength: ALL_SCOPE_KNOWLEDGE_EXCERPT_LENGTH,
+    inUnifiedSearch: true,
   };
 
+  let failedSections = 0;
   const sections = await Promise.all(
     (
       [
@@ -762,10 +770,17 @@ async function searchAll(args: EgovSearchKnowledgeArgs): Promise<string> {
         return await run();
       } catch (error) {
         logToolError(error);
+        failedSections += 1;
         return `## ${title}\n\n검색 중 오류가 발생했습니다: ${toUserMessage(error)}`;
       }
     }),
   );
+
+  const body = `# 통합 지식 검색 결과\n\n${sections.join("\n\n---\n\n")}`;
+  // 일부 출처만 실패하면 나머지 결과와 함께 정상 응답하고, 모든 출처가 실패하면 오류로 응답한다.
+  if (failedSections === sections.length) {
+    throw new UserFacingError(body);
+  }
 
   // 어느 출처에도 넘기지 않은 필터(sort, knowledgeScope, offset 등)는 통합 검색에서 쓰이지 않는다.
   const ignored = ignoredFiltersNote(filters, [
@@ -777,7 +792,7 @@ async function searchAll(args: EgovSearchKnowledgeArgs): Promise<string> {
     "limit",
   ]);
 
-  return withNotes(`# 통합 지식 검색 결과\n\n${sections.join("\n\n---\n\n")}`, ignored);
+  return withNotes(body, ignored);
 }
 
 /**

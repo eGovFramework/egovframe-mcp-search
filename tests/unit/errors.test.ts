@@ -52,8 +52,17 @@ describe("runEgovSearchKnowledge 의 오류 응답", () => {
   afterEach(() => {
     vi.resetModules();
     vi.doUnmock("../../src/rag/guideManager.js");
+    vi.doUnmock("../../src/tools/knowledge.js");
+    vi.doUnmock("../../src/tools/compatibility.js");
+    vi.doUnmock("../../src/tools/commonComponents.js");
     vi.restoreAllMocks();
   });
+
+  /**
+   * 게이트웨이가 불러올 모듈 그래프의 UserFacingError 를 가져온다.
+   * (afterEach 가 모듈을 초기화하므로, 파일 머리에서 import 한 클래스와는 다른 객체다.)
+   */
+  const freshUserFacingError = async () => (await import("../../src/utils/errors.js")).UserFacingError;
 
   it("입력 검증 오류는 원문 그대로 isError 로 돌려준다", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -61,6 +70,63 @@ describe("runEgovSearchKnowledge 의 오류 응답", () => {
     const result = await runEgovSearchKnowledge({ scope: "guide" });
     expect(result.isError).toBe(true);
     expect(result.text).toBe("query is required for guide search");
+  });
+
+  it("통합 검색에서 모든 출처가 실패하면 오류로 응답한다", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const Fresh = await freshUserFacingError();
+    const failing = (message: string) => () => {
+      throw new Fresh(message);
+    };
+    vi.doMock("../../src/rag/guideManager.js", () => ({
+      getInitializedGuideManager: async () => {
+        throw new Fresh("가이드 인덱스 없음");
+      },
+    }));
+    vi.doMock("../../src/tools/knowledge.js", () => ({ searchKnowledge: async () => failing("지식 인덱스 없음")() }));
+    vi.doMock("../../src/tools/compatibility.js", () => ({
+      searchCompatibleSoftware: async () => failing("DB 없음")(),
+    }));
+    vi.doMock("../../src/tools/commonComponents.js", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("../../src/tools/commonComponents.js")>()),
+      searchComponents: failing("DB 없음"),
+    }));
+
+    const { runEgovSearchKnowledge } = await import("../../src/tools/egovSearchKnowledge.js");
+    const result = await runEgovSearchKnowledge({ scope: "all", query: "게시판" });
+
+    expect(result.isError).toBe(true);
+    // 출처마다 무엇이 실패했는지는 그대로 알려 준다
+    expect(result.text).toContain("가이드 인덱스 없음");
+    expect(result.text).toContain("지식 인덱스 없음");
+    expect(result.text).toContain("## 호환 소프트웨어");
+  });
+
+  it("통합 검색에서 일부 출처만 실패하면 나머지 결과와 함께 정상 응답한다", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const Fresh = await freshUserFacingError();
+    vi.doMock("../../src/rag/guideManager.js", () => ({
+      getInitializedGuideManager: async () => {
+        throw new Fresh("가이드 인덱스 없음");
+      },
+    }));
+    vi.doMock("../../src/tools/knowledge.js", () => ({
+      searchKnowledge: async () => ({ success: true, resultCount: 0, results: [] }),
+    }));
+    vi.doMock("../../src/tools/compatibility.js", () => ({
+      searchCompatibleSoftware: async () => ({ success: true, total: 0, count: 0, limit: 5, offset: 0, filters: {}, software: [] }),
+    }));
+    vi.doMock("../../src/tools/commonComponents.js", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("../../src/tools/commonComponents.js")>()),
+      searchComponents: () => ({ results: [], query: "게시판", total: 0 }),
+    }));
+
+    const { runEgovSearchKnowledge } = await import("../../src/tools/egovSearchKnowledge.js");
+    const result = await runEgovSearchKnowledge({ scope: "all", query: "게시판" });
+
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("가이드 인덱스 없음");
+    expect(result.text).toContain("## 호환 소프트웨어 검색 결과");
   });
 
   it("내부 오류의 절대 경로와 SQL 은 응답에 넣지 않는다", async () => {
