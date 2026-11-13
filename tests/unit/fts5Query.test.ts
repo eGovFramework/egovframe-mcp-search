@@ -69,6 +69,49 @@ describe("extractSearchTerms", () => {
   });
 });
 
+describe("extractSearchTerms 가 빼는 접속사", () => {
+  it("단독 낱말 AND, OR, NOT, NEAR 는 검색어로 쓰지 않는다", () => {
+    expect(extractSearchTerms("JEUS OR Tibero")).toEqual(["JEUS", "Tibero"]);
+    expect(extractSearchTerms("JEUS AND Tibero")).toEqual(["JEUS", "Tibero"]);
+    expect(extractSearchTerms("JEUS NOT Tibero")).toEqual(["JEUS", "Tibero"]);
+    expect(extractSearchTerms("JEUS NEAR Tibero")).toEqual(["JEUS", "Tibero"]);
+  });
+
+  it("대소문자를 가리지 않는다", () => {
+    expect(extractSearchTerms("JEUS and Tibero")).toEqual(["JEUS", "Tibero"]);
+    expect(extractSearchTerms("jeus Or tibero nOt weblogic Near oracle")).toEqual([
+      "jeus",
+      "tibero",
+      "weblogic",
+      "oracle",
+    ]);
+  });
+
+  it("문장부호가 붙어 있어도 뺀다", () => {
+    expect(extractSearchTerms("(JEUS) OR, 'Tibero'")).toEqual(["JEUS", "Tibero"]);
+    expect(extractSearchTerms("NEAR(JEUS Tibero)")).toEqual(["JEUS", "Tibero"]);
+  });
+
+  it("다른 낱말의 일부인 경우에는 빼지 않는다", () => {
+    expect(extractSearchTerms("Android ORACLE notebook nearby and-or")).toEqual([
+      "Android",
+      "ORACLE",
+      "notebook",
+      "nearby",
+      "and-or",
+    ]);
+  });
+
+  it("접속사뿐인 query 에서는 검색어가 추출되지 않는다", () => {
+    expect(extractSearchTerms("AND")).toEqual([]);
+    expect(extractSearchTerms("and or NOT near")).toEqual([]);
+  });
+
+  it("뺀 접속사는 검색어 수 상한에 세지 않는다", () => {
+    expect(extractSearchTerms("a AND b OR c NOT d", 3)).toEqual(["a", "b", "c"]);
+  });
+});
+
 describe("extractSearchTerms 가 읽는 query 의 길이", () => {
   it("읽는 길이의 상한은 2,000자다", () => {
     expect(MAX_KEYWORD_QUERY_LENGTH).toBe(2000);
@@ -210,7 +253,7 @@ describe("조립한 MATCH 식을 실제 FTS5 에 실행", () => {
     for (const raw of nasty) {
       expect(() => match(raw), `query=${raw}`).not.toThrow();
     }
-    // 연산자 단어는 연산자가 아니라 낱말로 검색된다
+    // 연산자 단어는 검색어에서 빠지고, 남은 낱말로 검색된다
     expect(match("AND 연산")).toEqual([6]);
   });
 });

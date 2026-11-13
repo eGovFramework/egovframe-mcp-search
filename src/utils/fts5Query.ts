@@ -15,12 +15,20 @@ export const MAX_SEARCH_TERMS = 16;
 export const MAX_KEYWORD_QUERY_LENGTH = 2000;
 
 /**
+ * 검색어로 쓰지 않는 영문 접속사 (소문자로 비교한다).
+ * 검색 연산자처럼 적은 "JEUS OR Tibero", "JEUS and Tibero" 의 접속사를 검색어로 세면,
+ * 그 낱말까지 일치하는 행을 찾느라 제품명이 일치하는 행을 놓친다.
+ */
+const CONNECTIVE_WORDS: ReadonlySet<string> = new Set(['and', 'or', 'not', 'near']);
+
+/**
  * 키워드 질의에서 검색어를 추출한다.
  *
  * - query 의 앞 MAX_KEYWORD_QUERY_LENGTH 자만 읽는다 (경계에 걸친 낱말은 잘린 부분까지만 검색어가 된다).
  * - 유니코드 NFC 로 정규화한다 (자모가 분리된 한글 입력 대응).
  * - 문자·숫자와 검색어 안쪽의 `.` `-` `_` 만 남기고, 그 밖의 문장부호와 공백은 구분자로 본다.
  *   (`4.3`, `egovframework.com.cop.bbs`, `spring-boot` 같은 식별자는 한 검색어로 유지된다.)
+ * - 단독 낱말 AND, OR, NOT, NEAR 는 대소문자와 관계없이 검색어에서 뺀다 (`Android` 처럼 낱말의 일부인 것은 남긴다).
  * - 대소문자만 다른 중복은 처음 것만 남기고, 최대 maxTerms 개까지만 돌려준다.
  */
 export function extractSearchTerms(raw: string, maxTerms: number = MAX_SEARCH_TERMS): string[] {
@@ -36,7 +44,7 @@ export function extractSearchTerms(raw: string, maxTerms: number = MAX_SEARCH_TE
       continue;
     }
     const key = term.toLowerCase();
-    if (seen.has(key)) {
+    if (CONNECTIVE_WORDS.has(key) || seen.has(key)) {
       continue;
     }
     seen.add(key);
