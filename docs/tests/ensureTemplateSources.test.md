@@ -1,6 +1,6 @@
 # `ensureTemplateSources.test.ts`
 
-`build-index` 가 템플릿 소스 저장소를 확보하고 버전 태그를 고르는 동작(`ensureEgovframeDocs`, `ensureCommonComponentsSrc`)을 검증하는 통합 테스트입니다.
+`build-index` 가 템플릿 소스 저장소를 확보하고 버전 태그를 고르는 동작(`ensureEgovframeDocs`, `ensureCommonComponentsSrc`)과, 확보한 소스의 버전 표기를 구하는 동작(`describeSourceVersion`)을 검증하는 통합 테스트입니다.
 
 > - 위치: `tests/integration/ensureTemplateSources.test.ts`
 > - 실행: `npm test` 또는 `npx vitest run tests/integration/ensureTemplateSources.test.ts`
@@ -19,6 +19,11 @@
 
 체크아웃 형태(서브모듈, 독립 클론, git 정보가 없는 배포본, 아직 받지 않은 상태)마다 같은 규칙이 지켜지는지를 실제 git 저장소로 확인합니다. 체크아웃 형태를 판정하는 `resolveSourceStrategy` 와 태그 입력 처리는 단위 테스트 `tests/unit/templateSources.test.ts` 가 다룹니다.
 
+`describeSourceVersion` 은 소스 디렉터리의 버전 표기를 돌려주는 함수입니다. `build-index` 는 이 값을 `knowledge-base/state.json` 에 공식 가이드의 `version` 과 공통컴포넌트의 `source_version` 으로 기록합니다. 이 파일은 다음을 고정합니다.
+
+- 소스 디렉터리가 저장소이거나 서브모듈 체크아웃이면 그 디렉터리 자신의 태그를 돌려줍니다.
+- 자기 `.git` 이 없는 디렉터리(반입한 소스나 복사본)에는 `null` 을 돌려줍니다. 그런 디렉터리에서 git 을 실행하면 바깥 저장소의 버전이 나오므로, 그 값을 소스의 버전으로 기록하지 않기 위한 것입니다.
+
 ## 2. 파일 구조와 헬퍼
 
 이 파일은 [_helper.md](./_helper.md)의 헬퍼를 쓰지 않고, 서버도 실행하지 않습니다. `beforeEach` 에서 임시 디렉터리(`os.tmpdir()` 아래의 `ensure-sources-*`)를 만들고 그 안에 원격 역할의 저장소(`upstream`)를 초기화하며, `afterEach` 에서 임시 디렉터리를 지웁니다. 검증 대상 함수에는 `sourceDir`, `projectRoot`, `repoUrl` 을 임시 디렉터리의 경로로 넘기므로 저장소의 `templates/` 는 건드리지 않습니다.
@@ -28,7 +33,7 @@
 | 도우미 | 하는 일 |
 |---|---|
 | `git(cwd, ...args)` | `execFileSync` 로 git 명령을 실행하고 출력을 돌려줌 |
-| `initRepo(dir)` | `git init -b main` 으로 저장소를 만들고 커밋에 필요한 사용자 설정을 넣음 |
+| `initRepo(dir)` | `git init -b main` 으로 저장소를 만들고, 커밋에 필요한 사용자 설정을 넣고, 그 저장소의 커밋 서명과 태그 서명(`commit.gpgsign`, `tag.gpgsign`)을 끔 |
 | `commitMarker(upstream, markerFile, content, tag?)` | 마커 파일의 내용을 바꿔 커밋하고, `tag` 를 주면 그 커밋에 태그를 붙임 |
 | `selectorReturning(answer)` | 항상 `answer` 를 돌려주는 `selectTag` 와, 콜백이 받은 인자를 기록한 `calls` 배열을 돌려줌 |
 | `setupParentWithSubmodule(rel)` | 부모 저장소를 만들고 `upstream` 을 서브모듈로 등록해 커밋함 |
@@ -38,7 +43,7 @@
 
 ## 3. 케이스 상세
 
-"돌려줌" 은 `selectTag` 콜백의 반환값을 뜻합니다. 3-3 을 뺀 묶음의 케이스는 함수가 `true` 를 돌려주는지도 함께 확인합니다. 콜백이 받은 인자만 확인하는 3-1 의 둘째 케이스와 오류 전파 케이스는 예외입니다.
+3-1 부터 3-5 까지에서 "돌려줌" 은 `selectTag` 콜백의 반환값을 뜻합니다. 3-1, 3-2, 3-4, 3-5 의 케이스는 함수가 `true` 를 돌려주는지도 함께 확인합니다. 콜백이 받은 인자만 확인하는 3-1 의 둘째 케이스와 오류 전파 케이스는 예외입니다.
 
 ### 3-1. `ensureEgovframeDocs (서브모듈 + 태그 선택)`
 
@@ -91,6 +96,14 @@
 |---|---|---|
 | `pom.xml 마커로 서브모듈을 감지하고 선택한 태그로 갱신한다` | `templates/common-components-src` 경로의 서브모듈이 `v5.0.1` 에 있고 원격에 `v5.0.6` 과 태그 없는 최신 커밋이 있음. `v5.0.6` 을 돌려줌 | 콜백이 받은 `currentTag` 가 `v5.0.1` 이고, `pom.xml` 의 내용이 `v5.0.6` 의 것임 |
 
+### 3-6. `describeSourceVersion`
+
+| 케이스 | 준비 | 확인하는 것 |
+|---|---|---|
+| `자기 저장소의 태그를 돌려준다` | 원격 역할의 저장소(`upstream`)에 `v1.0.0` 태그가 붙은 커밋이 있음 | `upstream` 에 대해 `v1.0.0` 을 돌려줌 |
+| `서브모듈 체크아웃은 부모가 아니라 서브모듈의 버전을 돌려준다` | `v1.0.0` 의 `upstream` 을 서브모듈로 등록한 부모 저장소에 `parent-tag` 태그를 붙임 | 서브모듈 디렉터리에 대해 `v1.0.0` 을 돌려줌 (`parent-tag` 가 아님) |
+| `git 저장소가 아닌 디렉토리는 바깥 저장소의 버전을 빌려 오지 않고 null 이다` | `v1.0.0` 태그가 있는 저장소 안에 자기 `.git` 이 없는 디렉터리(`templates/plain-copy`)를 만들고 `pom.xml` 을 둠 | 그 디렉터리에 대해 `null` 을 돌려줌 |
+
 ## 4. 실행 방법
 
 ```bash
@@ -117,5 +130,5 @@ npx vitest run tests/integration/ensureTemplateSources.test.ts
 | 증상 | 원인 | 대응 |
 |---|---|---|
 | 모든 케이스가 `spawnSync git ENOENT` 로 실패 | `PATH` 에서 `git` 을 찾지 못했습니다 | git 을 설치하거나 `PATH` 를 확인합니다 |
-| 태그를 쓰는 케이스가 `Command failed: git tag v1.0.0` 과 `fatal: no tag message?` 로 실패 | 전역 git 설정에 `tag.gpgSign = true` 가 있습니다. 테스트의 `initRepo` 는 `commit.gpgsign` 만 끄기 때문에 태그 서명 설정은 그대로 적용됩니다 | 환경 변수로 이 실행에서만 설정을 끕니다: `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=tag.gpgSign GIT_CONFIG_VALUE_0=false npx vitest run tests/integration/ensureTemplateSources.test.ts` |
 | 체크아웃된 내용이 기대와 다름 | `applyTagSelection` 의 분기(콜백 없음, 태그 없음, fetch 실패)를 바꿨습니다 | 이 문서 1절의 규칙과 `src/scripts/templateSources.ts` 머리 주석을 대조합니다 |
+| `describeSourceVersion` 의 `null` 케이스가 `v1.0.0` 을 받아 실패 | 소스 디렉터리에 자기 `.git` 이 있는지 확인하는 처리가 빠졌습니다 | `src/scripts/templateSources.ts` 의 `describeSourceVersion` 을 확인합니다 |
