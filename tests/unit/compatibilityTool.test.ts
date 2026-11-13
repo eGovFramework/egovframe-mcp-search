@@ -11,7 +11,7 @@ import fs from "fs-extra";
 import path from "node:path";
 import os from "node:os";
 import { SQLiteManager } from "../../src/database/sqliteManager.js";
-import { CATALOGUE, versionsOf, type SoftwareSeed } from "./_compatibilityFixture.js";
+import { CATALOGUE, DATED, versionsOf, type SoftwareSeed } from "./_compatibilityFixture.js";
 
 const hybrid = vi.hoisted(() => ({
   sqlite: undefined as unknown,
@@ -402,6 +402,30 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       expect(JSON.stringify(response)).not.toContain("/opt/app");
       expect(hybrid.findKnowledgeForSoftware).not.toHaveBeenCalled();
       expect(logged.mock.calls.flat().map(String).join("\n")).toContain("/opt/app/models");
+    });
+  });
+
+  describe("확인일자 순 정렬", () => {
+    // DATED 에는 verified_date 가 날짜가 아닌 행('㈜어떤회사', 'https://vendor.example')이 있다
+    useCatalogue([...CATALOGUE, ...DATED]);
+
+    it("최신순 목록의 첫 행은 가장 최근 날짜의 행이고, 날짜가 아닌 값은 맨 뒤로 간다", async () => {
+      const response = await searchCompatibleSoftware({});
+      expect(response.total).toBe(CATALOGUE.length + DATED.length);
+      expect(response.software[0]).toMatchObject({ product_version: "Dated New 1.0", verified_date: "2025-12-31" });
+      expect(response.software.slice(-2).map((software) => software.verified_date)).toEqual([
+        "㈜어떤회사",
+        "https://vendor.example",
+      ]);
+    });
+
+    it("첫 페이지만 요청해도 날짜가 아닌 값이 끼어들지 않는다", async () => {
+      const response = await searchCompatibleSoftware({ limit: 3 });
+      expect(response.software.map((software) => software.verified_date)).toEqual([
+        "2025-12-31",
+        "2025-08-21",
+        "2024-05-05",
+      ]);
     });
   });
 

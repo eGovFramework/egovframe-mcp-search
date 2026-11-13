@@ -330,6 +330,8 @@ export class SQLiteManager {
    *   모든 검색어가 일치하는 행도 나올 수 있다.
    * - query 가 없거나 검색어가 하나도 추출되지 않으면("*", "?" 등) 필터에 맞는 행을
    *   확인일자가 최근인 순으로 돌려준다.
+   * - 확인일자 순은 어느 경로에서나 같다 (COMPATIBILITY_NEWEST_FIRST): verified_date 가 날짜 꼴이 아닌 행은
+   *   맨 뒤로 간다. 키워드 검색에서는 검색 순위(또는 일치한 검색어 수)가 같은 행끼리 이 순서를 따른다.
    *
    * total 은 같은 조건에 맞는 전체 건수이고, rows 는 그 가운데 offset 부터 limit 건이다.
    * rows 에는 내부용 컬럼(id, created_at)을 넣지 않는다.
@@ -456,10 +458,12 @@ export class SQLiteManager {
       if (total === 0) {
         return null;
       }
+      // 검색 순위가 같은 행은 대상이 정한 정렬(rankTieOrder)을 따르고, 마지막에는 rowid 로 순서를 가른다
+      const rankTieOrder = target.rankTieOrder ? `${target.rankTieOrder}, ` : '';
       const rows = this.db
         .prepare(
           `SELECT ${target.columns} ${from}
-             ORDER BY rank, ${target.rowid}
+             ORDER BY rank, ${rankTieOrder}${target.rowid}
              LIMIT ? OFFSET ?`,
         )
         .all(match, ...filter.params, page.limit, page.offset) as Row[];
@@ -1138,9 +1142,25 @@ interface KeywordSearchTarget {
   rowid: string;
   /** 부분 일치 대체 검색이 검색어를 찾아보는 컬럼 */
   likeColumns: string[];
-  /** 부분 일치 대체 검색에서 일치한 검색어 수 다음에 적용하는 기본 정렬 */
+  /**
+   * 기본 정렬. 부분 일치 대체 검색에서 일치한 검색어 수 다음에 적용하고,
+   * 호환성 소프트웨어는 키워드 없는 필터 조회에도 이 정렬을 쓴다
+   */
   defaultOrder: string;
+  /** 접두 일치 검색에서 검색 순위(rank)가 같은 행에 적용하는 정렬. 없으면 rowid 로만 순서를 가른다 */
+  rankTieOrder?: string;
 }
+
+/**
+ * 호환성 소프트웨어를 확인일자가 최근인 순으로 놓는 정렬.
+ *
+ * verified_date 는 'YYYY-MM-DD' 문자열이라 문자열 내림차순이 곧 최신순이다. 다만 원본 데이터에는 필드가 밀려
+ * 이 컬럼에 벤더명이나 URL 이 들어 있는 행이 있고, 그런 값('㈜…', 'https://…')은 문자열 내림차순에서 어떤
+ * 날짜보다도 앞에 온다. YYYY-MM-DD 꼴로 시작하는 행을 먼저 놓아 날짜가 아닌 값을 뒤로 보낸다.
+ * 데이터는 고치지 않으며, 날짜가 아닌 값끼리는 문자열 내림차순 그대로다.
+ */
+const COMPATIBILITY_NEWEST_FIRST =
+  "(cs.verified_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*') DESC, cs.verified_date DESC";
 
 const COMPATIBILITY_SEARCH: KeywordSearchTarget = {
   // 조회 결과로 내보내는 컬럼만 명시한다. 내부용 id(재구축마다 바뀜)와 created_at(적재 시각)은 넣지 않는다.
@@ -1159,7 +1179,8 @@ const COMPATIBILITY_SEARCH: KeywordSearchTarget = {
   ftsTable: 'compatibility_fts',
   rowid: 'cs.id',
   likeColumns: ['cs.product_name', 'cs.vendor', 'cs.description', 'cs.category'],
-  defaultOrder: 'cs.verified_date DESC',
+  defaultOrder: COMPATIBILITY_NEWEST_FIRST,
+  rankTieOrder: COMPATIBILITY_NEWEST_FIRST,
 };
 
 /** 배열을 돌려주는 기존 메서드용: id 로 행을 구분하는 호출부가 있어 모든 컬럼을 조회한다. */

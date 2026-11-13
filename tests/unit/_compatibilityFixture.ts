@@ -82,6 +82,34 @@ export const CATALOGUE: SoftwareSeed[] = [
   },
 ];
 
+/**
+ * 확인일자 정렬을 확인하는 행. CATALOGUE 에 넣지 않고, 필요한 테스트가 따로 적재한다
+ * (CATALOGUE 의 행 수와 낱말 분포에 기대는 테스트가 많다).
+ *
+ * - 적재 순서(id 순)가 확인일자 순서와 다르다.
+ * - 두 행은 verified_date 에 날짜가 아닌 값이 들어 있다 (원본 데이터에서 필드가 밀린 행을 본뜬 것).
+ *   문자열로 내림차순 정렬하면 이 값들이 어떤 날짜보다도 앞에 온다 ('㈜…' > 'https…' > '2025…').
+ * - 컬럼마다 낱말 수가 같아, "Dated" 로 찾으면 네 행의 검색 순위(rank)가 같다.
+ * - "ated" 는 'Dated' 의 중간이라 접두 일치로는 찾을 수 없고, 이 네 행에만 들어 있다.
+ */
+const dated = (suffix: string, verified_date: string): SoftwareSeed => ({
+  product_name: `Dated ${suffix}`,
+  product_version: `Dated ${suffix} 1.0`,
+  framework_version: "4.1",
+  category: "Date Check",
+  compatibility_level: 2,
+  vendor: "정렬벤더",
+  verified_date,
+  description: "확인일자 정렬용",
+});
+
+export const DATED: SoftwareSeed[] = [
+  dated("Old", "2021-01-01"),
+  dated("Vendor", "㈜어떤회사"),
+  dated("New", "2025-12-31"),
+  dated("Url", "https://vendor.example"),
+];
+
 /** 행을 구분하기 쉬운 값(product_version)만 뽑는다. */
 export const versionsOf = (rows: Array<{ product_version: string }>): string[] =>
   rows.map((row) => row.product_version);

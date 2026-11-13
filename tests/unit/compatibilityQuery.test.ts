@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { SQLiteManager } from "../../src/database/sqliteManager.js";
-import { CATALOGUE, versionsOf } from "./_compatibilityFixture.js";
+import { CATALOGUE, DATED, versionsOf } from "./_compatibilityFixture.js";
 import fs from "fs-extra";
 import path from "node:path";
 import os from "node:os";
@@ -414,6 +414,79 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(count(undefined, 1e300)).toBe(0);
       // 키워드 검색 경로도 같다
       expect(sqlite.queryCompatibleSoftware({ query: "JEUS", limit: 1.5, offset: 0.5 }).rows).toHaveLength(1);
+    });
+  });
+
+  describe("확인일자 순 정렬 (verified_date 에 날짜가 아닌 값이 든 행)", () => {
+    // 적재 순서는 Old, Vendor, New, Url 이다. 문자열 내림차순으로는 Vendor('㈜…'), Url('https…'), New, Old 가 된다
+    const NEWEST_FIRST = ["Dated New 1.0", "Dated Old 1.0", "Dated Vendor 1.0", "Dated Url 1.0"];
+
+    beforeEach(() => {
+      sqlite.addCompatibilitySoftwareBatch(DATED);
+    });
+
+    it("최신순 목록의 첫 행은 가장 최근 날짜의 행이고, 날짜가 아닌 값은 맨 뒤로 간다", () => {
+      const result = sqlite.queryCompatibleSoftware();
+      expect(result.rows[0]).toMatchObject({ product_version: "Dated New 1.0", verified_date: "2025-12-31" });
+      expect(result.rows.map((row) => row.verified_date)).toEqual([
+        "2025-12-31",
+        "2025-08-21",
+        "2024-05-05",
+        "2023-03-03",
+        "2022-12-12",
+        "2022-11-02",
+        "2021-01-01",
+        "2017-01-01",
+        "㈜어떤회사",
+        "https://vendor.example",
+      ]);
+    });
+
+    it("필터 조회도 같은 순서를 따른다", () => {
+      const result = sqlite.queryCompatibleSoftware({ filters: { category: "Date Check" } });
+      expect(versionsOf(result.rows)).toEqual(NEWEST_FIRST);
+      // 페이지를 나눠도 같다
+      const paged = [0, 1, 2, 3].flatMap(
+        (offset) => sqlite.queryCompatibleSoftware({ filters: { category: "Date Check" }, limit: 1, offset }).rows,
+      );
+      expect(versionsOf(paged)).toEqual(NEWEST_FIRST);
+    });
+
+    it("접두 일치 검색에서 검색 순위가 같은 행도 같은 순서를 따른다", () => {
+      const result = sqlite.queryCompatibleSoftware({ query: "Dated" });
+      expect(result.matchMode).toBe("all-terms");
+      expect(versionsOf(result.rows)).toEqual(NEWEST_FIRST);
+    });
+
+    it("부분 일치 대체 검색에서 일치한 검색어 수가 같은 행도 같은 순서를 따른다", () => {
+      const result = sqlite.queryCompatibleSoftware({ query: "ated" });
+      expect(result.matchMode).toBe("any-term");
+      expect(versionsOf(result.rows)).toEqual(NEWEST_FIRST);
+    });
+
+    it("배열을 돌려주는 메서드도 같은 순서를 따른다", () => {
+      expect(versionsOf(sqlite.searchCompatibleSoftware({ category: "Date Check" }))).toEqual(NEWEST_FIRST);
+      expect(versionsOf(sqlite.searchCompatibleSoftware({ category: "Date Check" }, 1))).toEqual(["Dated New 1.0"]);
+      expect(versionsOf(sqlite.fullTextSearchCompatibility("Dated"))).toEqual(NEWEST_FIRST);
+    });
+
+    it("YYYY-MM-DD 꼴로 시작하는 값만 날짜로 본다", () => {
+      const shaped = (suffix: string, verified_date: string) => ({
+        ...DATED[0],
+        product_name: `Shape ${suffix}`,
+        product_version: `Shape ${suffix}`,
+        category: "Shape Check",
+        verified_date,
+      });
+      sqlite.addCompatibilitySoftwareBatch([
+        shaped("dots", "2026.01.01"),
+        shaped("short", "26-01-01"),
+        shaped("suffix", "2020-02-02 재확인"),
+        shaped("plain", "2020-03-03"),
+      ]);
+      // 날짜 꼴인 두 행이 먼저(최근 순), 나머지는 그 뒤에 문자열 내림차순으로 온다
+      const result = sqlite.queryCompatibleSoftware({ filters: { category: "Shape Check" } });
+      expect(versionsOf(result.rows)).toEqual(["Shape plain", "Shape suffix", "Shape short", "Shape dots"]);
     });
   });
 
