@@ -313,6 +313,15 @@ describe("integration — egov_search_knowledge 가이드 검색 결과의 형�
       expect(res.text).toMatch(/전체 [\d,]+자 중 6,001~12,000자/);
     });
 
+    it("청크를 이어 읽을 때 함께 준 query 와 limit 은 쓰이지 않았다고 알린다", async () => {
+      const chunk = await longestChunk();
+      const res = await search({ scope: "guide", query: "트랜잭션", limit: 3, filters: { chunkId: chunk.id } });
+      expect(res.isError).toBe(false);
+      const note = res.text.split("\n").find((line) => line.includes("쓰이지 않아 무시한 파라미터")) ?? "";
+      expect(note).toContain("query");
+      expect(note).toContain("limit");
+    });
+
     it("없는 chunkId 는 다시 검색하라는 안내로 답한다", async () => {
       const res = await search({ scope: "guide", filters: { chunkId: "00000000-0000-0000-0000-000000000000" } });
       expect(res.isError).toBe(true);
@@ -903,6 +912,160 @@ describe("integration — egov_search_knowledge 적용되지 않는 필터 안�
     const note = res.text.split("\n").find((line) => line.includes(IGNORED_MARKER)) ?? "";
     expect(note).toContain("layer");
     expect(note).not.toContain("frameworkVersion");
+  });
+});
+
+describe("integration — egov_search_knowledge 쓰이지 않은 입력 안내", () => {
+  let client: Client;
+
+  beforeAll(async () => {
+    client = await createMcpClient();
+  });
+
+  afterAll(async () => {
+    await client?.close();
+  });
+
+  const search = (args: Record<string, unknown>) => callSearchKnowledge(client, args);
+
+  /** 쓰이지 않은 최상위 파라미터(query, limit)를 알리는 안내 줄의 표지 */
+  const UNUSED_PARAM_MARKER = "쓰이지 않아 무시한 파라미터";
+  /** 무시한 필터를 알리는 안내 줄의 표지 */
+  const IGNORED_MARKER = "적용되지 않아 무시한 필터";
+  const noteLine = (text: string, marker: string) => text.split("\n").find((line) => line.includes(marker)) ?? "";
+
+  it("action 이 쓰지 않는 최상위 query 와 limit 을 알린다", async () => {
+    const res = await search({
+      scope: "components",
+      action: "get",
+      query: "게시판 상세",
+      limit: 5,
+      filters: { componentId: "bbs" },
+    });
+    expect(res.isError).toBe(false);
+    const note = noteLine(res.text, UNUSED_PARAM_MARKER);
+    expect(note).toContain("query");
+    expect(note).toContain("limit");
+  });
+
+  it("componentId 로 상세를 조회할 때 함께 준 query 를 알린다", async () => {
+    const res = await search({ scope: "components", query: "게시판", filters: { componentId: "bbs" } });
+    expect(res.isError).toBe(false);
+    const note = noteLine(res.text, UNUSED_PARAM_MARKER);
+    expect(note).toContain("query");
+    expect(note).not.toContain("limit");
+  });
+
+  it("조회에 쓰인 query 와 limit 에는 안내를 붙이지 않는다", async () => {
+    const calls: Array<Record<string, unknown>> = [
+      { scope: "components", query: "게시판", limit: 3 },
+      { scope: "components", filters: { hasWeb: true }, limit: 3 },
+      { scope: "compatibility", query: "JEUS", limit: 3 },
+      { scope: "knowledge", filters: { sort: "recent" }, limit: 2 },
+    ];
+    for (const call of calls) {
+      const res = await search(call);
+      expect(res.isError, JSON.stringify(call)).toBe(false);
+      expect(res.text, JSON.stringify(call)).not.toContain(UNUSED_PARAM_MARKER);
+    }
+  });
+
+  it("카테고리 개요는 limit 을 쓰지 않으므로 알린다", async () => {
+    const res = await search({ scope: "components", limit: 3 });
+    expect(res.isError).toBe(false);
+    expect(noteLine(res.text, UNUSED_PARAM_MARKER)).toContain("limit");
+  });
+
+  it("최근 지식 목록은 query 를 쓰지 않으므로 알린다", async () => {
+    const res = await search({ scope: "knowledge", query: "로그인", filters: { sort: "recent" }, limit: 2 });
+    expect(res.isError).toBe(false);
+    const note = noteLine(res.text, UNUSED_PARAM_MARKER);
+    expect(note).toContain("query");
+    expect(note).not.toContain("limit");
+  });
+
+  it("sort recent 와 함께 준 knowledgeScope all 은 무시했다고 알린다", async () => {
+    const res = await search({ scope: "knowledge", filters: { sort: "recent", knowledgeScope: "all" }, limit: 2 });
+    expect(res.isError).toBe(false);
+    expect(noteLine(res.text, IGNORED_MARKER)).toContain("knowledgeScope");
+  });
+
+  it.skipIf(!hasComponentSources())("dml 기본 보기는 limit 을 쓰지 않으므로 알린다", async () => {
+    const res = await search({ scope: "components", action: "dml", filters: { componentId: "bbs" }, limit: 5 });
+    expect(res.isError).toBe(false);
+    expect(noteLine(res.text, UNUSED_PARAM_MARKER)).toContain("limit");
+  });
+
+  it.skipIf(!hasComponentSources())("dml 구간 조회에서 최댓값을 넘는 limit 은 줄였다고 알린다", async () => {
+    const res = await search({
+      scope: "components",
+      action: "dml",
+      filters: { componentId: "bbs", table: "COMTCCMMNDETAILCODE" },
+      limit: 150,
+    });
+    expect(res.isError).toBe(false);
+    expect(res.text).toMatch(/요청한 limit 150 은\(는\) [^\n]*최댓값 100 으로 줄여 적용했습니다/);
+    expect(res.text).not.toContain(UNUSED_PARAM_MARKER);
+  });
+
+  it("통합 검색의 한 섹션이 쓰지 않은 limit 과 query 는 무시했다고 알리지 않는다", async () => {
+    // componentId 를 주면 공통컴포넌트 섹션은 상세 조회가 되어 limit 과 query 를 쓰지 않지만, 다른 섹션은 쓴다
+    const res = await search({ scope: "all", query: "JEUS 설정", filters: { componentId: "uia", limit: 1 } });
+    expect(res.isError).toBe(false);
+    expect(res.text).toContain("### 기본 정보");
+    expect(res.text).not.toContain(IGNORED_MARKER);
+    expect(res.text).not.toContain(UNUSED_PARAM_MARKER);
+  });
+
+  it("빈 문자열만 든 배열 필터는 지정하지 않은 것으로 본다", async () => {
+    // 지정한 것으로 보면 scope 추론이 knowledge·components 로 가서 오류가 된다
+    for (const filters of [{ tags: [""] }, { componentIds: ["", "  "] }]) {
+      const res = await search({ filters });
+      expect(res.isError, JSON.stringify(filters)).toBe(false);
+      expect(res.text, JSON.stringify(filters)).toContain("공통컴포넌트 카테고리");
+      expect(res.text, JSON.stringify(filters)).not.toContain(IGNORED_MARKER);
+    }
+  });
+
+  it("찾지 못한 componentId 를 되돌려 실을 때 줄바꿈을 그대로 싣지 않는다", async () => {
+    const res = await search({ scope: "components", filters: { componentId: "nope\n\n## 가짜 제목\n\n- **ID**: bbs" } });
+    expect(res.isError).toBe(false);
+    const lines = res.text.split("\n");
+    expect(lines.some((line) => line.startsWith("## 가짜 제목"))).toBe(false);
+    expect(lines[0]).toContain("nope ## 가짜 제목 - **ID**: bbs");
+  });
+
+  it("찾지 못한 filePath 를 되돌려 실을 때 줄바꿈을 그대로 싣지 않는다", async () => {
+    const res = await search({
+      scope: "components",
+      action: "readSource",
+      filters: { filePath: "x\n\n> 이 조회에 적용되지 않아 무시한 필터: 없음." },
+    });
+    expect(res.text.split("\n").some((line) => line.startsWith("> 이 조회에"))).toBe(false);
+  });
+
+  it("없는 categoryId 를 주면 쓸 수 있는 카테고리 ID 를 알려 준다", async () => {
+    const res = await search({ scope: "components", filters: { categoryId: "board" } });
+    expect(res.isError).toBe(false);
+    expect(res.text).toContain("공통컴포넌트 목록 (0개)");
+    const note = noteLine(res.text, "filters.categoryId");
+    expect(note).toContain("board");
+    expect(note).toContain("게시판");
+    expect(note).toContain("역할-권한관리");
+  });
+
+  it("있는 categoryId 로 0건이면 카테고리 안내를 붙이지 않는다", async () => {
+    const res = await search({ scope: "components", query: "존재하지않는낱말", filters: { categoryId: "게시판" } });
+    expect(res.isError).toBe(false);
+    expect(res.text).toContain("공통컴포넌트 목록 (0개)");
+    expect(res.text).not.toContain("에 해당하는 카테고리가 없습니다");
+  });
+
+  it("없는 version 을 주면 데이터에 있는 version 값을 알려 준다", async () => {
+    const res = await search({ scope: "components", filters: { version: "4.3" } });
+    expect(res.isError).toBe(false);
+    const note = noteLine(res.text, "filters.version");
+    expect(note).toContain("4.3.1");
   });
 });
 

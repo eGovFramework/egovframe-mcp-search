@@ -35,6 +35,7 @@ import {
   formatComponentSourceFiles,
   formatComponentDDL,
   formatComponentDML,
+  DML_TABLE_PAGE_SIZE,
 } from "./commonComponents.js";
 
 /** 도구가 받는 scope 값. server.ts 의 inputSchema enum 이 이 배열을 쓴다. */
@@ -177,12 +178,19 @@ const NO_EFFECT_FILTER_VALUES: Readonly<Record<string, unknown>> = {
   minImportance: 1,
 };
 
-/** 문자열 필터와 query 는 NFC 로 정규화하고 앞뒤 공백을 뗀다. 빈 값은 지정하지 않은 것으로 본다. */
+/** 제어 문자(줄바꿈·탭 포함)가 이어진 구간 */
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
+
+/**
+ * 문자열 필터와 query 는 NFC 로 정규화하고, 제어 문자가 이어진 구간을 공백 하나로 바꾼 뒤 앞뒤 공백을 뗀다.
+ * 빈 값은 지정하지 않은 것으로 본다.
+ * 찾지 못한 값은 안내 문구에 되돌려 싣는데, 줄바꿈이 남아 있으면 입력이 응답의 제목이나 안내 줄처럼 보이게 된다.
+ */
 function asString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
   }
-  const normalized = value.normalize("NFC").trim();
+  const normalized = value.normalize("NFC").replace(CONTROL_CHARACTERS, " ").trim();
   return normalized || undefined;
 }
 
@@ -206,7 +214,7 @@ function asStringArray(value: unknown): string[] | undefined {
   return value.map((item) => asString(item)).filter((item): item is string => item !== undefined);
 }
 
-/** 필터에 의미 있는 값이 들어 있는지. 빈 문자열과 빈 배열은 지정하지 않은 것으로 본다. */
+/** 필터에 의미 있는 값이 들어 있는지. 빈 문자열, 빈 배열, 빈 문자열만 든 배열은 지정하지 않은 것으로 본다. */
 function hasFilterValue(filters: Record<string, unknown>, key: string): boolean {
   const value = filters[key];
   if (value === undefined || value === null) {
@@ -216,7 +224,7 @@ function hasFilterValue(filters: Record<string, unknown>, key: string): boolean 
     return value.trim() !== "";
   }
   if (Array.isArray(value)) {
-    return value.length > 0;
+    return value.some((item) => typeof item !== "string" || item.trim() !== "");
   }
   return true;
 }
@@ -295,18 +303,62 @@ function withNotes(text: string, ...notes: Array<string | undefined>): string {
 /**
  * 호출자가 줬지만 이번 조회에는 적용되지 않은 필터를 알리는 안내.
  * 필터가 조용히 무시되면 호출자는 걸러진 결과라고 오해하므로, 무시한 키를 응답에 적는다.
+ *
+ * - 값이 기본값과 같아 어디에서도 결과를 바꾸지 않는 필터는 알리지 않는다.
+ * - 통합 검색의 한 섹션으로 실행될 때는 limit 을 알리지 않는다 (그 섹션이 쓰지 않아도 다른 섹션이 쓴다).
+ * - extraHints 에는 무시한 이유를 덧붙일 키와 문구를 준다.
  */
-function ignoredFiltersNote(filters: Record<string, unknown>, usedKeys: readonly string[]): string | undefined {
-  const ignored = Object.keys(filters).filter((key) => hasFilterValue(filters, key) && !usedKeys.includes(key));
+function ignoredFiltersNote(
+  filters: Record<string, unknown>,
+  usedKeys: readonly string[],
+  options: SectionOptions = {},
+  extraHints: Readonly<Record<string, string>> = {},
+): string | undefined {
+  const ignored = Object.keys(filters).filter(
+    (key) =>
+      hasFilterValue(filters, key) &&
+      !usedKeys.includes(key) &&
+      filters[key] !== NO_EFFECT_FILTER_VALUES[key] &&
+      !(options.inUnifiedSearch && key === "limit"),
+  );
   if (ignored.length === 0) {
     return undefined;
   }
-  // action 과 함께 써야 하는 필터는 어느 action 에서 쓰는지 알려 준다
-  const hints = ACTION_ONLY_FILTERS.filter(({ key }) => ignored.includes(key)).map(
-    ({ key, actions }) => `${key} 은(는) action ${quoteActions(actions)} 에서 씁니다.`,
-  );
+  const hints = [
+    // action 과 함께 써야 하는 필터는 어느 action 에서 쓰는지 알려 준다
+    ...ACTION_ONLY_FILTERS.filter(({ key }) => ignored.includes(key)).map(
+      ({ key, actions }) => `${key} 은(는) action ${quoteActions(actions)} 에서 씁니다.`,
+    ),
+    ...ignored.filter((key) => extraHints[key] !== undefined).map((key) => extraHints[key]),
+  ];
   const hint = hints.length > 0 ? ` (${hints.join(" ")})` : "";
   return `> 이 조회에 적용되지 않아 무시한 필터: ${ignored.join(", ")}.${hint}`;
+}
+
+/** 조회 하나가 최상위 query 와 limit 을 실제로 쓰는지. */
+interface ParamUsage {
+  query: boolean;
+  limit: boolean;
+}
+
+/**
+ * 호출자가 줬지만 이번 조회에는 쓰이지 않은 최상위 파라미터(query, limit)를 알리는 안내.
+ * (filters.limit 은 필터이므로 ignoredFiltersNote 가 알린다.)
+ * 통합 검색의 한 섹션으로 실행될 때는 알리지 않는다 (그 섹션이 쓰지 않아도 다른 섹션이 쓴다).
+ */
+function unusedParamsNote(
+  args: EgovSearchKnowledgeArgs,
+  usage: ParamUsage,
+  options: SectionOptions = {},
+): string | undefined {
+  if (options.inUnifiedSearch) {
+    return undefined;
+  }
+  const unused = [
+    ...(args.query !== undefined && !usage.query ? ["query"] : []),
+    ...(asPositiveInt(args.limit) !== undefined && !usage.limit ? ["limit"] : []),
+  ];
+  return unused.length > 0 ? `> 이 조회에 쓰이지 않아 무시한 파라미터: ${unused.join(", ")}.` : undefined;
 }
 
 let compatibilityCategories: Set<string> | undefined;
@@ -463,7 +515,12 @@ function formatGuideHeader(
  * 가이드 청크 하나의 본문을 filters.offset 부터 읽는다 (검색 결과에서 잘린 본문을 이어 읽는 용도).
  * 한 번에 GUIDE_CHUNK_PAGE_CHARS 자까지 돌려주고, 남은 내용이 있으면 다음 offset 을 알려 준다.
  */
-async function readGuideChunk(chunkId: string, filters: Record<string, unknown>): Promise<string> {
+async function readGuideChunk(
+  chunkId: string,
+  args: EgovSearchKnowledgeArgs,
+  options: SectionOptions = {},
+): Promise<string> {
+  const filters = getFilters(args);
   const chunk = await withIndexRetry("guide", "공식 가이드", resetGuideManager, async () =>
     (await getInitializedGuideManager()).getChunkById(chunkId),
   );
@@ -488,7 +545,12 @@ async function readGuideChunk(chunkId: string, filters: Record<string, unknown>)
   } else {
     note = `> ${range} (청크의 끝).`;
   }
-  return withNotes(lines.join("\n"), note, ignoredFiltersNote(filters, GUIDE_CHUNK_USED_FILTER_KEYS));
+  return withNotes(
+    lines.join("\n"),
+    note,
+    ignoredFiltersNote(filters, GUIDE_CHUNK_USED_FILTER_KEYS, options),
+    unusedParamsNote(args, { query: false, limit: false }, options),
+  );
 }
 
 async function searchGuide(args: EgovSearchKnowledgeArgs, options: SectionOptions = {}): Promise<string> {
@@ -496,7 +558,7 @@ async function searchGuide(args: EgovSearchKnowledgeArgs, options: SectionOption
   // chunkId 를 주면 검색하지 않고 그 청크의 본문을 이어 읽는다 (query 가 필요 없다)
   const chunkId = asString(filters.chunkId);
   if (chunkId) {
-    return readGuideChunk(chunkId, filters);
+    return readGuideChunk(chunkId, args, options);
   }
   const query = requireQuery(args.query, "guide");
   const limit = resolveLimit(args, "guide", options);
@@ -518,7 +580,7 @@ async function searchGuide(args: EgovSearchKnowledgeArgs, options: SectionOption
       return true;
     })
     .slice(0, limit.value);
-  const ignored = ignoredFiltersNote(filters, GUIDE_USED_FILTER_KEYS);
+  const ignored = ignoredFiltersNote(filters, GUIDE_USED_FILTER_KEYS, options);
 
   const formatted = results.map((result, idx) => {
     const total = result.content.length;
@@ -576,11 +638,20 @@ async function searchDeveloperKnowledge(args: EgovSearchKnowledgeArgs, options: 
       ? `> 개발자 지식의 본문은 ${excerptLength}자를 넘으면 발췌해서 싣습니다. 전체 본문은 같은 query 에 \`scope: "knowledge"\` 를 지정해 검색하면 볼 수 있습니다.`
       : undefined;
 
+  // 최근 순 조회는 호환 소프트웨어를 함께 찾지 않으므로 knowledgeScope "all" 이 쓰이지 않는다.
+  const knowledgeScopeUnused = sortRecent && asString(filters.knowledgeScope) === "all";
+  const usedKeys = knowledgeScopeUnused
+    ? KNOWLEDGE_USED_FILTER_KEYS.filter((key) => key !== "knowledgeScope")
+    : KNOWLEDGE_USED_FILTER_KEYS;
+
   return withNotes(
     formatJson("개발자 지식 검색 결과", result),
     limit.note,
     excerptNote,
-    ignoredFiltersNote(filters, KNOWLEDGE_USED_FILTER_KEYS),
+    ignoredFiltersNote(filters, usedKeys, options, {
+      knowledgeScope: 'knowledgeScope 은(는) sort 가 "recent" 이면 쓰이지 않습니다.',
+    }),
+    unusedParamsNote(args, { query: !sortRecent, limit: true }, options),
   );
 }
 
@@ -715,12 +786,22 @@ function formatComponentScriptLookup(
   }
 
   // 기본 보기는 테이블마다 처음 몇 건만 보여 준다. filters.table 을 주면 그 테이블을 limit·offset 으로 나눠 조회한다.
+  const table = asString(filters.table);
+  const requested = requestedLimit(args);
   const result = getComponentDML(resolved.id, dbType, {
-    table: asString(filters.table),
-    limit: requestedLimit(args),
+    table,
+    limit: requested,
     offset: asNumber(filters.offset),
   });
-  return result ? formatComponentDML(result) : formatComponentNotFound(input);
+  if (!result) {
+    return formatComponentNotFound(input);
+  }
+  // 구간 조회의 limit 은 getComponentDML 이 최댓값으로 줄여 적용한다. 줄였으면 다른 범위와 같은 문구로 알린다.
+  const limitNote =
+    table !== undefined && requested !== undefined && requested > DML_TABLE_PAGE_SIZE
+      ? `> 요청한 limit ${requested} 은(는) dml 구간 조회의 최댓값 ${DML_TABLE_PAGE_SIZE} 으로 줄여 적용했습니다.`
+      : undefined;
+  return withNotes(formatComponentDML(result), limitNote);
 }
 
 function formatComponentListLookup(
@@ -735,7 +816,6 @@ function formatComponentListLookup(
     version: asString(filters.version),
   };
   const hasFilters = Object.values(listFilters).some((value) => value !== undefined);
-  const ignored = ignoredFiltersNote(filters, COMPONENT_LIST_FILTER_KEYS);
 
   // 검색어를 하나도 추출할 수 없는 query("*" 처럼 기호뿐인 값)는 지정하지 않은 것으로 본다.
   const query = args.query && extractSearchTerms(args.query).length > 0 ? args.query : undefined;
@@ -743,7 +823,12 @@ function formatComponentListLookup(
   if (query) {
     const limit = resolveLimit(args, "components", options);
     const { results, total, matchMode } = searchComponents(query, limit.value, listFilters);
-    return withNotes(formatComponentList(results, false, { total, matchMode }), limit.note, ignored);
+    return withNotes(
+      formatComponentList(results, false, { total, matchMode }),
+      limit.note,
+      ...(total === 0 ? unknownComponentFilterNotes(listFilters) : []),
+      ignoredFiltersNote(filters, COMPONENT_LIST_FILTER_KEYS, options),
+    );
   }
 
   if (hasFilters) {
@@ -754,14 +839,61 @@ function formatComponentListLookup(
         ? resolveLimit(args, "components", options)
         : undefined;
     const { components, total } = listCommonComponents(listFilters, limit?.value);
-    return withNotes(formatComponentList(components, true, { total }), limit?.note, ignored);
+    return withNotes(
+      formatComponentList(components, true, { total }),
+      limit?.note,
+      ...(total === 0 ? unknownComponentFilterNotes(listFilters) : []),
+      ignoredFiltersNote(filters, COMPONENT_LIST_FILTER_KEYS, options),
+      unusedParamsNote(args, { query: false, limit: true }, options),
+    );
   }
 
+  // 카테고리 개요는 limit 을 쓰지 않는다 (filters.limit 도 무시한 필터로 알린다).
   const { categories } = listComponentCategories();
   return withNotes(
     `${formatCategoryList(categories)}\n---\n\n${formatComponentSummary(getComponentSummary())}`,
-    ignored,
+    ignoredFiltersNote(
+      filters,
+      COMPONENT_LIST_FILTER_KEYS.filter((key) => key !== "limit"),
+      options,
+    ),
+    unusedParamsNote(args, { query: false, limit: false }, options),
   );
+}
+
+/**
+ * 목록·검색 결과가 0건일 때, 데이터에 없는 categoryId 나 version 을 준 것이 원인이면 쓸 수 있는 값을 알린다.
+ */
+function unknownComponentFilterNotes(listFilters: { categoryId?: string; version?: string }): string[] {
+  const notes: string[] = [];
+
+  if (listFilters.categoryId !== undefined) {
+    const wanted = listFilters.categoryId.toLowerCase();
+    const { categories } = listComponentCategories();
+    const known = categories.some((category) =>
+      [category.category_id, category.name, category.name_en].some((value) => value?.toLowerCase() === wanted),
+    );
+    if (!known) {
+      notes.push(
+        `> filters.categoryId "${listFilters.categoryId}" 에 해당하는 카테고리가 없습니다. ` +
+          `카테고리 ID, 한글 이름, 영문 이름 가운데 하나를 넣습니다. 카테고리 ID: ${categories
+            .map((category) => category.category_id)
+            .join(", ")}.`,
+      );
+    }
+  }
+
+  if (listFilters.version !== undefined) {
+    const versions = getComponentSummary().byVersion.map((entry) => entry.version);
+    if (!versions.includes(listFilters.version)) {
+      notes.push(
+        `> filters.version "${listFilters.version}" 과(와) 같은 version 값을 가진 컴포넌트가 없습니다. ` +
+          `데이터에 있는 version 값: ${versions.join(", ")}.`,
+      );
+    }
+  }
+
+  return notes;
 }
 
 /** action 별로 실제 조회에 쓰이는 필터 키. */
@@ -815,7 +947,11 @@ function searchComponentsGateway(args: EgovSearchKnowledgeArgs, options: Section
   if (!action) {
     const componentId = getComponentId(filters);
     if (componentId) {
-      return withNotes(formatComponentDetail(componentId), ignoredFiltersNote(filters, COMPONENT_ID_KEYS));
+      return withNotes(
+        formatComponentDetail(componentId),
+        ignoredFiltersNote(filters, COMPONENT_ID_KEYS, options),
+        unusedParamsNote(args, { query: false, limit: false }, options),
+      );
     }
     // action 과 함께 써야 하는 필터만 준 호출은 목록이나 개요로 답하지 않고, 필요한 action 을 알려 준다.
     const actionOnly = ACTION_ONLY_FILTERS.filter(({ key }) => hasFilterValue(filters, key));
@@ -835,9 +971,11 @@ function searchComponentsGateway(args: EgovSearchKnowledgeArgs, options: Section
     );
   }
 
+  // action 은 query 를 쓰지 않고, limit 은 dml 의 구간 조회(filters.table)에서만 쓴다.
   return withNotes(
     runComponentAction(args, filters, action),
-    ignoredFiltersNote(filters, usedFilterKeysForAction(action, filters)),
+    ignoredFiltersNote(filters, usedFilterKeysForAction(action, filters), options),
+    unusedParamsNote(args, { query: false, limit: action === "dml" && hasFilterValue(filters, "table") }, options),
   );
 }
 
@@ -872,7 +1010,7 @@ async function searchCompatibility(args: EgovSearchKnowledgeArgs, options: Secti
     formatJson("호환 소프트웨어 검색 결과", result),
     limit.note,
     pagingNote,
-    ignoredFiltersNote(filters, COMPATIBILITY_USED_FILTER_KEYS),
+    ignoredFiltersNote(filters, COMPATIBILITY_USED_FILTER_KEYS, options),
   );
 }
 
