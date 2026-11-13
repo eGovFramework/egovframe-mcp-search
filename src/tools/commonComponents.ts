@@ -548,6 +548,7 @@ export interface ComponentSourceContent {
   filePath: string;
   content: string;
   language: string;
+  /** 파일의 실제 바이트 수 */
   size: number;
 }
 
@@ -610,7 +611,8 @@ export function readSourceFileInRoot(srcRoot: string, filePath: string): Compone
   if (!resolved) return null;
   const { realPath, relPath } = resolved;
 
-  if (!fs.statSync(realPath).isFile()) {
+  const stat = fs.statSync(realPath);
+  if (!stat.isFile()) {
     return null;
   }
 
@@ -622,7 +624,7 @@ export function readSourceFileInRoot(srcRoot: string, filePath: string): Compone
       filePath: relPath,
       content: `[바이너리 파일 - ${ext} 형식은 텍스트로 표시할 수 없습니다]`,
       language: 'binary',
-      size: fs.statSync(realPath).size,
+      size: stat.size,
     };
   }
 
@@ -633,7 +635,8 @@ export function readSourceFileInRoot(srcRoot: string, filePath: string): Compone
     filePath: relPath,
     content,
     language,
-    size: content.length,
+    // 디코딩한 문자 수가 아니라 파일의 실제 바이트 수
+    size: stat.size,
   };
 }
 

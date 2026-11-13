@@ -120,3 +120,26 @@ describe('readSourceFileInRoot — 소스 루트 밖의 파일을 읽지 않는�
     expect(readSourceFileInRoot(root, 'src/A.java\0.txt')).toBeNull();
   });
 });
+
+describe('readSourceFileInRoot — 파일 크기', () => {
+  let root: string;
+
+  beforeAll(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'egov-src-size-'));
+    fs.writeFileSync(path.join(root, 'Korean.java'), '// 게시판 서비스\nclass Korean {}\n');
+  });
+
+  afterAll(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('size 는 문자 수가 아니라 파일의 바이트 수다', () => {
+    const result = readSourceFileInRoot(root, 'Korean.java');
+    const bytes = fs.statSync(path.join(root, 'Korean.java')).size;
+
+    expect(result).not.toBeNull();
+    // 한글은 UTF-8 에서 글자당 3바이트라 문자 수와 바이트 수가 다르다
+    expect(bytes).toBeGreaterThan(result!.content.length);
+    expect(result!.size).toBe(bytes);
+  });
+});
