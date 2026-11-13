@@ -311,10 +311,45 @@ describe.skipIf(GUIDE_FILES.length === 0)("가이드 원문 전체의 청킹", (
     expect(over).toEqual([]);
   });
 
-  it("나눈 조각 가운데 200자 미만인 것은 1% 미만이다", () => {
+  it("번호가 붙은 조각 가운데 짧은 조각의 기준보다 짧은 것은 1% 미만이다", () => {
     const pieces = allSections.filter(({ section }) => section.pieces.length > 1).flatMap(({ section }) => section.pieces);
     const short = pieces.filter((piece) => piece.content.length < GUIDE_PIECE_MIN_CHARS);
     expect(short.length / pieces.length).toBeLessThan(0.01);
+  });
+
+  it("긴 절을 제목에서 나눈 결과로 생긴 청크 가운데 짧은 조각의 기준보다 짧은 것은 없다", () => {
+    // ## 절이나 개요 하나에서 절이 둘 이상 나왔으면 제목에서 나눈 것이다. 그 결과가 짧으면 이웃 묶음에 붙는다.
+    // 나뉘지 않은 ## 절과 개요는 짧아도(50자 이상이면) 그대로 색인하므로 여기서 세지 않는다
+    const short: string[] = [];
+    let splitResults = 0;
+    for (const document of documents) {
+      const lines = document.body.split("\n");
+      const levels = headingLevelsOf(lines);
+      const h2Offsets: number[] = [];
+      let offset = 0;
+      lines.forEach((line, index) => {
+        if (levels[index] === 2) h2Offsets.push(offset);
+        offset += line.length + 1;
+      });
+      // 절이 속한 ## 절의 번호 (첫 ## 앞의 개요는 -1)
+      const rangeOf = (at: number) => h2Offsets.filter((start) => start <= at).length - 1;
+      const byRange = new Map<number, GuideSection[]>();
+      for (const section of document.sections) {
+        const range = rangeOf(section.offset);
+        byRange.set(range, [...(byRange.get(range) ?? []), section]);
+      }
+      for (const group of byRange.values()) {
+        if (group.length < 2) continue;
+        for (const section of group) {
+          splitResults += 1;
+          if (section.pieces.length === 1 && section.body.length < GUIDE_PIECE_MIN_CHARS) {
+            short.push(`${document.relativePath} | ${section.section} | ${section.body.length}자`);
+          }
+        }
+      }
+    }
+    expect(splitResults).toBeGreaterThan(1500);
+    expect(short).toEqual([]);
   });
 
   it("본문이 50자 미만인 청크는 없다", () => {

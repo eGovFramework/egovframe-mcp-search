@@ -689,9 +689,9 @@ describe("chunkMarkdown — 너무 작은 조각을 만들지 않는다", () => 
     expect(chunks[0].content).toBe(["설정은 다음과 같다.", "", "### 캐시", "", paragraph("캐시", 8)].join("\n"));
   });
 
-  it("합치면 상한을 넘는 짧은 소절: 50자 미만이면 다음 소절에 붙여 다시 나누고, 50자 이상이면 따로 둔다", () => {
-    // 이웃 조각이 모두 상한 가까이 차 있어 한 청크로 합칠 수 없는 경우: 25자 소절은 버리지 않고 다음 소절 앞에 붙이고
-    // (붙인 묶음은 조각으로 다시 나뉜다), 60자 소절은 따로 남는다
+  it("합치면 상한을 넘는 짧은 소절은 따로 두지 않고 다음 소절 앞에 붙여 다시 나눈다", () => {
+    // 이웃 조각이 모두 상한 가까이 차 있어 한 청크로 합칠 수 없는 경우: 25자 소절도 60자 소절도(짧은 조각의 기준은 100자)
+    // 다음 소절 앞에 붙이고, 붙인 묶음을 조각으로 다시 나눈다
     const chunks = chunk(
       doc(
         "## 설정",
@@ -720,11 +720,63 @@ describe("chunkMarkdown — 너무 작은 조각을 만들지 않는다", () => 
       "설정",
       "설정 > 참고 / 세션 (1/2)",
       "설정 > 참고 / 세션 (2/2)",
-      "설정 > 주의",
-      "설정 > 복제",
+      "설정 > 주의 / 복제 (1/2)",
+      "설정 > 주의 / 복제 (2/2)",
     ]);
     expect(chunks[1].content.startsWith("캐시는 꺼 둘 수 있다. 기본값은 켜짐이다.\n\n### 세션\n\n세션 문단의 1번째 문장입니다.")).toBe(true);
-    expect(chunks[3].content).toBe("가".repeat(60));
+    expect(chunks[3].content.startsWith(`${"가".repeat(60)}\n\n### 복제\n\n복제 문단의 1번째 문장입니다.`)).toBe(true);
+    for (const c of chunks) {
+      expect(c.content.length, c.section).toBeGreaterThanOrEqual(100);
+    }
+  });
+
+  it("짧은 도입부가 첫 소절과 한 청크에 들어가지 않으면 첫 소절 앞에 붙인다 (도입부만 든 짧은 청크를 남기지 않는다)", () => {
+    // 60자 도입부(짧은 조각의 기준 100자 미만)와 상한 가까이 찬 첫 소절
+    const intro = "캐시 설정은 저장소, 만료 시간, 최대 크기의 세 부분으로 나뉘며 아래에서 차례로 설명한다.";
+    expect(intro.length).toBeGreaterThanOrEqual(50);
+    expect(intro.length).toBeLessThan(100);
+    const chunks = chunk(doc("## 설정", "", intro, "", "### 저장소", "", paragraph("저장", 7), "", paragraph("소", 6)), {
+      tokenBudget: 160,
+      minPieceChars: 100,
+    });
+    expect(chunks.map((c) => c.section)).toEqual(["설정 > 저장소 (1/2)", "설정 > 저장소 (2/2)"]);
+    expect(chunks[0].content).toBe([intro, "", "### 저장소", "", paragraph("저장", 7)].join("\n"));
+    expect(chunks[1].content).toBe(paragraph("소", 6));
+  });
+
+  it("짧은 마지막 소절이 앞 묶음과 한 청크에 들어가지 않으면 앞 묶음의 끝에 붙인다", () => {
+    const note = "자세한 내용은 관련 예제 문서에 있는 설명과 그림을 함께 보면서 참고한다. 예제는 별도 문서에 있다.";
+    expect(note.length).toBeGreaterThanOrEqual(50);
+    expect(note.length).toBeLessThan(100);
+    const chunks = chunk(doc("## 사용법", "", "### 가", "", paragraph("가", 7), "", paragraph("나", 6), "", "### 참고", "", note), {
+      tokenBudget: 160,
+      minPieceChars: 100,
+    });
+    expect(chunks.map((c) => c.section)).toEqual(["사용법 > 가 / 참고 (1/2)", "사용법 > 가 / 참고 (2/2)"]);
+    expect(chunks[1].content).toBe([paragraph("나", 6), "", "### 참고", "", note].join("\n"));
+  });
+
+  it("도입부 뒤에 짧은 마지막 소절을 붙인 묶음은 조각으로 나뉘어도 절의 이름을 쓴다", () => {
+    // 도입부가 묶음의 주된 내용이고, 붙인 소절은 마지막 조각의 끝에 제목 줄과 함께 남는다
+    const chunks = chunk(
+      doc("## 설명", "", "### 병렬 처리", "", paragraph("병렬", 7), "", paragraph("처리", 7), "", "#### 관련 예제", "", "[병렬 처리 예제](./example.md)"),
+    );
+    expect(chunks.map((c) => c.section)).toEqual(["설명 > 병렬 처리 (1/2)", "설명 > 병렬 처리 (2/2)"]);
+    expect(chunks[1].content).toBe([paragraph("처리", 7), "", "#### 관련 예제", "", "[병렬 처리 예제](./example.md)"].join("\n"));
+  });
+
+  it("조각이 짧은지는 색인되는 본문의 길이로 잰다 (줄 끝의 공백은 세지 않는다)", () => {
+    // 39자 문장 뒤에 공백 두 칸이 있다 (마크다운의 줄바꿈 표기). 공백까지 세면 41자라 짧은 조각의 기준(40자)을 넘지만
+    // 색인되는 본문은 39자다. 이 문장만 든 조각을 남기지 않고 코드 블록의 앞부분과 함께 둔다
+    const intro = "설정 파일에는 캐시마다 속성을 한 줄씩 다음과 같이 차례로 적어 둔다.";
+    expect(intro.length).toBe(39);
+    const code = Array.from({ length: 7 }, (_, i) => `    <property name="p${i}" value="${i}" />`);
+    const chunks = chunk(doc("## 설정", "", `${intro}  `, "", "```xml", ...code, "```", "", paragraph("끝", 3)));
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) {
+      expect(c.content.length, c.title).toBeGreaterThanOrEqual(SMALL.minPieceChars!);
+    }
+    expect(chunks[0].content.startsWith(`${intro}  \n\n\`\`\`xml\n`)).toBe(true);
   });
 
   it("문단에서 나눈 조각이 짧게 남지 않도록 자르는 자리를 옮긴다", () => {

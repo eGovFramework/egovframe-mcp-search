@@ -34,7 +34,7 @@ import type { GuideChunk } from './guideManager.js';
  * 모델의 입력 창은 512 토큰(특수 토큰 2개 포함)이다. 추정값은 실제 토큰 수와 어긋나므로 여유를 둔다
  * (estimateTokens 참고: 실제 값은 대개 추정값의 1.27배 이하다).
  * 가이드 원문(마크다운 663개)을 이 값으로 나누면 청크의 임베딩 입력은 실제 토큰 수가 최대 492 이고
- * 512 를 넘는 것이 없다. 420 이면 3개, 440 이면 14개, 480 이면 59개가 512 를 넘는다.
+ * 512 를 넘는 것이 없다. 420 이면 3개, 440 이면 15개, 480 이면 58개가 512 를 넘는다.
  */
 export const GUIDE_CHUNK_TOKEN_BUDGET = 400;
 
@@ -577,8 +577,22 @@ function splitIntoPieces(
 
   // 3) 구간의 크기: 원자 사이의 글(줄바꿈, 빈 줄)은 공백이라 크기가 0 이다
   const sizes = new Float64Array(count + 1); // sizes[k] = atoms[0..k) 의 추정 토큰 합
+  // 원자의 글이 시작하는 자리(앞 공백 제외)와 끝나는 자리(뒤 공백 제외). 공백뿐인 원자(코드 블록 안의 빈 줄)는 이웃 원자의 값을 따른다
+  const textStarts = new Int32Array(count);
+  const textEnds = new Int32Array(count);
+  const blanks: boolean[] = [];
   for (let k = 0; k < count; k++) {
-    sizes[k + 1] = sizes[k] + estimateTokens(body.slice(atoms[k].start, atoms[k].end));
+    const text = body.slice(atoms[k].start, atoms[k].end);
+    sizes[k + 1] = sizes[k] + estimateTokens(text);
+    blanks.push(text.trim() === '');
+    textStarts[k] = atoms[k].start + (text.length - text.trimStart().length);
+    textEnds[k] = atoms[k].end - (text.length - text.trimEnd().length);
+  }
+  for (let k = count - 1; k >= 0; k--) {
+    if (blanks[k]) textStarts[k] = k + 1 < count ? textStarts[k + 1] : atoms[k].end;
+  }
+  for (let k = 0; k < count; k++) {
+    if (blanks[k]) textEnds[k] = k > 0 ? textEnds[k - 1] : atoms[k].start;
   }
   // 절의 첫 조각에는 덧붙일 줄이 없고, 마지막 조각 뒤에는 닫을 펜스가 없다
   const leadOf = (first: number) => (first === 0 ? '' : atoms[first].lead);
@@ -588,8 +602,22 @@ function splitIntoPieces(
     sizes[first] +
     (first === 0 ? 0 : atoms[first].leadTokens) +
     (last + 1 < count ? atoms[last + 1].closeTokens : 0);
-  const pieceChars = (first: number, last: number) =>
-    atoms[last].end - atoms[first].start + leadOf(first).length + trailOf(last).length;
+  /**
+   * atoms[first..last] 로 만든 조각이 절의 본문에서 맡는 구간과 덧붙일 줄.
+   * 덧붙인 줄이 없는 쪽은 절의 본문처럼 앞뒤 공백을 뺀다. 펜스를 다시 연 조각의 첫 줄은 들여쓰기를 지킨다
+   */
+  const spanOf = (first: number, last: number) => {
+    const lead = leadOf(first);
+    const trail = trailOf(last);
+    const start = lead === '' ? Math.min(textStarts[first], atoms[last].end) : atoms[first].start;
+    const end = trail === '' ? Math.max(textEnds[last], atoms[first].start) : atoms[last].end;
+    return { start, end, lead, trail };
+  };
+  /** 조각의 글자 수: 색인되는 본문(덧붙인 줄 포함, 앞뒤 공백 제외)의 길이 */
+  const pieceChars = (first: number, last: number) => {
+    const span = spanOf(first, last);
+    return Math.max(0, span.end - span.start) + span.lead.length + span.trail.length;
+  };
 
   // 4) 동적 계획법. best[j] = atoms[0..j) 를 나누는 가장 좋은 방법의 비용, cutFrom[j] = 그때 마지막 조각이 시작하는 원자
   const solve = (keepUncuttable: boolean): Array<[first: number, last: number]> | null => {
@@ -638,12 +666,7 @@ function splitIntoPieces(
   const ranges = solve(true) ?? (solve(false) as Array<[first: number, last: number]>);
 
   return ranges.map(([first, last]) => {
-    const lead = leadOf(first);
-    const trail = trailOf(last);
-    // 덧붙인 줄이 없는 쪽은 절의 본문처럼 앞뒤 공백을 뺀다. 펜스를 다시 연 조각의 첫 줄은 들여쓰기를 지킨다
-    const raw = body.slice(atoms[first].start, atoms[last].end);
-    const start = atoms[first].start + (lead === '' ? raw.length - raw.trimStart().length : 0);
-    const end = atoms[last].end - (trail === '' ? raw.length - raw.trimEnd().length : 0);
+    const { start, end, lead, trail } = spanOf(first, last);
     return { content: lead + body.slice(start, end) + trail, start, end, lead, trail };
   });
 }
@@ -712,12 +735,10 @@ interface HeadingPart {
  * 상한을 넘는 절은 그 안의 가장 얕은 제목에서 나누어 도입부와 소절을 각각 절로 만들고, 제목이 없으면
  * 문단, 줄, 줄 안의 순서로 조각을 낸다 (splitIntoPieces).
  *
- * 제목에서 나눌 때 짧은 것(minPieceChars 미만)은 이웃과 합친다: 짧은 소절은 제목 줄과 함께 앞의 것에 붙이고,
- * 앞의 것이 짧으면 다음 소절을 끌어온다. 합친 것이 한 청크에 들어갈 때만 합친다.
- *
- * 나눈 결과는 버리지 않는다. 50자 미만인 도입부와 소절은 한 청크로 합칠 수 없어도 다음 소절 앞에(마지막이면 앞 묶음의
- * 끝에) 붙이고, 붙인 묶음을 더 깊은 제목이나 조각으로 다시 나눈다. 본문이 없는 제목 줄은 다음 소절과 묶어 제목 경로에
- * 싣는다 (다음 소절의 제목 줄은 본문의 첫 줄로 남는다).
+ * 제목에서 나눈 결과는 버리지도 않고 짧은 청크로 남기지도 않는다. 짧은 것(minPieceChars 미만)은 이웃과 묶는다:
+ * 짧은 소절은 제목 줄과 함께 앞의 것에 붙이고, 앞의 것이 짧으면 다음 소절을 끌어온다. 한 청크로 합칠 수 없으면
+ * 짧은 것을 다음 소절 앞에(마지막이면 앞 묶음의 끝에) 붙이고, 붙인 묶음을 더 깊은 제목이나 조각으로 다시 나눈다.
+ * 본문이 없는 제목 줄은 다음 소절과 묶어 제목 경로에 싣는다 (다음 소절의 제목 줄은 본문의 첫 줄로 남는다).
  *
  * 합친 묶음의 이름에는 합쳐진 소절의 이름을 함께 싣는다 ("설명 > Input / Output"). 합쳐진 소절을 제목 경로로도
  * 찾을 수 있게 하려는 것이다. 절의 도입부로 시작하는 묶음은 그 절의 첫 청크이므로 절의 이름만 쓴다.
@@ -769,7 +790,7 @@ export function splitGuideSections(
     return span.end - span.start;
   };
 
-  /** 짧다고 보는 글자 수: 이보다 짧은 도입부와 소절은 이웃과 한 청크에 들어가면 합친다 */
+  /** 짧다고 보는 글자 수: 긴 절을 나눈 결과로 생긴 도입부와 소절이 이보다 짧으면 이웃 묶음에 붙인다 */
   const shortChars = Math.max(minPieceChars, GUIDE_SECTION_MIN_CHARS);
 
   /**
@@ -904,18 +925,18 @@ export function splitGuideSections(
           previous.to = childTo;
           return;
         }
-        // 앞의 것이 50자 미만인데 한 청크로 합칠 수 없다: 버리지 않고 이 소절 앞에 붙인다 (붙인 묶음은 다시 나뉜다)
-        if (previousChars < GUIDE_SECTION_MIN_CHARS) {
+        // 앞의 것이 짧은데 한 청크로 합칠 수 없다: 짧은 청크로 남기지 않고 이 소절 앞에 붙인다 (붙인 묶음은 다시 나뉜다)
+        if (previousChars < shortChars) {
           previous.to = childTo;
           return;
         }
       }
       groups.push({ startPath: pathOf(head), from: childFrom, to: childTo });
     });
-    // 마지막 묶음이 50자 미만이면 붙일 다음 소절이 없다: 앞 묶음의 끝에 붙인다
+    // 마지막 묶음이 짧으면 붙일 다음 소절이 없다: 앞 묶음의 끝에 붙인다
     if (groups.length > 1) {
       const last = groups[groups.length - 1];
-      if (charsOf(last.from, last.to) < GUIDE_SECTION_MIN_CHARS) {
+      if (charsOf(last.from, last.to) < shortChars) {
         groups.pop();
         groups[groups.length - 1].to = last.to;
       }
