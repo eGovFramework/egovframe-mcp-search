@@ -16,10 +16,12 @@ import * as lancedb from "@lancedb/lancedb";
 import {
   GuideSearchManager,
   buildGuideFacets,
+  getInitializedGuideManager,
   resolveGuideFilter,
   type GuideFacets,
 } from "../../src/rag/guideManager.js";
 import { getEmbedder } from "../../src/rag/embedder.js";
+import { egovSearchKnowledge } from "../../src/tools/egovSearchKnowledge.js";
 import { UserFacingError } from "../../src/utils/errors.js";
 import {
   BUNDLED_KB,
@@ -340,6 +342,62 @@ describe.skipIf(!HAS_BUNDLED_TABLES)("가이드 검색 — 동봉 테이블의 l
 
     expect(facetReads()).toBe(1);
     expect(second).toEqual(first);
+  });
+
+  /**
+   * 검색 서버는 요청마다 getInitializedGuideManager() 로 매니저를 얻는다. 그때마다 테이블을 다시 열면
+   * 고유 값 캐시(테이블 핸들이 같을 때만 유효)가 요청마다 버려진다. 싱글톤이 테이블을 한 번만 열어
+   * 캐시가 요청 사이에 유지되는지 확인한다.
+   */
+  describe("서버가 쓰는 싱글톤 매니저", () => {
+    let overlayDir: string;
+    let savedDataDir: string | undefined;
+
+    beforeAll(async () => {
+      // 싱글톤은 오버레이(사용자 update 적용분)를 먼저 찾는다 — 빈 디렉토리로 돌려 동봉 테이블을 열게 한다
+      overlayDir = await fs.mkdtemp(path.join(os.tmpdir(), "egov-guide-overlay-"));
+      savedDataDir = process.env.EGOV_MCP_DATA_DIR;
+      process.env.EGOV_MCP_DATA_DIR = overlayDir;
+    });
+
+    afterAll(async () => {
+      if (savedDataDir === undefined) delete process.env.EGOV_MCP_DATA_DIR;
+      else process.env.EGOV_MCP_DATA_DIR = savedDataDir;
+      await fs.remove(overlayDir);
+    });
+
+    it("getInitializedGuideManager() 를 요청마다 다시 불러도 layer / category 는 한 번만 읽는다", async () => {
+      const facetReads = await countFacetReads();
+      useQueryVector(rows[0].vector);
+
+      // 게이트웨이의 가이드 검색과 같은 순서다: 요청마다 매니저를 얻고, layer 필터로 검색한다
+      for (let request = 0; request < 5; request++) {
+        const guide = await getInitializedGuideManager();
+        const results = await guide.searchGuide(STORED_VECTOR_QUERY, { limit: 1, layer: "egovframe-runtime" });
+        expect(results.map((r) => r.layer)).toEqual(["egovframe-runtime"]);
+      }
+
+      expect(facetReads()).toBe(1);
+    });
+
+    it("게이트웨이(scope=guide)로 layer 필터 검색을 되풀이해도 고유 값을 다시 읽지 않는다", async () => {
+      const facetReads = await countFacetReads();
+      const embed = vi.spyOn(getEmbedder(), "embed").mockResolvedValue(rows[0].vector);
+
+      for (let request = 0; request < 5; request++) {
+        await egovSearchKnowledge({
+          scope: "guide",
+          query: STORED_VECTOR_QUERY,
+          filters: { layer: "egovframe-runtime" },
+          limit: 1,
+        });
+      }
+
+      // 다섯 번 모두 필터를 해석한 뒤 검색까지 갔다
+      expect(embed).toHaveBeenCalledTimes(5);
+      // 같은 싱글톤을 쓴다 — 앞 테스트가 채운 캐시가 있으면 0회, 이 테스트만 돌리면 1회다
+      expect(facetReads()).toBeLessThanOrEqual(1);
+    });
   });
 
   it("getFacets 가 돌려준 객체를 바꿔도 캐시는 바뀌지 않는다", async () => {
