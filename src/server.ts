@@ -84,7 +84,9 @@ const filtersSchema = z.strictObject({
   knowledgeScope: z
     .enum(["knowledge", "all"])
     .optional()
-    .describe("knowledge: all additionally returns compatible-software keyword hits for the same query."),
+    .describe(
+      "knowledge: all additionally returns compatible software whose text matches every query word; knowledge entries then carry a 200-character preview instead of the full content. The knowledge filters (type, tags, minImportance, verifiedOnly) still apply.",
+    ),
 
   // ── components ──
   componentId: z

@@ -128,10 +128,17 @@ export async function searchKnowledge(args: {
 
   // scope="all" → 통합 검색 (smart_search 기능)
   if (args.scope === 'all') {
+    // 지식 쪽에는 시맨틱 검색과 같은 필터를 건다 (호환 소프트웨어 쪽은 query 만 쓴다)
     const results = await manager.smartSearch({
       query,
       includeCompatibility: true,
       includeKnowledge: true,
+      knowledgeOptions: {
+        type: args.type,
+        tags: args.tags,
+        minImportance: args.minImportance,
+        verifiedOnly: args.verifiedOnly,
+      },
       limit: args.limit || 5,
     });
 

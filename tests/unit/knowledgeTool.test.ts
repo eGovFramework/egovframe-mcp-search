@@ -452,3 +452,39 @@ describe.skipIf(!HAS_BUNDLED_TABLES)("searchKnowledge 도구 — query 필수 �
     hybrid.current = { getKnowledge: () => knowledge };
   });
 });
+
+describe("searchKnowledge 도구 — 통합 검색(scope=all)의 지식 필터", () => {
+  it("type, tags, minImportance, verifiedOnly 를 지식 검색에 넘긴다", async () => {
+    const smartSearchSpy = vi.fn(async () => ({ compatibility: [], knowledge: [], totalResults: 0 }));
+    hybrid.current = { getKnowledge: () => ({}), smartSearch: smartSearchSpy };
+
+    await searchKnowledge({
+      query: "로그인",
+      scope: "all",
+      limit: 3,
+      type: "solution",
+      tags: ["faq"],
+      minImportance: 4,
+      verifiedOnly: true,
+    });
+
+    expect(smartSearchSpy).toHaveBeenCalledTimes(1);
+    expect(smartSearchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: "로그인",
+        limit: 3,
+        knowledgeOptions: { type: "solution", tags: ["faq"], minImportance: 4, verifiedOnly: true },
+      }),
+    );
+  });
+
+  it("필터를 주지 않으면 지식 검색에 조건을 걸지 않는다", async () => {
+    const smartSearchSpy = vi.fn(async () => ({ compatibility: [], knowledge: [], totalResults: 0 }));
+    hybrid.current = { getKnowledge: () => ({}), smartSearch: smartSearchSpy };
+
+    await searchKnowledge({ query: "로그인", scope: "all" });
+
+    const options = smartSearchSpy.mock.calls[0]?.[0] as { knowledgeOptions?: Record<string, unknown> } | undefined;
+    expect(Object.values(options?.knowledgeOptions ?? {}).filter((value) => value !== undefined)).toEqual([]);
+  });
+});
