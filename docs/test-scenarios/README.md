@@ -1,26 +1,30 @@
 # 폐쇄망 OSS LLM + eGovFrame MCP 테스트 시나리오
 
-본 폴더는 **폐쇄망 환경에서 OSS LLM(예: Llama, Qwen, Mistral 등)과 eGovFrame MCP Companion**을 연동해 표준프레임워크 지식 베이스에 접근할 수 있는지 검증할 때 사용하는 시나리오 모음입니다.
+본 폴더는 **폐쇄망 환경에서 OSS LLM(예: Llama, Qwen, Mistral 등)과 eGovFrame MCP Search**(`egovframe-mcp-search`)를 연동해 표준프레임워크 지식베이스에 접근할 수 있는지 검증할 때 사용하는 시나리오 모음입니다.
 
 ## 목적
 
 - 본 MCP가 외부 네트워크 없이 `egov_search_knowledge` 한 도구로 동작하는지 확인합니다.
-- 공식 가이드/공통컴포넌트/호환 소프트웨어 등 주요 지식 소스가 통합 검색 관문에서 정상적으로 라우팅되는지 검증합니다.
+- 공식 가이드, 개발자 지식(포털의 묻고답하기·FAQ·적용가이드), 공통컴포넌트, 호환 소프트웨어의 네 출처가 이 도구의 `scope`와 `action`으로 올바르게 조회되는지 검증합니다.
 
 ## 전제
 
-- Node.js 18 이상이 폐쇄망 서버에 설치되어 있습니다.
-- 본 저장소를 폐쇄망으로 반입해 `npm install`, `npm run build`, `npm run build-index`를 사전에 완료한 상태입니다.
-- OSS LLM이 MCP 클라이언트(예: Cursor, Claude Desktop, 자체 클라이언트 등)에 연결되어 있고, 본 MCP 서버가 등록되어 있습니다.
+- 폐쇄망 서버에 Node.js 22가 설치되어 있습니다. 배포본에 동봉된 `better-sqlite3` 네이티브 바이너리가 Node.js 메이저 버전에 고정되어 있어서, 다른 버전에서는 서버가 시작되더라도 SQLite를 쓰는 조회(공통컴포넌트, 호환 소프트웨어 등)가 실패합니다.
+- 서버의 OS와 CPU에 맞는 배포 tgz(`npm run pack:platforms`의 산출물)를 폐쇄망으로 반입해 설치한 상태입니다. 배포 tgz에는 빌드 결과, 의존성, 지식베이스, 임베딩 모델, 공통컴포넌트 소스가 들어 있으므로 폐쇄망에서는 `npm install`, `npm run build`, `npm run build-index`를 실행하지 않습니다. 설치 절차는 [00_사전준비.md](./00_사전준비.md)에 있습니다.
+- OSS LLM이 MCP 클라이언트에 연결되어 있고, 그 클라이언트에 본 MCP 서버가 stdio 방식으로 등록되어 있습니다.
+
+## 수행 방법
+
+각 단계에는 LLM 채팅창에 입력할 프롬프트, 기대 호출(도구에 넘기는 인자), 기대 결과가 적혀 있습니다. 프롬프트를 입력한 뒤 클라이언트의 호출 기록에서 LLM이 보낸 인자를 기대 호출과 비교하고, 도구 응답을 기대 결과와 비교합니다. LLM이 다른 인자를 골랐다면 기대 호출의 인자를 그대로 쓰도록 요청해서 도구의 응답을 따로 확인합니다. 기대 결과에 적힌 건수와 이름은 배포본에 동봉된 데이터 기준입니다.
 
 ## 시나리오 구성
 
 | 번호 | 파일 | 검증 도구 | 난이도 |
 |------|------|-----------|--------|
 | 00 | [00_사전준비.md](./00_사전준비.md) | 환경 | ★ |
-| 01 | [01_지식검색_공식가이드.md](./01_지식검색_공식가이드.md) | `egov_search_knowledge` (`guide` scope) | ★ |
-| 02 | [02_공통컴포넌트_탐색.md](./02_공통컴포넌트_탐색.md) | `egov_search_knowledge` (`components` scope) | ★★ |
-| 03 | [03_호환소프트웨어_검색.md](./03_호환소프트웨어_검색.md) | `egov_search_knowledge` (`compatibility` scope) | ★ |
+| 01 | [01_지식검색_공식가이드.md](./01_지식검색_공식가이드.md) | `egov_search_knowledge` (통합 검색, `scope`: `guide`·`knowledge`) | ★ |
+| 02 | [02_공통컴포넌트_탐색.md](./02_공통컴포넌트_탐색.md) | `egov_search_knowledge` (`scope`: `components`) | ★★ |
+| 03 | [03_호환소프트웨어_검색.md](./03_호환소프트웨어_검색.md) | `egov_search_knowledge` (`scope`: `compatibility`) | ★ |
 
 ## 평가 양식
 
@@ -37,4 +41,4 @@
 ## 사용 권장 순서
 
 1. **00**: 폐쇄망 환경 자체가 의도대로 구성되었는지 먼저 확인합니다.
-2. **01 ~ 03**: 각 scope에 대해 LLM이 본 MCP의 지식 베이스에 정상적으로 접근하는지 검증합니다.
+2. **01 ~ 03**: 통합 검색과 `scope` 값 `guide`, `knowledge`, `components`, `compatibility`에 대해 LLM이 본 MCP의 지식베이스에 정상적으로 접근하는지 검증합니다.
