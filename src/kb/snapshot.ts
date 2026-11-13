@@ -23,6 +23,7 @@ import { z } from 'zod';
 import XLSX from 'xlsx';
 import { SCHEMA_VERSION, EMBEDDING_MODEL_ID } from '../utils/dataPaths.js';
 import type { AddKnowledgeInput } from '../types/knowledge.js';
+import { maskResidentNumbers } from '../utils/sensitiveText.js';
 
 // ─── 스키마 ──────────────────────────────────────────────
 
@@ -247,7 +248,8 @@ export function xlsxToSnapshotRows(filePath: string): SnapshotRow[] {
     const title = cleanText(row.QESTN_SJ) || `${kind.toUpperCase()} ${idx + 1}`;
     const question = cleanText(row.QESTN_CN);
     const answer = cleanText(row.ANSWER_CN);
-    if (!question && !answer) return;
+    // 답변이 없는 글(답변이 달리지 않은 질문, 테스트 글, 스팸)은 해결 사례가 아니므로 넣지 않는다
+    if (!answer) return;
 
     const originalId = cleanText(kind === 'faq' ? row.FAQ_ID : row.QA_ID);
     const category = cleanText(row.QESTN_CT || row.QESTN_ST);
@@ -300,8 +302,11 @@ export function buildManifest(datasetVersion: string, rowCount: number): Snapsho
 export function snapshotRowToKnowledgeInput(row: SnapshotRow): AddKnowledgeInput {
   return {
     type: 'solution',
-    title: row.title,
-    content: [`질문:\n${row.question}`, `답변:\n${row.answer}`].filter(Boolean).join('\n\n'),
+    // 글쓴이가 적은 주민등록번호 형식의 값은 색인에 넣기 전에 가린다
+    title: maskResidentNumbers(row.title),
+    content: maskResidentNumbers(
+      [`질문:\n${row.question}`, `답변:\n${row.answer}`].filter(Boolean).join('\n\n'),
+    ),
     context: row.kind === 'faq' ? '표준프레임워크 FAQ' : '표준프레임워크 묻고답하기',
     tags: ['egovframe', 'developer_knowledge', row.kind],
     relatedTo: ['faq', 'qa', 'egovframe'],

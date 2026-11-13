@@ -133,6 +133,21 @@ describe('xlsxToSnapshotRows', () => {
     expect(rows[0].answer).toBe('답변 & 내용');
   });
 
+  it('답변이 없는 글은 스냅샷에 넣지 않는다', async () => {
+    // 답변이 달리지 않은 질문(테스트 글, 스팸 포함)은 해결 사례가 아니다
+    const p = path.join(tmpDir, '묻고답하기-LET_TN_QA_INFO.xlsx');
+    const sheet = XLSX.utils.json_to_sheet([
+      { QA_ID: '1', QESTN_SJ: '답변 있는 글', QESTN_CN: '질문', ANSWER_CN: '답변' },
+      { QA_ID: '2', QESTN_SJ: '테스트입니다.', QESTN_CN: '테스트', ANSWER_CN: '' },
+      { QA_ID: '3', QESTN_SJ: '공백뿐인 답변', QESTN_CN: '질문', ANSWER_CN: '   <br/> ' },
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, sheet, 'Sheet1');
+    XLSX.writeFile(wb, p);
+
+    expect(xlsxToSnapshotRows(p).map((row) => row.id)).toEqual(['qa:1']);
+  });
+
   it('FAQ 파일명은 kind=faq 로 인식한다', async () => {
     const p = path.join(tmpDir, '자주묻는질문-LET_TN_FAQ_INFO.xlsx');
     const sheet = XLSX.utils.json_to_sheet([
@@ -145,6 +160,22 @@ describe('xlsxToSnapshotRows', () => {
     const rows = xlsxToSnapshotRows(p);
     expect(rows[0].id).toBe('faq:12');
     expect(rows[0].kind).toBe('faq');
+  });
+});
+
+describe('snapshotRowToKnowledgeInput — 민감한 식별번호', () => {
+  it('제목과 본문의 주민등록번호 형식을 가려서 색인 입력을 만든다', () => {
+    // 테스트용으로 지어낸 값이다
+    const input = snapshotRowToKnowledgeInput({
+      id: 'qa:900',
+      kind: 'qa',
+      title: '개인정보 900101-1234567 문의',
+      question: '번호 900101-1234567 가 보입니다',
+      answer: '850505-2345678 은 가려야 합니다',
+    });
+
+    expect(input.title).toBe('개인정보 ******-******* 문의');
+    expect(input.content).toBe('질문:\n번호 ******-******* 가 보입니다\n\n답변:\n******-******* 은 가려야 합니다');
   });
 });
 
