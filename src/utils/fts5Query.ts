@@ -26,6 +26,7 @@ const CONNECTIVE_WORDS: ReadonlySet<string> = new Set(['and', 'or', 'not', 'near
  *
  * - query 의 앞 MAX_KEYWORD_QUERY_LENGTH 자만 읽는다 (경계에 걸친 낱말은 잘린 부분까지만 검색어가 된다).
  * - 유니코드 NFC 로 정규화한다 (자모가 분리된 한글 입력 대응).
+ * - 전각 ASCII 는 반각으로, 전각 공백은 공백으로 바꾼다 (`ＣＭＳ` → `CMS`, `４．３` → `4.3`).
  * - 문자·숫자와 검색어 안쪽의 `.` `-` `_` 만 남기고, 그 밖의 문장부호와 공백은 구분자로 본다.
  *   (`4.3`, `egovframework.com.cop.bbs`, `spring-boot` 같은 식별자는 한 검색어로 유지된다.)
  * - 단독 낱말 AND, OR, NOT, NEAR 는 대소문자와 관계없이 검색어에서 뺀다 (`Android` 처럼 낱말의 일부인 것은 남긴다).
@@ -36,7 +37,7 @@ export function extractSearchTerms(raw: string, maxTerms: number = MAX_SEARCH_TE
   const seen = new Set<string>();
 
   // 정규화보다 먼저 자른다 (긴 입력 전체를 정규화하지 않는다)
-  const text = raw.slice(0, MAX_KEYWORD_QUERY_LENGTH).normalize('NFC');
+  const text = toHalfWidth(raw.slice(0, MAX_KEYWORD_QUERY_LENGTH).normalize('NFC'));
 
   for (const candidate of text.split(/[^\p{L}\p{N}._-]+/u)) {
     const term = trimEdgeSeparators(candidate);
@@ -55,6 +56,21 @@ export function extractSearchTerms(raw: string, maxTerms: number = MAX_SEARCH_TE
   }
 
   return terms;
+}
+
+/** 전각 ASCII(U+FF01~U+FF5E)와 그에 대응하는 반각 문자(U+0021~U+007E)의 코드 차이 */
+const FULLWIDTH_ASCII_OFFSET = 0xfee0;
+
+/**
+ * 전각 ASCII 를 반각으로, 전각 공백(U+3000)을 공백으로 바꾼다. 저장된 값은 반각이라 전각 입력은 어떤 행과도 일치하지 않는다.
+ *
+ * NFKC 전체를 적용하지 않고 이 범위만 바꾼다. NFKC 는 '㈜' 를 '(주)' 로 푸는 것처럼 다른 호환 문자까지 바꿔,
+ * 저장된 값(업체명 '㈜티맥스티베로')에 없는 낱말을 만든다.
+ */
+function toHalfWidth(text: string): string {
+  return text.replace(/[\uFF01-\uFF5E\u3000]/g, (char) =>
+    char === '\u3000' ? ' ' : String.fromCharCode(char.charCodeAt(0) - FULLWIDTH_ASCII_OFFSET),
+  );
 }
 
 /** 검색어 안쪽에서는 남기고 양끝에서는 떼는 문자: '.', '-', '_' */

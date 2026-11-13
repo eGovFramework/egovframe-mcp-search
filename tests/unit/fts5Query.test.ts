@@ -69,6 +69,33 @@ describe("extractSearchTerms", () => {
   });
 });
 
+describe("extractSearchTerms 의 전각 문자 처리", () => {
+  it("전각 영숫자를 반각으로 바꿔 검색어를 추출한다", () => {
+    expect(extractSearchTerms("ＣＭＳ")).toEqual(["CMS"]);
+    expect(extractSearchTerms("ＪＥＵＳ\u3000８．５")).toEqual(["JEUS", "8.5"]);
+    expect(extractSearchTerms("４.３")).toEqual(["4.3"]);
+    expect(extractSearchTerms("ｅｇｏｖ－ｆｒａｍｅ＿ｗｏｒｋ")).toEqual(["egov-frame_work"]);
+  });
+
+  it("전각 공백과 전각 문장부호는 반각과 같이 구분자로 본다", () => {
+    expect(extractSearchTerms("게시판\u3000템플릿")).toEqual(["게시판", "템플릿"]);
+    expect(extractSearchTerms("（JEUS）／Tibero！")).toEqual(["JEUS", "Tibero"]);
+  });
+
+  it("반각으로 바꾼 뒤에 중복과 접속사를 가린다", () => {
+    expect(extractSearchTerms("CMS ＣＭＳ ｃｍｓ")).toEqual(["CMS"]);
+    expect(extractSearchTerms("JEUS ＯＲ Tibero")).toEqual(["JEUS", "Tibero"]);
+  });
+
+  it("전각 ASCII 가 아닌 호환 문자는 바꾸지 않는다 (NFKC 를 적용하지 않는다)", () => {
+    // NFKC 는 '㈜' 를 '(주)' 로 풀어, 저장된 업체명('㈜티맥스티베로')에 없는 낱말 '주' 를 만든다
+    expect("㈜".normalize("NFKC")).toBe("(주)");
+    expect(extractSearchTerms("㈜티맥스티베로")).toEqual(["티맥스티베로"]);
+    // 반각 가타카나, 로마 숫자, 위 첨자도 그대로 둔다
+    expect(extractSearchTerms("ｶﾞ Ⅲ x²")).toEqual(["ｶﾞ", "Ⅲ", "x²"]);
+  });
+});
+
 describe("extractSearchTerms 가 빼는 접속사", () => {
   it("단독 낱말 AND, OR, NOT, NEAR 는 검색어로 쓰지 않는다", () => {
     expect(extractSearchTerms("JEUS OR Tibero")).toEqual(["JEUS", "Tibero"]);
