@@ -479,12 +479,16 @@ describe("searchKnowledge 도구 — 통합 검색(scope=all)의 지식 필터",
   });
 
   it("필터를 주지 않으면 지식 검색에 조건을 걸지 않는다", async () => {
-    const smartSearchSpy = vi.fn(async () => ({ compatibility: [], knowledge: [], totalResults: 0 }));
+    const smartSearchSpy = vi.fn(async (_options: { knowledgeOptions?: Record<string, unknown> }) => ({
+      compatibility: [],
+      knowledge: [],
+      totalResults: 0,
+    }));
     hybrid.current = { getKnowledge: () => ({}), smartSearch: smartSearchSpy };
 
     await searchKnowledge({ query: "로그인", scope: "all" });
 
-    const options = smartSearchSpy.mock.calls[0]?.[0] as { knowledgeOptions?: Record<string, unknown> } | undefined;
+    const options = smartSearchSpy.mock.calls[0]?.[0];
     expect(Object.values(options?.knowledgeOptions ?? {}).filter((value) => value !== undefined)).toEqual([]);
   });
 });

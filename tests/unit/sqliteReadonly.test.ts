@@ -29,21 +29,17 @@ describe("SQLiteManager 읽기 전용 모드", () => {
     // build-index 가 하는 일을 흉내 낸다: 쓰기 모드로 적재한 뒤 배포용으로 마무리
     const writer = new SQLiteManager(dbPath);
     writer.addComponentCategoriesBatch([
-      { category_id: "cat-test", name: "테스트카테고리", name_en: null, description: null, description_en: null },
+      { category_id: "cat-test", name: "테스트카테고리", name_en: "" },
     ]);
     writer.addCommonComponentsBatch([
       {
         component_id: "bbs",
         name: "게시판",
-        name_en: null,
         category_id: "cat-test",
         package_name: "egovframework.com.cop.bbs",
         description: "게시판에 게시물을 등록한다",
-        description_en: null,
-        use_tables: null,
         version: "1.0.0",
         has_web: true,
-        added_options: null,
       },
     ]);
     writer.addCompatibilitySoftwareBatch([

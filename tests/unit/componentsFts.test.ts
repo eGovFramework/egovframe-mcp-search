@@ -19,11 +19,8 @@ const COMPONENT = {
   category_id: 'cat-test',
   package_name: 'egovframework.com.test.fts',
   description: 'FTS 드리프트 회귀 테스트용 컴포넌트',
-  description_en: null,
-  use_tables: null,
   version: '1.0.0',
   has_web: false,
-  added_options: null,
 };
 
 describe('components_fts drift', () => {
@@ -34,7 +31,7 @@ describe('components_fts drift', () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'egov-fts-'));
     sqlite = new SQLiteManager(path.join(tmpDir, 'egovframe.db'));
     sqlite.addComponentCategoriesBatch([
-      { category_id: 'cat-test', name: '테스트카테고리', name_en: null, description: null, description_en: null },
+      { category_id: 'cat-test', name: '테스트카테고리', name_en: '' },
     ]);
   });
 

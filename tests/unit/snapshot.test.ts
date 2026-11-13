@@ -185,8 +185,9 @@ describe('snapshotRowToKnowledgeInput', () => {
     for (const kind of ['qa', 'faq'] as const) {
       const input = snapshotRowToKnowledgeInput({ ...ROW_A, kind });
 
-      expect(input.tags.length).toBeGreaterThan(0);
-      for (const tag of input.tags) {
+      const tags = input.tags ?? [];
+      expect(tags.length).toBeGreaterThan(0);
+      for (const tag of tags) {
         expect(INDEXED_KNOWLEDGE_TAGS as readonly string[], tag).toContain(tag);
         expect(tag, tag).toBe(tag.toLowerCase());
       }
