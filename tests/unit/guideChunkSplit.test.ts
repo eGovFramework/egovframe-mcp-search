@@ -815,7 +815,7 @@ describe("chunkMarkdown — 너무 작은 조각을 만들지 않는다", () => 
   });
 
   it("짧은 절이라도 나눈 결과가 아니면 이웃 절과 합치지 않고 따로 색인한다", () => {
-    // 60자는 기본 최소 조각 길이(200자)보다 짧지만, ## 절끼리는 합치지 않는다
+    // 60자는 짧은 조각의 기준(기본 100자)보다 짧지만, ## 절끼리는 합치지 않는다
     const short = "가".repeat(60);
     const chunks = chunkMarkdown(doc("## 하나", "", short, "", "## 둘", "", short), FRONTMATTER, DOC_PATH);
     expect(chunks.map((c) => [c.section, c.content])).toEqual([
@@ -940,8 +940,29 @@ describe("chunkMarkdown — 너무 작은 조각을 만들지 않는다", () => 
     expect(chunks.map((c) => c.content)).toEqual([first, [second, last].join("\n\n")]);
   });
 
-  it("기본값: 조각은 200자 미만이면 짧다고 본다", () => {
-    expect(GUIDE_PIECE_MIN_CHARS).toBe(200);
+  it("기본값: 조각은 100자 미만이면 짧다고 본다", () => {
+    expect(GUIDE_PIECE_MIN_CHARS).toBe(100);
+  });
+
+  it("기본 조건에서는 100자 미만인 소절만 이웃에 붙이고, 100자 이상인 소절은 따로 색인한다", () => {
+    const [caution, note] = [paragraph("주의", 4), paragraph("참고", 9)];
+    expect(caution.length).toBeGreaterThanOrEqual(50);
+    expect(caution.length).toBeLessThan(100);
+    expect(note.length).toBeGreaterThanOrEqual(100);
+    expect(note.length).toBeLessThan(200);
+    const chunks = chunkMarkdown(
+      doc(
+        "## 설정", "", paragraph("설정", 20), "",
+        "### 캐시", "", paragraph("캐시", 20), "",
+        "### 주의", "", caution, "",
+        "### 참고", "", note, "",
+        "### 세션", "", paragraph("세션", 20),
+      ),
+      FRONTMATTER,
+      DOC_PATH,
+    );
+    expect(chunks.map((c) => c.section)).toEqual(["설정", "설정 > 캐시 / 주의", "설정 > 참고", "설정 > 세션"]);
+    expect(chunks[2].content).toBe(note);
   });
 });
 
