@@ -47,8 +47,9 @@ export interface CompatibilitySearchFilter {
  *   행을 먼저 찾지 않고, 남은 검색어 가운데 하나 이상이 일치하는 행을 모두 돌려준다 (흔한 검색어만 일치한 행도 돌려준다)
  *
  * 어느 방식이든 일치한 검색어가 많은 행, 낱말의 처음에서 일치한 영문 검색어가 많은 행, 이름에 일치한 검색어가 많은 행
- * 순으로 돌려준다. 낱말의 처음은 값의 맨 앞이거나 바로 앞 글자가 ASCII 영문자가 아닌 자리이고, ASCII 영문자와 숫자로만
- * 된 검색어만 센다 ('ECM' 은 'TimeCMS' 보다 'ECM Solution' 이 먼저다)
+ * 순으로 돌려준다. 낱말의 처음은 값의 맨 앞이거나 바로 앞 글자가 ASCII 영문자가 아닌 자리다 ('ECM' 은 'TimeCMS' 보다
+ * 'ECM Solution' 이 먼저다). ASCII 영문자와 숫자로만 되어 있고 영문자가 든 검색어만 세고, 한글이나 기호가 든 검색어와
+ * 숫자뿐인 검색어는 세지 않는다
  */
 export type KeywordMatchMode = 'all-terms' | 'any-term';
 

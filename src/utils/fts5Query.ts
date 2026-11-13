@@ -10,7 +10,7 @@
  *   COMPONENT_GENERIC_WORDS, isGenericTerm, dropGenericTerms
  * - 조사가 붙은 검색어를 조사 없는 꼴로 바꿔 보는 후보: particleStrippedForms
  * - 기호로 이은 검색어를 나눈 조각: splitAtSeparators
- * - 영문 검색어가 낱말의 처음에서 일치했는지를 가리는 패턴: isAsciiAlphanumericTerm, wordStartGlobPattern
+ * - 영문 검색어가 낱말의 처음에서 일치했는지를 가리는 패턴: isEnglishTerm, wordStartGlobPattern
  */
 
 /** 한 번의 키워드 검색에 쓰는 검색어 수 상한. 긴 문장이 조회 문을 비대하게 만드는 것을 막는다. */
@@ -288,15 +288,18 @@ export function splitAtSeparators(term: string): string[] {
 }
 
 /**
- * ASCII 영문자와 숫자로만 된 검색어인지 ('ECM', 'K2Web', '21').
- * 한글이나 기호(검색어 안쪽의 `.` `-` `_` 포함)가 든 검색어와 빈 문자열은 아니다.
+ * 영문 검색어인지: ASCII 영문자와 숫자로만 되어 있고 영문자가 하나 이상 든 검색어 ('ECM', 'K2Web', 'R6').
+ * 한글이나 기호(검색어 안쪽의 `.` `-` `_` 포함)가 든 검색어, 숫자뿐인 검색어('7', '2025'), 빈 문자열은 아니다.
  *
  * 키워드 검색은 이런 검색어에만 "낱말의 처음에서 일치했는가" 를 정렬 기준으로 쓴다 (wordStartGlobPattern).
  * 두세 글자 영문 검색어는 다른 낱말 속에서도 일치하지만('TimeCMS' 의 'ECM'), 한국어 복합어의 가운데에 든
  * 낱말('공통코드' 의 '코드')은 정상적인 일치라 한글이 든 검색어에는 그 기준을 쓰지 않는다.
+ * 숫자뿐인 검색어에도 쓰지 않는다. 버전 숫자는 'v7', 'R6' 처럼 영문자 바로 뒤에 적는 일이 많은데, 그 자리는
+ * 낱말의 처음이 아니다. 숫자에 이 기준을 쓰면 "Tibero 7" 에서 제품 버전 표기가 'Tibero v7' 인 행이, 설명에 날짜
+ * '2017. 7. 14' 가 적혔을 뿐인 행보다 뒤로 밀린다.
  */
-export function isAsciiAlphanumericTerm(term: string): boolean {
-  return /^[A-Za-z0-9]+$/.test(term);
+export function isEnglishTerm(term: string): boolean {
+  return /^[A-Za-z0-9]+$/.test(term) && /[A-Za-z]/.test(term);
 }
 
 /** SQLite 의 GLOB 패턴에서 글자 하나를 글자 그대로(ASCII 영문자는 대소문자를 가리지 않고) 견주는 조각 */
@@ -322,7 +325,7 @@ function globLiteral(char: string): string {
  * - GLOB 은 대소문자를 가리므로 검색어의 ASCII 영문자마다 두 꼴을 문자 집합으로 적는다 ('ecm' → `[Ee][Cc][Mm]`).
  *   LIKE 와 같이 ASCII 영문자만 대소문자를 가리지 않는다.
  * - GLOB 에서 뜻이 있는 문자(`*`, `?`, `[`, `]`)는 글자 그대로 견주도록 바꾼다. 키워드 검색은 영문자와
- *   숫자뿐인 검색어(isAsciiAlphanumericTerm)만 넘기지만, 어떤 검색어를 받아도 와일드카드로 읽히지 않는다.
+ *   숫자뿐인 영문 검색어(isEnglishTerm)만 넘기지만, 어떤 검색어를 받아도 와일드카드로 읽히지 않는다.
  *
  * 패턴은 조회 문에 끼워 넣지 않고 바인딩 값으로 넘긴다. 검색어는 길어야 MAX_KEYWORD_QUERY_LENGTH 자이고
  * 글자마다 4바이트 이하라, 패턴은 SQLite 의 패턴 길이 한도(50,000바이트)를 넘지 않는다.

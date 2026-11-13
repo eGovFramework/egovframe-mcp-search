@@ -221,11 +221,9 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
 
     it("대체 검색(any-term)과 조사를 뗀 꼴에도 같은 규칙을 적용한다", () => {
       sqlite.addCompatibilitySoftwareBatch([UNLABELLED_43]);
-      // 2023: OtherCMS(확인일자) / 4.3: 세 행(프레임워크 버전) / 없는말: 0행(제외) → 하나 이상 일치하는 네 행.
-      // 네 행 모두 검색어 하나가 일치한다. '2023' 은 숫자뿐인 검색어라 낱말의 처음에서 일치했는지를 세고
-      // (확인일자의 앞부분과 같으면 값의 맨 앞에서 일치한 것이다), '.' 이 든 '4.3' 은 세지 않아 OtherCMS 가 먼저다
+      // 2023: OtherCMS(확인일자) / 4.3: 세 행(프레임워크 버전) / 없는말: 0행(제외) → 하나 이상 일치하는 네 행
       const fallback = sqlite.queryCompatibleSoftware({ query: "2023 4.3 없는말" });
-      expect(versionsOf(fallback.rows)).toEqual(["OtherCMS 2.0", "JEUS 21", "SampleCMS 1.0", "NoVersionText 1.0"]);
+      expect(versionsOf(fallback.rows)).toEqual(["JEUS 21", "SampleCMS 1.0", "NoVersionText 1.0", "OtherCMS 2.0"]);
       expect(fallback.matchMode).toBe("any-term");
       expect(fallback.terms).toMatchObject({ used: ["2023", "4.3"], ignored: ["없는말"] });
 
@@ -640,11 +638,28 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "나래 omega" }).rows)).toEqual(["나래 Omega", "나래 Bigomega"]);
     });
 
-    it("확인일자의 앞부분과 같아서 일치한 검색어도 값의 맨 앞에서 일치한 것으로 센다", () => {
-      // '2025': JEUS 21 은 확인일자(2025-08-21)로만 일치한다. 설명에 '2025' 가 적힌 오래된 행 뒤로 밀리지 않는다
-      sqlite.addCompatibilitySoftwareBatch([{ ...probe(1, "Legacy 1.0", "2010-01-01"), description: "2025 년까지 지원" }]);
-      const result = sqlite.queryCompatibleSoftware({ query: "2025" });
-      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "Legacy 1.0"]);
+    it("숫자뿐인 검색어에는 적용하지 않는다", () => {
+      // 버전 숫자는 'v7', 'R6' 처럼 영문자 바로 뒤에 적는 일이 많다. 숫자에 이 기준을 적용하면 제품 버전 표기가
+      // 'Tool v7' 인 행이, 설명에 날짜 '2017. 7. 14' 가 적혔을 뿐인 행보다 뒤로 밀린다 ('v' 뒤의 7 은 낱말의 처음이 아니다)
+      sqlite.addCompatibilitySoftwareBatch([
+        probe(1, "Tool v7", "2001-01-01"),
+        { ...probe(2, "Tool", "2030-01-01"), description: "확인일자 : 2017. 7. 14" },
+      ]);
+      // 두 행 모두 'Tool' 과 '7' 이 일치한다. 이름에 '7' 이 든 Tool v7 이 먼저다 (이름에 일치한 검색어 수)
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "Tool 7" }).rows)).toEqual(["Tool v7", "Tool"]);
+      // '7' 만으로 찾아도 이름에 '7' 이 든 두 행(확인일자 순)이 설명에만 든 행보다 먼저다
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "7" }).rows)).toEqual(["Tibero 7", "Tool v7", "Tool"]);
+
+      // '2025': 확인일자(2025-08-21)로만 일치한 JEUS 21 이, 설명에 '2025' 가 적힌 오래된 행보다 먼저다 (확인일자 순)
+      sqlite.addCompatibilitySoftwareBatch([{ ...probe(3, "Legacy 1.0", "2010-01-01"), description: "2025 년까지 지원" }]);
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "2025" }).rows)).toEqual(["JEUS 21", "Legacy 1.0"]);
+
+      // 숫자뿐인 검색어만 있는 조회 문의 정렬에는 낱말의 처음을 견주는 식(GLOB)이 없다
+      const clauses = orderByClausesOf(sqlite, () => sqlite.queryCompatibleSoftware({ query: "7 2025" }));
+      expect(clauses.length).toBeGreaterThan(0);
+      for (const clause of clauses) {
+        expect(clause).not.toContain("GLOB ?");
+      }
     });
 
     it("대체 검색에서 조사를 떼어 쓴 검색어는 뗀 꼴로 견준다", () => {

@@ -412,6 +412,16 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       expect(compatible("EP").rows[0].product_name).toMatch(/(^|[^A-Za-z])EP([^A-Za-z]|$)/);
     });
 
+    it('"Tibero 7" 은 제품 버전 표기가 "Tibero v7" 인 행을 맨 앞에 돌려준다', () => {
+      // 숫자뿐인 검색어에는 낱말의 처음에서 일치했는지를 따지지 않는다. 따지면 'v' 바로 뒤의 7 은 낱말의 처음이 아니라서,
+      // 설명에 날짜 '2017. 7. 14' 가 적혔을 뿐인 다른 버전의 행이 Tibero v7 보다 앞에 온다
+      const result = compatible("Tibero 7");
+      expect(result.matchMode).toBe("all-terms");
+      expect(result.terms).toEqual({ used: ["Tibero", "7"], ignored: [], dropped: [], required: 2 });
+      expect(result.total).toBeGreaterThan(1);
+      expect(result.rows[0]).toMatchObject({ product_name: "Tibero", product_version: "Tibero v7" });
+    });
+
     it('전각으로 입력한 "ＣＭＳ" 는 "CMS" 와 같은 건수를 돌려준다', () => {
       const half = compatible("CMS");
       const full = compatible("ＣＭＳ");

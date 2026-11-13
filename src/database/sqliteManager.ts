@@ -15,7 +15,7 @@ import {
   codePointLength,
   dropGenericTerms,
   extractSearchTerms,
-  isAsciiAlphanumericTerm,
+  isEnglishTerm,
   isGenericTerm,
   parseKeywordQuery,
   particleStrippedForms,
@@ -576,7 +576,7 @@ export class SQLiteManager {
    * (1) 일치한 검색어 수가 많은 행.
    * (2) 낱말의 처음에서 일치한 영문 검색어 수가 많은 행 (TermMatcher.startsWord). 두세 글자 영문 검색어는 다른
    *     낱말 속에서도 일치해('TimeCMS' 의 'ECM'), 낱말로 일치한 행('ECM Solution')이 그런 행에 밀리지 않게 한다.
-   *     한글이 든 검색어는 세지 않으므로, 영문자와 숫자뿐인 검색어가 없는 조회에는 이 기준이 없다.
+   *     한글이나 기호가 든 검색어와 숫자뿐인 검색어는 세지 않으므로, 영문 검색어가 없는 조회에는 이 기준이 없다.
    * (3) 이름 컬럼에 일치한 검색어 수가 많은 행. 설명에만 검색어가 든 행은 버리지 않고 뒤로 보낸다.
    * (4) 대상의 기본 정렬.
    * (5) rowid.
@@ -1383,9 +1383,7 @@ interface KeywordSearchTarget {
   nameColumns: string[];
   /**
    * 부분 문자열이 아닌 규칙으로 검색어와 견주는 컬럼의 조건. 이 가운데 하나를 채워도 그 검색어가 일치한 것이다.
-   * 검색어가 어떤 컬럼과 견줄 수 없는 꼴이면 그 컬럼의 조건은 돌려주지 않는다. 그런 컬럼이 없는 대상은 생략한다.
-   * 조건은 값의 맨 앞부터 견주는 것(값 전체가 같다, 값이 검색어로 시작한다)이어야 한다. 정렬에서 이 조건을
-   * 채운 검색어를 낱말의 처음에서 일치한 것으로 센다 (termMatcher 의 startsWord)
+   * 검색어가 어떤 컬럼과 견줄 수 없는 꼴이면 그 컬럼의 조건은 돌려주지 않는다. 그런 컬럼이 없는 대상은 생략한다
    */
   termConditions?: (term: string) => SqlExpression[];
   /**
@@ -1408,8 +1406,8 @@ interface TermMatcher {
   inName: SqlExpression;
   /**
    * 검색어가 낱말의 처음에서 일치한다: 검색 컬럼(searchColumns) 가운데 하나에서 값의 맨 앞이거나 바로 앞 글자가
-   * ASCII 영문자가 아닌 자리에 들어 있다. 대상이 따로 정한 조건(termConditions)을 채운 것도 값의 맨 앞에서
-   * 일치한 것으로 센다. ASCII 영문자와 숫자로만 된 검색어에만 있고, 그 밖의 검색어는 null 이다
+   * ASCII 영문자가 아닌 자리에 들어 있다. 영문 검색어(ASCII 영문자와 숫자로만 되어 있고 영문자가 든 검색어)에만
+   * 있고, 한글이나 기호가 든 검색어와 숫자뿐인 검색어는 null 이다
    */
   startsWord: SqlExpression | null;
 }
@@ -1450,8 +1448,10 @@ function countOf(conditions: SqlExpression[]): SqlExpression {
  * 가운데 하나를 채우면 일치한다. 키워드 검색의 모든 단계(all-terms, any-term, 일치하는 행이 있는 검색어인지의
  * 판정)가 이 조건을 쓰므로, 일치 규칙을 바꿀 때는 여기만 바꾼다.
  *
- * ASCII 영문자와 숫자로만 된 검색어에는 낱말의 처음에서 일치했는지를 가리는 조건(startsWord)도 만든다.
+ * 영문 검색어(isEnglishTerm)에는 낱말의 처음에서 일치했는지를 가리는 조건(startsWord)도 만든다.
  * 정렬에만 쓰고, 행이 일치하는지는 바꾸지 않는다 (selectByMatchedTerms).
+ * 대상이 따로 정한 조건(termConditions)은 이 조건에 넣지 않는다. 그 조건이 견주는 프레임워크 버전('4.3')과
+ * 확인일자('2025', '2024-11')는 '.' 이나 '-' 가 들었거나 숫자뿐이라 영문 검색어가 아니다.
  *
  * LIKE 패턴을 만들 수 없는 값(containsPattern)은 어떤 행과도 일치하지 않는 것으로 보고 null 을 돌려준다.
  */
@@ -1460,13 +1460,10 @@ function termMatcher(target: KeywordSearchTarget, term: string): TermMatcher | n
   if (pattern === null) {
     return null;
   }
-  const termConditions = target.termConditions?.(term) ?? [];
   return {
-    matches: anyOf([likeAnyColumn(target.searchColumns, pattern), ...termConditions]),
+    matches: anyOf([likeAnyColumn(target.searchColumns, pattern), ...(target.termConditions?.(term) ?? [])]),
     inName: likeAnyColumn(target.nameColumns, pattern),
-    startsWord: isAsciiAlphanumericTerm(term)
-      ? anyOf([wordStartAnyColumn(target.searchColumns, wordStartGlobPattern(term)), ...termConditions])
-      : null,
+    startsWord: isEnglishTerm(term) ? wordStartAnyColumn(target.searchColumns, wordStartGlobPattern(term)) : null,
   };
 }
 

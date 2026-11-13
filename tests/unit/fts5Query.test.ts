@@ -16,7 +16,7 @@ import {
   dropGenericTerms,
   extractSearchTerms,
   hasOrOperator,
-  isAsciiAlphanumericTerm,
+  isEnglishTerm,
   isGenericTerm,
   joinedTermKeys,
   parseKeywordQuery,
@@ -424,16 +424,23 @@ describe("splitAtSeparators", () => {
   });
 });
 
-describe("isAsciiAlphanumericTerm", () => {
-  it("ASCII 영문자와 숫자로만 된 검색어를 가려낸다", () => {
-    for (const term of ["ECM", "ecm", "K2Web", "21", "a", "Z9"]) {
-      expect(isAsciiAlphanumericTerm(term), term).toBe(true);
+describe("isEnglishTerm", () => {
+  it("ASCII 영문자와 숫자로만 되어 있고 영문자가 든 검색어를 가려낸다", () => {
+    for (const term of ["ECM", "ecm", "K2Web", "a", "Z9", "R6", "12c", "v7"]) {
+      expect(isEnglishTerm(term), term).toBe(true);
+    }
+  });
+
+  it("숫자뿐인 검색어는 아니다", () => {
+    // 버전 숫자는 'v7', 'R6' 처럼 영문자 바로 뒤에 적는 일이 많아, 낱말의 처음을 따지면 찾는 행이 뒤로 밀린다
+    for (const term of ["7", "21", "2025", "0"]) {
+      expect(isEnglishTerm(term), term).toBe(false);
     }
   });
 
   it("한글이나 기호가 든 검색어, 빈 문자열은 아니다", () => {
     for (const term of ["게시판", "JEUS는", "CMS관리", "4.3", "i-Portal", "sts_com", "Q&A", "ＣＭＳ", "é", "a b", ""]) {
-      expect(isAsciiAlphanumericTerm(term), term).toBe(false);
+      expect(isEnglishTerm(term), term).toBe(false);
     }
   });
 });
@@ -490,10 +497,11 @@ describe("wordStartGlobPattern", () => {
     expect(startsWord("baa", "aa")).toBe(false);
   });
 
-  it("숫자로 된 검색어는 앞 글자가 숫자여도 낱말의 처음으로 본다 (ASCII 영문자가 아니면 된다)", () => {
-    expect(startsWord("JEUS 21", "21")).toBe(true);
-    expect(startsWord("2021", "21")).toBe(true);
-    expect(startsWord("v21", "21")).toBe(false);
+  it("숫자가 든 검색어도 같은 규칙으로 견준다 (바로 앞 글자가 숫자이면 낱말의 처음이다)", () => {
+    expect(startsWord("KCUBE R6 1.0", "R6")).toBe(true);
+    expect(startsWord("2R6", "R6")).toBe(true);
+    expect(startsWord("XR6", "R6")).toBe(false);
+    expect(startsWord("K2Web Wizard", "Web")).toBe(true);
   });
 
   it("검색어가 들어 있지 않은 값이나 빈 값과는 일치하지 않는다", () => {
@@ -503,7 +511,7 @@ describe("wordStartGlobPattern", () => {
   });
 
   it("GLOB 에서 뜻이 있는 문자(*, ?, [, ])는 글자 그대로 견준다", () => {
-    // 지금 이 패턴을 쓰는 검색어는 영문자와 숫자뿐이지만, 어떤 검색어를 넘겨도 와일드카드로 읽히지 않아야 한다
+    // 키워드 검색이 이 패턴에 넘기는 검색어는 영문자와 숫자뿐이지만, 어떤 검색어를 넘겨도 와일드카드로 읽히지 않아야 한다
     expect(startsWord("a*b", "a*b")).toBe(true);
     expect(startsWord("aXb", "a*b")).toBe(false);
     expect(startsWord("a?b", "a?b")).toBe(true);
