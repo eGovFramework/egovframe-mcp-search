@@ -8,17 +8,47 @@ eGovFrame MCP Search(`egovframe-mcp-search`)의 지식베이스 저장 구조를
 knowledge-base/
 ├── egovframe.db                # SQLite 데이터베이스 (호환 소프트웨어, 공통컴포넌트)
 ├── developer_knowledge.lance/  # LanceDB 테이블 (개발자 지식)
-└── egovframe_guide.lance/      # LanceDB 테이블 (공식 가이드)
+├── egovframe_guide.lance/      # LanceDB 테이블 (공식 가이드)
+├── state.json                  # 리소스별 적용 버전
+├── manifest.json               # 묻고답하기·FAQ 스냅샷의 버전과 행 수
+└── snapshot.jsonl.gz           # 묻고답하기·FAQ 스냅샷
 ```
 
-- `knowledge-base/` 는 git 이 추적하는 디렉토리입니다. `package.json` 의 `files` 에도 들어 있어 배포 tgz 에 그대로 동봉되므로, 저장소를 클론하거나 tgz 를 설치한 뒤에 인덱스를 따로 구축할 필요가 없습니다.
+- `knowledge-base/` 는 git 이 추적하는 디렉토리입니다. `package.json` 의 `files` 에도 들어 있어 배포 tgz 에 그대로 동봉되므로, 저장소를 클론하거나 tgz 를 설치한 뒤에 인덱스를 따로 구축할 필요가 없습니다. 전체 크기는 약 143MB 입니다.
+- 동봉된 지식베이스는 현재 색인 코드로 다시 구축한 것이어서, 이 문서에 적힌 색인 규칙이 동봉 인덱스에 그대로 반영되어 있습니다.
 - MCP 서버는 이 디렉토리를 조회만 합니다. DB 파일이나 LanceDB 테이블이 없으면 새로 만들지 않고 `npm run build-index` 를 안내하는 오류로 응답합니다.
 - 서버는 `egovframe.db` 를 읽기 전용으로 열고, 동봉된 DB 는 DELETE 저널 모드입니다. 그래서 조회하는 동안 `egovframe.db-wal`, `egovframe.db-shm` 파일이 생기지 않고 DB 파일도 바뀌지 않습니다.
-- `npm run build-index` 로 다시 구축하면 리소스별 적용 버전을 적은 `state.json` 이 이 디렉토리에 함께 기록됩니다. 개발자 지식까지 다시 구축하면 묻고답하기·FAQ 스냅샷(`manifest.json`, `snapshot.jsonl.gz`)도 기록됩니다. 현재 동봉된 지식베이스에는 이 세 파일이 없습니다.
+- 두 LanceDB 테이블의 디렉토리에는 `data/`, `_versions/`, `_transactions/` 만 있습니다. 벡터 인덱스를 만들지 않으므로 인덱스 파일을 담는 `_indices/` 디렉토리가 없습니다.
+
+### 버전 기록과 스냅샷
+
+`state.json`, `manifest.json`, `snapshot.jsonl.gz` 는 `npm run build-index` 가 기록하는 파일입니다. 갱신 CLI(`egovframe-mcp-search update`)는 이 가운데 `state.json` 과 `snapshot.jsonl.gz` 를 읽습니다.
+
+`state.json` 에는 리소스마다 어떤 버전의 원본으로 구축했는지가 적혀 있습니다. 갱신 CLI 는 갱신분을 적용한 적이 없는 리소스의 현재 버전을 이 값으로 보고 새 버전이 있는지 판단합니다. 동봉된 파일의 내용은 다음과 같습니다.
+
+| `resources` 의 키 | 기록된 값 | 값의 출처 |
+|-------------------|-----------|-----------|
+| `developer_knowledge` | `version` 이 `2026-08-11.0`, `row_count` 가 17941 | 스냅샷의 `dataset_version`. Excel 에서 만든 스냅샷은 Excel 파일의 수정 날짜에 `.0` 을 붙인 값 |
+| `guide` | `version` 이 `v5.0.0-ready-2026-contribution`, `chunk_count` 가 4625 | 가이드 원문 서브모듈의 git 태그 (체크아웃이 태그와 일치하지 않으면 `git describe` 의 결과) |
+| `common_components` | `source_version` 이 `v5.0.1`, `metadata_version` 이 `5.0.0` | 소스 서브모듈의 git 태그와 `templates/common-components.json` 의 최상위 `version` |
+| `compatibility` | `version` 이 `2026-07-20.0`, `row_count` 가 481 | 원본 JSON 파일의 수정 날짜에 `.0` 을 붙인 값 |
+
+- 최상위에는 `schema_version`(1), `embedding_model.id`(`Xenova/multilingual-e5-small`), `generated_at`(구축 시각)이 있습니다. 리소스 항목에는 `origin`(동봉 파일은 모두 `bundled`)과 `applied_at` 이 함께 있고, 벡터를 가진 두 리소스에는 `embedding_model` 도 있습니다.
+- `developer_knowledge` 의 `row_count` 17,941 은 스냅샷(묻고답하기와 FAQ)의 행 수입니다. 테이블의 행 수 18,195 는 여기에 적용가이드 청크 254건을 더한 값입니다.
+- 원본 디렉토리가 git 체크아웃이 아니면 git 태그를 알 수 없으므로, `guide` 의 `version` 은 `unknown` 이 되고 `common_components` 의 `source_version` 은 기록되지 않습니다.
+
+`manifest.json` 과 `snapshot.jsonl.gz` 는 `developer_knowledge` 를 구축할 때 쓴 묻고답하기·FAQ 스냅샷입니다. Excel 에서 구축했으면 Excel 을 바꿔 만든 스냅샷이 들어갑니다. 적용가이드 PDF 는 들어 있지 않습니다.
+
+| 파일 | 내용 |
+|------|------|
+| `manifest.json` | `schema_version`, `dataset_version`, `generated_at`, `embedding_model.id`, `row_count`. 동봉 파일은 `dataset_version` 이 `2026-08-11.0`, `row_count` 가 17941 |
+| `snapshot.jsonl.gz` | 한 줄에 게시글 하나를 JSON 으로 적고 gzip 으로 압축한 파일. 필드는 `id`(`qa:` 또는 `faq:` 뒤에 포털 게시글 ID), `kind`(`qa`, `faq`), `title`, `question`, `answer`, `category`, `language` 이고, 값이 없는 `category` 와 `language` 는 생략됨. `id` 순으로 정렬되어 있음. 동봉 파일은 17,941행(묻고답하기 17,845행, FAQ 96행) |
+
+갱신 CLI 는 개발자 지식을 처음 갱신할 때 `snapshot.jsonl.gz` 를 새 스냅샷과 견줘 바뀐 게시글만 다시 임베딩합니다. `manifest.json` 은 스냅샷의 버전과 행 수를 적어 둔 파일이고, 서버와 갱신 CLI 는 이 파일을 읽지 않습니다.
 
 ### 갱신분의 저장 위치
 
-갱신 CLI(`egovframe-mcp-search update`)가 받은 갱신분은 `knowledge-base/` 가 아니라 사용자 데이터 디렉토리에 저장됩니다. 기본 위치는 아래와 같고, 환경 변수 `EGOV_MCP_DATA_DIR` 로 바꿀 수 있습니다.
+갱신 CLI 가 받은 갱신분은 `knowledge-base/` 가 아니라 사용자 데이터 디렉토리에 저장됩니다. 기본 위치는 아래와 같고, 환경 변수 `EGOV_MCP_DATA_DIR` 로 바꿀 수 있습니다.
 
 | 운영체제 | 기본 위치 |
 |----------|-----------|
@@ -37,9 +67,9 @@ knowledge-base/
         └── egovframe_guide.lance/
 ```
 
-서버는 LanceDB 테이블마다 이 디렉토리를 먼저 확인합니다. `state.json` 에 해당 리소스의 항목이 있고, `schema_version` 과 임베딩 모델이 현재 패키지와 같고, 항목이 가리키는 디렉토리에 테이블이 있으면 그 테이블을 읽습니다. 조건에 맞지 않으면 `knowledge-base/` 의 테이블을 읽습니다. 서버는 테이블을 처음 열 때 위치를 정하므로, 실행 중인 서버에는 다시 시작한 뒤에 갱신분이 반영됩니다.
+서버는 LanceDB 테이블마다 이 디렉토리를 먼저 확인합니다. `state.json` 에 해당 리소스의 항목이 있고, `schema_version` 과 임베딩 모델이 현재 패키지와 같고, 항목이 가리키는 디렉토리에 테이블이 있으면 그 테이블을 읽습니다. 조건에 맞지 않으면 `knowledge-base/` 의 테이블을 읽습니다. 서버는 테이블을 처음 열 때 위치를 정하므로, 실행 중인 서버에는 다시 시작한 뒤에 갱신분이 반영됩니다. 갱신분의 테이블을 읽다가 실패하면 서버는 그 리소스를 `knowledge-base/` 의 테이블에서 다시 읽고, 다시 시작할 때까지 동봉 테이블을 씁니다.
 
-호환 소프트웨어 갱신은 비활성화되어 있어서 갱신 CLI 가 `egovframe.db` 의 사본을 만들지 않으며, 서버는 `knowledge-base/egovframe.db` 를 읽습니다. 공통컴포넌트 소스 트리의 갱신분은 `resources/common_components/` 아래에 저장되지만 데이터베이스가 아니므로 이 문서에서 다루지 않습니다.
+호환 소프트웨어 갱신은 비활성화되어 있어서 갱신 CLI 가 `egovframe.db` 의 사본을 만들지 않으며, 서버는 `knowledge-base/egovframe.db` 를 읽습니다. 다만 서버가 DB 위치를 정하는 코드에는 사본을 읽는 분기가 남아 있습니다. 사용자 데이터 디렉토리에 `sqlite/egovframe.db` 가 있고 `sqlite/base.json` 의 `bundled_generated_at` 이 동봉 `state.json` 의 `generated_at` 과 같으면 서버는 그 사본을 읽습니다. 공통컴포넌트 소스 트리의 갱신분은 `resources/common_components/` 아래에 저장되지만 데이터베이스가 아니므로 이 문서에서 다루지 않습니다.
 
 ---
 
@@ -54,14 +84,14 @@ knowledge-base/
 | 3 | `common_components` | 공통컴포넌트 | `templates/common-components.json` | 153 |
 | 4 | `component_dependencies` | 공통컴포넌트 의존성 | `templates/common-components.json` | 1,455 |
 
-이 밖에 키워드 검색에 쓰는 FTS5 가상 테이블 `compatibility_fts`, `components_fts` 가 있습니다. `sqlite_master` 에는 SQLite 가 자동으로 만드는 내부 객체도 함께 보입니다. FTS5 가 쓰는 `*_fts_data`, `*_fts_idx`, `*_fts_docsize`, `*_fts_config` 테이블, `AUTOINCREMENT` 용 `sqlite_sequence` 테이블, UNIQUE 제약용 `sqlite_autoindex_*` 인덱스가 그것입니다. 표준용어사전 관련 테이블은 기능과 함께 제거되어 남아 있지 않습니다.
+이 밖에 FTS5 가상 테이블 `compatibility_fts`, `components_fts` 가 있습니다. 두 테이블은 스키마에 남아 있지만 검색에는 쓰이지 않습니다(아래 "키워드 검색과 FTS5 테이블" 참고). `sqlite_master` 에는 SQLite 가 자동으로 만드는 내부 객체도 함께 보입니다. FTS5 가 쓰는 `*_fts_data`, `*_fts_idx`, `*_fts_docsize`, `*_fts_config` 테이블, `AUTOINCREMENT` 용 `sqlite_sequence` 테이블, UNIQUE 제약용 `sqlite_autoindex_*` 인덱스가 그것입니다. 표준용어사전 관련 테이블은 기능과 함께 제거되어 남아 있지 않습니다.
 
 ### LanceDB (벡터 데이터, 384차원 임베딩)
 
 | # | 테이블 | 설명 | 데이터 소스 | 행 수 |
 |---|--------|------|-------------|-------|
-| 5 | `developer_knowledge` | 개발자 지식 (포털의 묻고답하기·FAQ·적용가이드) | `templates/developer_knowledge/` 의 묻고답하기·FAQ Excel 과 적용가이드 PDF | 18,046 |
-| 6 | `egovframe_guide` | 공식 가이드 | git 서브모듈 `templates/egovframe_guide/` ([eGovFramework/egovframe-docs](https://github.com/eGovFramework/egovframe-docs)) | 2,277 |
+| 5 | `developer_knowledge` | 개발자 지식 (포털의 묻고답하기·FAQ·적용가이드) | `templates/developer_knowledge/` 의 묻고답하기·FAQ Excel 과 적용가이드 PDF | 18,195 |
+| 6 | `egovframe_guide` | 공식 가이드 | git 서브모듈 `templates/egovframe_guide/` ([eGovFramework/egovframe-docs](https://github.com/eGovFramework/egovframe-docs)) | 4,625 |
 
 ---
 
@@ -83,7 +113,7 @@ CREATE TABLE compatibility_software (
   verified_date TEXT NOT NULL,          -- 호환성 확인일자 (YYYY-MM-DD)
   description TEXT,                     -- 설명
   url TEXT,                             -- 포털의 제품 상세 주소
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- 적재 시각
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- 적재 시각 (UTC)
   UNIQUE(product_name, product_version, framework_version)
 );
 ```
@@ -97,7 +127,7 @@ CREATE INDEX idx_compat_verified_date ON compatibility_software(verified_date DE
 ```
 
 - `id` 와 `created_at` 은 내부용 컬럼이라 조회 결과에 포함되지 않습니다. `id` 는 다시 적재할 때마다 새 값이 부여됩니다.
-- `verified_date` 는 `YYYY-MM-DD` 형식의 문자열입니다. 다만 동봉 데이터에는 이 컬럼에 날짜가 아닌 값(업체명, URL)이 든 행이 3건 있습니다. `query` 없이 조회하면 확인일자가 최근인 순으로 정렬하고 이런 행은 맨 뒤에 둡니다.
+- `verified_date` 는 `YYYY-MM-DD` 형식의 문자열입니다. 다만 동봉 데이터에는 이 컬럼에 날짜가 아닌 값(업체명, URL)이 든 행이 3건 있습니다. `query` 없이 조회하면 확인일자가 최근인 순으로 정렬하고 이런 행은 맨 뒤에 둡니다. 확인일자가 `1970-01-01` 인 행도 1건 있는데, 이 값은 변환 스크립트가 원본에 확인일자가 없는 항목에 채우는 값입니다.
 
 **관련 조회:** `egov_search_knowledge` 를 `{"scope": "compatibility"}` 로 호출합니다.
 
@@ -151,7 +181,8 @@ CREATE INDEX idx_comp_package ON common_components(package_name);
 ```
 
 - `component_id` 는 고유하고 `package_name` 은 고유하지 않습니다. 게시판(`bbs`)과 블로그관리(`blog-management`)가 `egovframework.com.cop.bbs` 패키지를 함께 씁니다. 패키지명으로 컴포넌트를 찾을 때는 먼저 적재된 컴포넌트(게시판)를 고릅니다.
-- 동봉 데이터는 153행 모두 `version` 이 `4.3.1`, `has_web` 이 1 이고 `added_options` 는 NULL 입니다.
+- `use_tables` 는 메타의 `useTables` 를 그대로 쓰지 않고, 적재할 때 공통컴포넌트 소스 트리(`templates/common-components-src`)에서 도출합니다(`src/kb/componentTables.ts`). 컴포넌트 패키지의 설치 스크립트가 만드는 테이블과 뷰에, 그 컴포넌트의 매퍼 XML 이 참조하는 테이블을 더한 목록입니다. 설치 스크립트는 소스 트리의 `src/script/ddl/mysql/` 에 있는 `cop.bbs_create_mysql.sql` 같은 파일이고, 자기 패키지의 스크립트가 없으면 가장 가까운 상위 패키지의 스크립트를 씁니다. 스크립트가 없는 컴포넌트는 모든 스크립트에 공통인 기반 테이블에 매퍼가 참조하는 테이블을 더합니다. 스크립트도 매퍼도 없는 컴포넌트는 메타의 목록을 쓰되, 그 목록이 메타에서 바로 앞 항목의 목록과 같으면 기반 테이블만 씁니다. 동봉 데이터에서는 설치 스크립트에서 나온 컴포넌트가 125개, 기반 테이블과 매퍼에서 나온 컴포넌트가 19개, 기반 테이블만 쓰는 컴포넌트가 7개, 메타의 목록을 쓰는 컴포넌트가 2개입니다. 소스 트리가 없는 상태에서 적재하면 153개 모두 메타의 값이 그대로 들어갑니다.
+- 동봉 데이터는 153행 모두 `version` 이 `4.3.1`, `has_web` 이 1 이고 `added_options` 는 NULL 입니다. `version` 은 메타에 컴포넌트마다 적힌 값이고, `state.json` 의 `metadata_version`(`5.0.0`)은 메타 파일의 최상위 `version` 입니다.
 
 #### 컴포넌트 ID 부여 규칙
 
@@ -202,9 +233,22 @@ CREATE INDEX idx_comp_dep_package ON component_dependencies(depends_on_package);
 
 ---
 
-## 🔍 FTS5 전체 텍스트 검색
+## 🔍 키워드 검색과 FTS5 테이블
 
-`components` 와 `compatibility` 조회에 `query` 를 주면 실행되는 키워드 검색이 사용하는 FTS5 가상 테이블입니다. 두 테이블 모두 본문을 따로 저장하지 않고 원본 테이블의 행을 `rowid` 로 참조하는 외부 콘텐츠(external content) 테이블입니다. `tokenize` 옵션을 지정하지 않았으므로 기본 토크나이저(`unicode61`)를 씁니다.
+`components` 와 `compatibility` 조회에 `query` 를 주면 실행되는 키워드 검색은 FTS5 를 쓰지 않습니다. 검색어를 원본 테이블의 컬럼에 `LIKE` 로 견주는 부분 문자열 비교입니다. FTS5 의 낱말 단위 일치로는 한국어 복합어의 가운데나 뒤쪽에 든 낱말(`공통코드` 의 `코드`)을 찾지 못하고, 두 테이블 모두 수백 행이라 전체를 훑어도 느리지 않기 때문입니다. FTS5 가상 테이블과 동기화 트리거는 스키마에 남아 있고 `build-index` 가 계속 채우지만, 서버의 어떤 조회도 이 테이블을 읽지 않습니다.
+
+두 FTS5 테이블 모두 본문을 따로 저장하지 않고 원본 테이블의 행을 `rowid` 로 참조하는 외부 콘텐츠(external content) 테이블입니다. `tokenize` 옵션을 지정하지 않았으므로 기본 토크나이저(`unicode61`)를 씁니다.
+
+### 키워드 검색이 견주는 컬럼
+
+| 테이블 | 부분 문자열로 견주는 컬럼 | 이름 컬럼 | 다른 규칙으로 견주는 컬럼 |
+|--------|---------------------------|-----------|---------------------------|
+| `compatibility_software` | `product_name`, `product_version`, `vendor`, `category`, `description` | `product_name`, `product_version` | `framework_version` 은 검색어가 값과 같을 때, `verified_date` 는 값이 `YYYY`, `YYYY-MM`, `YYYY-MM-DD` 꼴의 검색어로 시작할 때 일치 |
+| `common_components` | `component_id`, `name`, `name_en`, `description`, `description_en`, `package_name` | `component_id`, `name`, `name_en` | 없음 |
+
+- ASCII 영문자의 대소문자는 가리지 않습니다. 이름 컬럼은 결과를 정렬하는 기준에 쓰입니다.
+- FTS5 테이블에는 `product_version` 과 `component_id` 컬럼이 없습니다. 이 두 컬럼은 키워드 검색이 원본 테이블에서 직접 견줍니다.
+- 검색어를 고르는 규칙, 정렬 기준, 응답에 실리는 정보는 [EGOV_SEARCH_KNOWLEDGE_TOOL.md](./EGOV_SEARCH_KNOWLEDGE_TOOL.md) 에 있습니다.
 
 ### compatibility_fts
 
@@ -315,7 +359,8 @@ SQLite 의 테이블 네 개와 그 관계입니다. PK 는 기본 키, UK 는 U
 두 테이블에 공통인 사항은 다음과 같습니다. 컬럼 타입은 Apache Arrow 타입 이름으로 적었습니다.
 
 - 임베딩 모델은 `Xenova/multilingual-e5-small`(384차원)이고 `models/` 의 로컬 파일만 사용합니다. 색인할 때는 `passage: `, 검색할 때는 `query: ` 접두어를 붙여 임베딩합니다.
-- `build-index` 는 `vector` 컬럼에 IVF_PQ 인덱스(`vector_idx`, 파티션 256개, 부분 벡터 96개)를 만듭니다. 그러나 검색은 이 인덱스를 쓰지 않고 조건에 맞는 모든 행과의 코사인 거리를 계산합니다. 스칼라 컬럼에는 인덱스가 없습니다.
+- 벡터 인덱스는 만들지 않습니다. `build-index` 와 갱신 CLI 는 행을 넣은 뒤 테이블을 최적화할 뿐이고, 검색은 조건에 맞는 모든 행과의 코사인 거리를 계산하는 전수 검색입니다. 스칼라 컬럼에도 인덱스가 없습니다. 이전 버전으로 구축해 IVF_PQ 인덱스가 남아 있는 테이블을 읽을 때에도 검색은 인덱스를 건너뜁니다.
+- 임베딩 모델은 입력의 앞 512 토큰만 읽습니다. 공식 가이드와 적용가이드 PDF 는 임베딩 입력이 이 한도 안에 들도록 나누어 저장하므로, 동봉 인덱스에는 한도를 넘는 청크가 없습니다(가장 긴 입력이 공식 가이드 492 토큰, 적용가이드 419 토큰). 묻고답하기와 FAQ 는 게시글 하나가 한 행이라 나누지 않습니다. 동봉 인덱스에서는 묻고답하기 17,845행 가운데 2,545행과 FAQ 96행 가운데 9행의 임베딩 입력이 512 토큰을 넘고, 넘는 뒷부분은 벡터에 반영되지 않습니다.
 - MCP 서버는 두 테이블을 조회만 합니다. 내용은 `build-index` 와 갱신 CLI 로만 바뀝니다.
 
 ### 5. developer_knowledge (개발자 지식)
@@ -326,7 +371,7 @@ SQLite 의 테이블 네 개와 그 관계입니다. PK 는 기본 키, UK 는 U
 |------|------|------|
 | `id` | `Utf8` | 행 ID (UUID). 색인할 때 새로 만드는 값이며, 포털 게시글 ID 는 `metadata.originalId` 에 있음 |
 | `type` | `Utf8` | 유형. 묻고답하기·FAQ 는 `solution`, 적용가이드는 `best-practice` |
-| `title` | `Utf8` | 제목. 적용가이드 청크는 확장자를 뺀 파일 이름에 `(순번/전체 청크 수)` 를 붙인 값 |
+| `title` | `Utf8` | 제목. 적용가이드 청크는 확장자를 뺀 파일 이름에 `(순번/전체 청크 수)` 를 붙인 값 (예: `[가이드]표준프레임워크_적용가이드_v5.0 (1/254)`) |
 | `content` | `Utf8` | 본문. 묻고답하기·FAQ 는 `질문:` 단락과 `답변:` 단락, 적용가이드는 청크 본문 |
 | `context` | `Utf8` | 출처 구분 (`표준프레임워크 묻고답하기`, `표준프레임워크 FAQ`, `표준프레임워크 적용가이드 PDF`) |
 | `tags` | `List<Utf8>` | 태그. `egovframe`, `developer_knowledge` 와 출처 태그(`qa`, `faq`, 적용가이드는 `guide` 와 `pdf`) |
@@ -348,47 +393,54 @@ SQLite 의 테이블 네 개와 그 관계입니다. PK 는 기본 키, UK 는 U
 | `originalId` | `Utf8` | 포털 게시글 ID (예: `FAQ_0000000000000149`). 적용가이드 청크는 빈 문자열 |
 | `category` | `Utf8` | 포털의 분류 코드 (예: `S02`). 값이 없으면 빈 문자열 |
 | `language` | `Utf8` | 게시글 언어 (`KOR`, `ENG`). 적용가이드 청크는 빈 문자열 |
-| `source`, `sourceFile` | `Utf8` | 적재 원본의 위치. 동봉 데이터의 `sourceFile` 은 Excel 과 PDF 의 파일 경로이고, 현재 코드로 다시 구축하면 묻고답하기·FAQ 행은 `snapshot:qa`, `snapshot:faq` 가 됨 |
-| `chunkIndex`, `chunkCount` | `Float64` | 적용가이드 청크의 순번과 전체 청크 수. 그 밖의 행은 0 |
+| `source`, `sourceFile` | `Utf8` | 적재 원본의 위치. `source` 는 모든 행이 `templates/developer_knowledge` 임. `sourceFile` 은 묻고답하기 행이 `snapshot:qa`, FAQ 행이 `snapshot:faq`, 적용가이드 청크가 저장소 기준 PDF 경로(`templates/developer_knowledge/[가이드]표준프레임워크_적용가이드_v5.0.pdf`)임 |
+| `chunkIndex`, `chunkCount` | `Float64` | 적용가이드 청크의 순번(1 부터)과 전체 청크 수. 그 밖의 행은 0 |
 | `author`, `version`, `environment`, `file`, `section` | `Utf8` | 동봉 데이터에서는 모두 빈 문자열 |
 | `extra` | `Utf8` | 위 필드에 속하지 않는 값을 담는 JSON 문자열. 동봉 데이터에서는 모두 `{}` |
 
 **데이터 소스:**
 - 묻고답하기·FAQ: `templates/developer_knowledge/` 에 스냅샷(`manifest.json`, `snapshot.jsonl.gz`)이 있으면 그것을 읽고, 없으면 같은 디렉토리의 Excel(`*.xlsx`)을 같은 형식의 스냅샷으로 바꿔서 적재합니다. 저장소에는 Excel 두 개가 들어 있습니다. `build-index` 를 `online` 방식으로 실행하면 릴리스 스냅샷을 먼저 내려받고, 받지 못했을 때 이 디렉토리를 씁니다.
-- 적용가이드: `templates/developer_knowledge/` 의 PDF 를 1,800자 이하의 청크로 나눠 적재합니다.
+- Excel 을 스냅샷으로 바꿀 때 답변이 없는 글은 넣지 않습니다. 동봉 원본에서는 묻고답하기 17,863건 가운데 18건이 여기에 해당합니다. 묻고답하기·FAQ 를 색인할 때 제목과 본문에 든 주민등록번호 형식의 값은 `******-*******` 로 가리며, 동봉 데이터에는 해당하는 값이 없습니다.
+- 적용가이드: `templates/developer_knowledge/` 의 PDF 를 600자 이하의 청크로 나눠 적재합니다(`src/scripts/buildIndex.ts` 의 `chunkPdfText`). 문단, 줄, 문장, 낱말의 순서로 경계를 찾아 나누고, 둘째 청크부터는 앞 청크의 끝부분을 100자까지 앞에 다시 싣습니다. 겹친 부분도 600자에 포함됩니다. 동봉 PDF 는 청크 254건이 되었고, 청크의 길이는 485자에서 599자, 이웃한 청크가 겹치는 길이는 36자에서 99자입니다.
 - `build-index` 는 테이블을 지우고 새로 만들어 모든 행을 다시 임베딩합니다. 묻고답하기·FAQ 원본을 찾지 못하면 이 테이블을 건너뛰고 기존 내용을 유지합니다.
-- 갱신 CLI 는 직전에 적용한 스냅샷과 새 스냅샷을 게시글 ID 로 대조해 바뀐 행만 다시 임베딩합니다. `metadata.sourceType` 이 `qa`, `faq` 인 행만 바꾸고 적용가이드 청크는 그대로 둡니다. 직전 스냅샷이 없으면 묻고답하기·FAQ 행 전체를 다시 임베딩하며, 현재 동봉된 지식베이스가 이 경우입니다.
+- 갱신 CLI 는 직전에 적용한 스냅샷과 새 스냅샷을 게시글 ID 로 대조해 바뀐 행만 다시 임베딩합니다. 처음 갱신할 때의 기준은 `knowledge-base/snapshot.jsonl.gz` 이고, 그 뒤에는 갱신분과 함께 저장한 `snapshot.applied.jsonl.gz` 입니다. `metadata.sourceType` 이 `qa`, `faq` 인 행만 바꾸고 적용가이드 청크는 그대로 둡니다. 기준 스냅샷을 읽을 수 없으면 묻고답하기·FAQ 행 전체를 다시 임베딩합니다.
 
-**관련 조회:** `{"scope": "knowledge", "query": "MyBatis 트랜잭션 오류"}` 로 의미 검색을 합니다. `filters.type`, `filters.tags`, `filters.minImportance`, `filters.verifiedOnly` 가 각각 `type`, `tags`, `importance`, `verified` 컬럼에 대응합니다.
+**관련 조회:** `{"scope": "knowledge", "query": "MyBatis 트랜잭션 오류"}` 로 의미 검색을 합니다. `filters.type`, `filters.tags`, `filters.minImportance`, `filters.verifiedOnly` 가 각각 `type`, `tags`, `importance`, `verified` 컬럼에 대응합니다. `filters.tags` 의 값은 소문자로 바꿔 견줍니다.
 
 ---
 
 ### 6. egovframe_guide (공식 가이드)
 
-공식 가이드(egovframe-docs 저장소의 마크다운 문서)를 섹션 단위의 청크로 나눠 저장합니다.
+공식 가이드(egovframe-docs 저장소의 마크다운 문서)를 임베딩 모델의 입력 한도에 맞춘 청크로 나눠 저장합니다.
 
 | 컬럼 | 타입 | 설명 |
 |------|------|------|
-| `id` | `Utf8` | 청크 ID (UUID) |
-| `title` | `Utf8` | 청크 제목. `문서 제목: 섹션 제목` 형식이며, 첫 `##` 제목 앞의 도입부 청크는 문서 제목만 씀 |
+| `id` | `Utf8` | 청크 ID (UUID). 색인할 때 새로 만드는 값이라 지식베이스를 다시 구축하거나 갱신하면 바뀜 |
+| `title` | `Utf8` | 청크 제목. `문서 제목: 제목 경로` 형식이며, 첫 `##` 제목 앞의 도입부 청크는 문서 제목만 씀. 여러 조각으로 나뉜 절은 끝에 조각 번호 ` (k/n)` 이 붙음 (예: `MyBatis Configuration XML File: Configuration XML > Sample Configuration (2/8)`) |
 | `content` | `Utf8` | 청크 본문 (마크다운) |
 | `source` | `Utf8` | 원본 파일 경로. 가이드 원문 디렉토리 기준 상대 경로이고 구분자는 `/` (예: `egovframe-runtime/persistence-layer/dataaccess-configuration_xml.md`) |
 | `layer` | `Utf8` | 경로의 첫째 마디 (예: `egovframe-runtime`). 최상위 문서는 파일 이름이 그대로 들어감 (`gettingstarted.md`, `_index.md`) |
 | `category` | `Utf8` | 경로가 세 마디 이상일 때의 둘째 마디 (예: `persistence-layer`). 그 밖에는 빈 문자열 |
-| `section` | `Utf8` | 섹션 제목. 도입부 청크는 `개요`, `###` 단위로 나눈 청크는 `섹션 > 하위 섹션` |
+| `section` | `Utf8` | 제목 경로. `##` 절은 절 제목, 더 깊은 제목에서 나눈 청크는 `절 > 소절`, 도입부 청크는 `개요`(도입부를 더 깊은 제목에서 나눈 청크는 `개요 > 소절`). 여러 조각으로 나뉜 절은 `title` 과 같은 조각 번호가 붙음 |
 | `docTitle` | `Utf8` | 문서 제목. 프론트매터의 `title`, 없으면 `linkTitle`, 그것도 없으면 파일 이름 |
 | `url` | `Utf8` | 프론트매터의 `url` (예: `/egovframe-runtime/persistence-layer/dataaccess-mybatis/dataaccess-configuration_xml/`). 없으면 빈 문자열 |
 | `vector` | `FixedSizeList[384]<Float32>` | 임베딩 벡터 |
 
-**데이터 소스와 색인 규칙:**
+**데이터 소스와 색인 규칙** (`src/kb/guideIndexer.ts`, `src/rag/guideChunking.ts`):
 - `templates/egovframe_guide/` 아래의 `.md` 파일을 모읍니다. `.git`, `.github`, `images` 디렉토리와 `README.md`, `how-to-write-Frontmatter.md` 는 제외합니다.
-- 프론트매터에 `draft: true` 가 있는 문서와 본문이 50자 미만인 문서는 색인하지 않습니다.
-- 문서를 `##` 제목 단위로 나누고, 2,000자를 넘는 섹션은 `###` 제목이 있으면 그 단위로 다시 나눕니다. 본문이 50자 미만인 청크는 넣지 않습니다.
+- 프론트매터에 `draft: true` 가 있는 문서와 본문이 50자 미만인 문서는 색인하지 않습니다. 동봉 인덱스를 만든 원문에서는 663개 가운데 초안 4개와 본문이 짧은 문서 255개가 빠져 404개가 색인되었습니다.
+- 문서를 `##` 제목에서 절로 나눕니다. 첫 `##` 제목 앞의 내용은 도입부이고, 맨 앞의 `#` 제목 줄은 뺍니다. 본문이 50자 미만인 절과 도입부는 색인하지 않습니다.
+- 청크 하나의 임베딩 입력(`제목`, `내용`, `분류`, `카테고리` 줄을 이은 문자열)이 추정 토큰 400 이하가 되게 합니다. 토큰 수는 토크나이저 없이 글자 종류별 가중치로 어림합니다. 한도 안에 드는 절은 청크 하나이고, 절 안의 더 깊은 제목은 본문에 그대로 둡니다.
+- 한도를 넘는 절은 그 안에 있는 가장 얕은 제목(`###` 이 있으면 `###`, 없으면 더 깊은 제목)에서 도입부와 소절로 나누고, 소절의 제목을 제목 경로에 올립니다(`절 > 소절`). 나눈 결과가 100자 미만이면 이웃과 한 청크에 합칠 수 있을 때 합칩니다. 합친 청크의 제목 경로에는 합쳐진 소절의 이름을 셋까지 이어 적고, 넘는 수는 ` 외 N개` 로 적습니다. 더 깊은 제목으로 내려가면 ` > ` 로, 그렇지 않으면 ` / ` 로 잇습니다(`설명 > Input / Output`).
+- 더 깊은 제목이 없는데 한도를 넘는 글은 문단, 줄, 줄 안의 순서로 경계를 찾아 조각으로 나누고, `title` 과 `section` 끝에 조각 번호 ` (k/n)` 을 붙입니다. 코드 블록 중간에서 나뉜 조각은 펜스를 닫고 다음 조각에서 같은 펜스 줄로 다시 열며, 표 중간에서 나뉜 조각은 머리 행과 구분 행을 다시 넣습니다. 조각끼리 내용이 겹치지 않습니다.
+- 한 문서에서 제목 경로가 같은 절이 둘 이상 조각으로 나뉘면 둘째부터 조각 번호 앞에 ` [2]`, ` [3]` 을 붙입니다(`iterate 연산 > Sample TestCase [2] (1/2)`).
 - `build-index` 와 갱신 CLI 모두 테이블을 새로 만들어 모든 청크를 다시 임베딩합니다.
 
-동봉 인덱스는 2026-06-09 에 구축한 것이고, 그 뒤에 색인 규칙이 바뀌었습니다(초안 문서 제외, 들여쓴 프론트매터와 CRLF 줄 끝 처리). 그래서 동봉 인덱스에는 초안 문서 3개의 청크 24건이 들어 있고, 프론트매터를 다 읽지 못한 문서의 청크는 `docTitle` 이 파일 이름이거나 `url` 이 비어 있습니다(`url` 이 빈 청크 415건). 같은 원문을 현재 코드로 다시 색인하면 문서 404개, 청크 2,253건이 되고 `url` 이 빈 청크는 11건으로 줄어듭니다.
+동봉 인덱스의 4,625행 가운데 조각 번호가 붙은 행은 1,946건(665개 절)이고, 본문이 50자 미만인 행은 없습니다. `url` 이 빈 행은 문서 3개(`_index.md`, `docs/directory-structure.md`, `egovframe-runtime/intro.md`)의 35건입니다. 이 가운데 뒤의 두 문서는 프론트매터가 없어서 `docTitle` 이 파일 이름입니다. 원문에 `## 개요` 절이 있는 문서도 그 절의 `section` 이 `개요` 이고, 이때 `title` 은 `문서 제목: 개요` 입니다. `section` 이 `개요` 인 350행 가운데 도입부 청크는 56건이고 나머지 294건이 `## 개요` 절의 청크입니다.
 
-**관련 조회:** `{"scope": "guide", "query": "MyBatis 설정", "filters": {"layer": "egovframe-runtime", "category": "persistence-layer"}}` 로 의미 검색을 합니다. `filters.layer` 와 `filters.category` 는 대소문자와 앞뒤 공백을 무시하고 저장된 값에 대응시키며, 대응되는 값이 없으면 사용할 수 있는 값을 나열한 오류로 응답합니다.
+서버는 `source` 와 `section` 의 조각 번호로 같은 절의 이웃 조각을 찾아, 검색 결과와 청크 읽기 응답에 이전 조각과 다음 조각의 `id` 를 함께 싣습니다.
+
+**관련 조회:** `{"scope": "guide", "query": "MyBatis 설정", "filters": {"layer": "egovframe-runtime", "category": "persistence-layer"}}` 로 의미 검색을 합니다. `filters.layer` 와 `filters.category` 는 대소문자와 앞뒤 공백을 무시하고 저장된 값에 대응시키며, 대응되는 값이 없으면 사용할 수 있는 값을 나열한 오류로 응답합니다. `{"scope": "guide", "filters": {"chunkId": "<id>"}}` 는 `id` 가 같은 청크 하나를 읽습니다.
 
 ---
 
@@ -402,14 +454,14 @@ SQLite 의 테이블 네 개와 그 관계입니다. PK 는 기본 키, UK 는 U
 | SQLite | `component_categories` | 37 | 카테고리마다 컴포넌트 1개부터 32개 |
 | SQLite | `common_components` | 153 | 적재할 때 새 ID 를 받은 컴포넌트 6개 포함 |
 | SQLite | `component_dependencies` | 1,455 | 컴포넌트마다 5행부터 15행 |
-| LanceDB | `developer_knowledge` | 18,046 | 묻고답하기 17,863건, FAQ 96건, 적용가이드 PDF 청크 87건 |
-| LanceDB | `egovframe_guide` | 2,277 | 문서 407개. `egovframe-runtime` 1,237건, `egovframe-development` 763건, `common-component` 267건, 그 밖의 문서 10건 |
+| LanceDB | `developer_knowledge` | 18,195 | 묻고답하기 17,845건, FAQ 96건, 적용가이드 PDF 청크 254건 |
+| LanceDB | `egovframe_guide` | 4,625 | 문서 404개. `egovframe-runtime` 2,840건, `egovframe-development` 1,236건, `common-component` 516건, 그 밖의 문서 33건 |
 
-`npm run build-index` 는 실행할 때마다 SQLite 테이블 네 개를 비우고 원본 JSON 전체를 다시 적재한 뒤 FTS 인덱스를 다시 만듭니다. 그래서 원본에서 지운 행이 남지 않습니다. LanceDB 테이블은 원본이 있을 때만 새로 만들고, 원본을 찾지 못한 테이블은 건너뛰어 기존 내용을 유지합니다.
+`npm run build-index` 는 실행할 때마다 `compatibility_software` 를 비우고, 공통컴포넌트 테이블 세 개와 `components_fts` 를 지운 뒤 현재 정의로 다시 만듭니다. 그다음 원본 JSON 전체를 다시 적재하고 두 FTS 인덱스를 다시 만듭니다. 그래서 원본에서 지운 행이 남지 않고, 공통컴포넌트 테이블의 `id` 는 1 부터 다시 매겨집니다. LanceDB 테이블은 원본이 있을 때만 새로 만들고, 원본을 찾지 못한 테이블은 건너뛰어 기존 내용을 유지합니다.
 
 ### 데이터 초기화
 
-지식베이스는 저장소와 배포 tgz 에 동봉되어 있으므로, 아래 명령은 원본 데이터나 색인 코드를 바꾼 뒤 다시 구축할 때만 실행합니다. 저장소를 클론한 작업 디렉토리에서 실행하며 Node.js 22, 가이드 원문 서브모듈(`git submodule update --init`), 임베딩 모델(`npm run fetch-model`)이 필요합니다.
+지식베이스는 저장소와 배포 tgz 에 동봉되어 있으므로, 아래 명령은 원본 데이터나 색인 코드를 바꾼 뒤 다시 구축할 때만 실행합니다. 저장소를 클론한 작업 디렉토리에서 실행하며 Node.js 22, 서브모듈(`git submodule update --init`), 임베딩 모델(`npm run fetch-model`)이 필요합니다. 서브모듈은 가이드 원문(`templates/egovframe_guide`)과 공통컴포넌트 소스(`templates/common-components-src`) 두 개입니다.
 
 ```bash
 # 1. 프로젝트 빌드
@@ -421,7 +473,7 @@ npm run build-index -- --yes
 
 - `--yes` 를 주면 질문 없이 현재 체크아웃의 원본만 사용하고 네트워크에 접근하지 않습니다. `--yes` 없이 터미널에서 실행하면 원본을 받을 방식(`online`, `local`, `bundled`)을 묻고, 구축 계획을 보여 준 뒤 `yes` 입력을 받습니다.
 - 모든 행을 다시 임베딩하므로 시간이 걸립니다. `build-index` 가 안내하는 예상 소요 시간은 수십 분입니다.
-- `--yes` 로 실행할 때 가이드 원문 서브모듈이 없으면 `egovframe_guide` 를 건너뜁니다. 임베딩 모델이 없으면 구축이 실패하고 기존 지식베이스는 그대로 남습니다.
+- `--yes` 로 실행할 때 가이드 원문 서브모듈이 없으면 `egovframe_guide` 를 건너뜁니다. 공통컴포넌트 소스 서브모듈이 없으면 `use_tables` 에 메타의 값을 그대로 적재하고 경고를 출력합니다. 임베딩 모델이 없으면 구축이 실패하고 기존 지식베이스는 그대로 남습니다.
 - 배포 tgz 로 설치한 환경에는 TypeScript 소스와 원본 데이터가 없으므로 이 명령을 실행하지 않습니다. 설치 환경의 갱신은 갱신 CLI 로 합니다.
 
 호환 소프트웨어 원본 Excel 은 저장소에 들어 있지 않습니다. 포털에서 받은 파일을 `templates/compatibility/호환성확인SW-LET_TN_COMPATSW.xlsx` 로 저장하고 `python3 notebooks/convert-compatibility-xlsx-to-json.py --json` 을 실행하면 `templates/compatibility/compatibility-software.json` 이 다시 만들어집니다. 이 스크립트에는 `pandas` 와 `openpyxl` 이 필요합니다. `--json` 을 빼면 스크립트가 `knowledge-base/egovframe.db` 에 직접 쓰므로 `--json` 을 붙여 실행하고, 적재는 `npm run build-index` 로 합니다.
@@ -439,9 +491,11 @@ npm run build-index -- --yes
 | 읽기 전용 (`{ readonly: true }`) | MCP 서버 | 파일이 없으면 만들지 않고 오류를 던집니다. 테이블과 트리거를 만들지 않고 저널 모드도 바꾸지 않습니다. |
 | 쓰기 (기본값) | `build-index` | 디렉토리와 파일이 없으면 만듭니다. `journal_mode = WAL` 과 `recursive_triggers = ON` 을 설정한 뒤, `initializeTables()` 가 테이블, 인덱스, FTS 테이블을 `IF NOT EXISTS` 로 만들고 트리거 여섯 개를 다시 만듭니다. |
 
+서버는 SQLite 가 필요한 조회를 처음 받을 때 DB 를 엽니다.
+
 ### 저널 모드
 
-동봉된 DB 는 DELETE 저널 모드입니다. `build-index` 는 DB 를 WAL 모드로 열어 적재한 뒤, 닫기 직전에 `finalizeForDistribution()` 으로 WAL 을 체크포인트하고(`PRAGMA wal_checkpoint(TRUNCATE)`) 저널 모드를 DELETE 로 되돌립니다(`PRAGMA journal_mode = DELETE`). WAL 모드로 남은 DB 는 읽기 전용 연결도 `-wal`, `-shm` 파일을 만들어야 하므로 쓰기 권한이 없는 설치 위치에서는 열리지 않습니다. DELETE 모드의 DB 는 그런 위치에서도 읽기 전용으로 열립니다.
+동봉된 DB 는 DELETE 저널 모드입니다. `build-index` 는 DB 를 WAL 모드로 열어 적재한 뒤, 닫기 직전에 `finalizeForDistribution()` 으로 WAL 을 체크포인트하고(`PRAGMA wal_checkpoint(TRUNCATE)`) 저널 모드를 DELETE 로 되돌립니다(`PRAGMA journal_mode = DELETE`). WAL 모드로 남은 DB 는 읽기 전용 연결도 `-wal`, `-shm` 파일을 만들어야 하므로, 쓰기 권한이 없는 설치 위치에서는 연결은 열려도 조회가 SQLite 의 `attempt to write a readonly database` 오류로 실패합니다. DELETE 모드의 DB 는 그런 위치에서도 읽기 전용으로 조회됩니다.
 
 스키마와 저널 모드는 아래 명령으로 확인합니다. 두 번째 명령은 `delete` 를 출력합니다.
 
@@ -454,7 +508,7 @@ sqlite3 -readonly knowledge-base/egovframe.db "PRAGMA journal_mode;"
 
 `npm run build-index` 는 기존 지식베이스를 `knowledge-base.staging/` 에 복사해 그 안에서 다시 구축하고, 구축이 끝나면 `knowledge-base/` 와 바꿉니다. 바꾸기 전의 지식베이스는 `knowledge-base.prev/` 에 한 벌 남고, 도중에 실패하면 `knowledge-base/` 는 바뀌지 않습니다. 두 작업 디렉토리는 `.gitignore` 대상입니다.
 
-따라서 다시 구축하기 전에 `egovframe.db` 를 지울 필요가 없습니다. DB 파일이 없으면 서버는 `guide` 를 뺀 조회(`components`, `compatibility`, `knowledge`)에 오류로 응답합니다. 파일을 지웠다면 `npm run build-index` 를 끝까지 실행하거나 `git restore knowledge-base/egovframe.db` 로 되돌립니다.
+따라서 다시 구축하기 전에 `egovframe.db` 를 지울 필요가 없습니다. DB 파일이 없으면 서버는 `components` 와 `compatibility` 조회에 오류로 응답합니다. `guide` 와 `knowledge` 검색은 SQLite 를 쓰지 않으므로 그대로 동작하고, 호환 소프트웨어를 함께 조회하는 `knowledge` 검색(`filters.knowledgeScope` 가 `all`)만 오류가 됩니다. 파일을 지웠다면 `npm run build-index` 를 끝까지 실행하거나 `git restore knowledge-base/egovframe.db` 로 되돌립니다.
 
 ---
 
@@ -466,6 +520,7 @@ sqlite3 -readonly knowledge-base/egovframe.db "PRAGMA journal_mode;"
 | `developer_knowledge` 의 행 | `src/types/knowledge.ts` | `DeveloperKnowledge`, `KnowledgeType` |
 | `egovframe_guide` 의 행 | `src/rag/guideManager.ts` | `GuideChunk` |
 | `state.json` | `src/utils/dataPaths.ts` | `StateFile`, `ResourceState` |
+| `manifest.json`, `snapshot.jsonl.gz` | `src/kb/snapshot.ts` | `SnapshotManifest`, `SnapshotRow` |
 
 ---
 
