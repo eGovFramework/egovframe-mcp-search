@@ -181,7 +181,7 @@ describe("개발자 지식 — limit 방어", () => {
 });
 
 /**
- * 동봉 테이블에서의 재현: limit -5 한 번에 개발자 지식 18,046행·가이드 2,277행이 전부 나갔다.
+ * 동봉 테이블에서의 재현: 고치기 전에는 limit -5 한 번에 테이블 전체(그때의 개발자 지식 18,046행·가이드 2,277행)가 나갔다.
  */
 describe.skipIf(!HAS_BUNDLED_TABLES)("동봉 테이블 — 음수·초대형 limit 이 테이블 전체를 돌려주지 않는다", () => {
   let guide: GuideSearchManager;

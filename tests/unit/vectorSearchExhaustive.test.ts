@@ -1,9 +1,10 @@
 /**
  * 벡터 검색이 전수 검색(flat scan)으로 동작하는지 검증한다.
  *
- * 동봉 테이블에는 IVF_PQ 인덱스가 있는데, 기본 설정으로 인덱스를 타면 일부 파티션만 후보가 되어
+ * 이전에 구축한 테이블에는 IVF_PQ 인덱스가 있었는데, 기본 설정으로 인덱스를 타면 일부 파티션만 후보가 되어
  * (1) 가이드 인덱스의 손상된 항목 때문에 자기 벡터로도 찾지 못하는 청크가 생기고
  * (2) where 필터에 맞는 행이 있어도 0건 또는 limit 미만이 반환된다.
+ * 색인을 구축할 때 인덱스를 만들지 않으므로 새로 구축한 테이블에는 인덱스가 없다. 검색은 인덱스가 있든 없든 전수 검색이다.
  *
  * 동봉 LanceDB 테이블을 읽기만 한다. 임베딩 모델이 없어도 돌도록 질의 임베딩은 저장된 벡터로
  * 대신하고(_lanceFixtures 참고), 실제 모델로 임베딩하는 검증은 모델이 있을 때만 수행한다.
@@ -196,16 +197,20 @@ describe.skipIf(!HAS_BUNDLED_TABLES)("개발자 지식 검색 — 전수 검색"
   });
 
   it("limit 가 필터에 맞는 행 수보다 크면 맞는 행을 모두 돌려준다", async () => {
-    // 검색 한 번의 상한(MAX_VECTOR_SEARCH_LIMIT) 안에서 확인한다 — 그보다 큰 limit 은 상한으로 줄어든다
-    const total = await table.countRows("type = 'best-practice'");
+    // 검색 한 번의 상한(MAX_VECTOR_SEARCH_LIMIT) 안에서 확인한다 — 그보다 큰 limit 은 상한으로 줄어든다.
+    // 상한보다 적은 행에 맞는 필터가 필요하다. 동봉 데이터에서는 FAQ 태그가 그렇다 (96행).
+    // 적용가이드 PDF 청크(type best-practice)는 청킹에 따라 상한을 넘으므로 쓰지 않는다 (600자 청킹에서는 254행)
+    const total = await table.countRows("array_has_any(tags, ['faq'])");
+    expect(total).toBeGreaterThan(0);
     expect(total).toBeLessThan(MAX_VECTOR_SEARCH_LIMIT);
 
     useQueryVector(rows.find((row) => row.type !== "best-practice")!.vector);
     const results = await manager.searchKnowledge(STORED_VECTOR_QUERY, {
       limit: MAX_VECTOR_SEARCH_LIMIT,
-      type: "best-practice",
+      tags: ["faq"],
     });
     expect(results).toHaveLength(total);
+    expect(results.every((r) => r.tags.includes("faq"))).toBe(true);
   });
 
   it.skipIf(!hasEmbeddingModel())(

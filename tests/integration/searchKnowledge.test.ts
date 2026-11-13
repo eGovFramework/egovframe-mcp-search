@@ -301,11 +301,12 @@ describe("integration — egov_search_knowledge 가이드 검색 결과의 형�
       } else {
         expect(first.text).toContain("(청크의 끝)");
       }
-      // 원문의 첫 부분에 있는 문장이 응답에 들어 있다 (제목·구분선이 아닌 평범한 줄을 고른다)
+      // 원문의 첫 부분에 있는 줄이 응답에 들어 있다. 응답에 실을 때 모양이 바뀌는 제목 줄과 구분선, 펜스 줄은 고르지 않는다.
+      // 표의 행은 그대로 실리므로 골라도 된다 (가장 긴 청크가 표로만 이루어진 조각일 수 있다)
       const plainLine = chunk.content
         .substring(0, firstEnd)
         .split("\n")
-        .find((line) => line.trim().length > 20 && !/^\s*(#|-{3,}|`{3,}|\|)/.test(line));
+        .find((line) => line.trim().length > 20 && !/^\s*(#|-{3,}|`{3,})/.test(line));
       expect(plainLine).toBeDefined();
       expect(first.text).toContain(plainLine!.trim());
     });
