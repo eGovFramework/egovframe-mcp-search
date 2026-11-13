@@ -493,6 +493,21 @@ describe("chunkPdfText — 처리 시간", () => {
     expect(Math.max(...chunks.map((chunk) => chunk.length))).toBeLessThanOrEqual(PDF_CHUNK_MAX_CHARS);
     expectChunksCoverSource(text, chunks);
   }, 120_000);
+
+  it("닫는 괄호가 길게 이어진 본문을 1초 안에 나눈다", () => {
+    // 문장 경계는 끝 부호 뒤에 닫는 따옴표나 괄호가 몇 개든 이어질 수 있다고 본다. 그 조건을 공백이 아닌 자리에서도
+    // 따지면, 닫는 괄호가 이어진 글자열 안의 자리마다 그 앞의 괄호를 모두 되짚어 길이의 제곱만큼 시간이 걸린다
+    const text = `가나다${")".repeat(200_000)} 라마바. 사아자`;
+
+    const startedAt = performance.now();
+    const chunks = chunkPdfText(text);
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(elapsedMs).toBeLessThan(1000);
+    // 공백이 없는 글자열은 겹치지 않으므로, 청크를 이으면 공백을 뺀 본문과 같다
+    expect(Math.max(...chunks.map((chunk) => chunk.length))).toBeLessThanOrEqual(PDF_CHUNK_MAX_CHARS);
+    expect(chunks.join("").replace(/\s/g, "")).toBe(text.replace(/\s/g, ""));
+  }, 120_000);
 });
 
 describe("pdfTextToKnowledge — 청크를 개발자 지식 입력으로 만든다", () => {
