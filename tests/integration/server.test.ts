@@ -6,7 +6,13 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { createMcpClient } from "./_helper.js";
+import { spawnSync } from "node:child_process";
+import * as path from "node:path";
+import { pathToFileURL } from "node:url";
+import { REPO_ROOT, createMcpClient } from "./_helper.js";
+
+/** 서버 모듈(빌드 산출물). 진입점 디스패처가 인자 없이 실행될 때 불러오는 파일이다. */
+const SERVER_MODULE = path.join(REPO_ROOT, "build", "server.js");
 
 const EXPECTED_TOOLS = ["egov_search_knowledge"];
 
@@ -49,5 +55,28 @@ describe("integration — MCP server connectivity & inventory", () => {
     for (const key of ["query", "scope", "action", "filters", "limit", "strictScope"]) {
       expect(props[key], `${key} 가 inputSchema 에 없습니다`).toBeDefined();
     }
+  });
+});
+
+describe("integration — 서버 프로세스의 견고성", () => {
+  it("처리되지 않은 프라미스 거부가 나도 서버 프로세스가 종료되지 않는다", () => {
+    // 의존 라이브러리 안에서 처리되지 않은 거부가 나면 Node 는 기본 동작으로 프로세스를 끝낸다.
+    // MCP 서버가 그렇게 죽으면 호출자는 연결이 끊겼다는 것만 알게 되고 다른 조회도 쓸 수 없게 된다.
+    const script = [
+      `await import(${JSON.stringify(pathToFileURL(SERVER_MODULE).href)});`,
+      `Promise.reject(new Error("unhandled-rejection-probe"));`,
+      `setTimeout(() => { console.error("STILL_ALIVE"); process.exit(0); }, 500);`,
+    ].join("\n");
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+      encoding: "utf-8",
+      timeout: 20_000,
+    });
+
+    expect(result.stderr).toContain("STILL_ALIVE");
+    expect(result.status).toBe(0);
+    // 무슨 일이 있었는지는 서버 로그에 남긴다
+    expect(result.stderr).toContain("unhandled-rejection-probe");
+    // stdout 은 JSON-RPC 전용이다
+    expect(result.stdout).toBe("");
   });
 });

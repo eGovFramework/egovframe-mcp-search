@@ -273,6 +273,17 @@ function warnIfNativeModuleUnavailable(): void {
   }
 }
 
+/**
+ * 처리되지 않은 프라미스 거부가 나도 서버를 계속 띄운다.
+ *
+ * Node 는 기본 동작으로 이런 거부에 프로세스를 끝낸다. 의존 라이브러리 안에서 난 거부 하나 때문에
+ * 서버가 죽으면 호출자는 연결이 끊겼다는 것만 알게 되고, 그 오류와 무관한 조회도 쓸 수 없게 된다.
+ * 원인을 추적할 수 있도록 내용은 서버 로그(stderr)에 남긴다.
+ */
+process.on("unhandledRejection", (reason) => {
+  console.error("[egovframe-mcp-search] 처리되지 않은 프라미스 거부:", reason);
+});
+
 async function main() {
   try {
     warnIfNativeModuleUnavailable();
