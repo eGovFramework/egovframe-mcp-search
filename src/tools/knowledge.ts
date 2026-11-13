@@ -99,8 +99,6 @@ function normalizeExcerptLength(value: number | undefined): number | undefined {
  * 주지 않으면 시맨틱 검색은 본문 전체를, 통합 검색은 200자 미리보기를 돌려준다.
  *
  * 응답에 되돌려 주는 query 는 앞 200자까지다 (echoQuery). 검색에는 원래 query 를 쓴다.
- *
- * See: docs/TODO_TOOL_OPTIMIZATION.md Phase 3-C
  */
 export async function searchKnowledge(args: {
   query?: string;
