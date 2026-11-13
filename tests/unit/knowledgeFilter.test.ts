@@ -10,6 +10,7 @@ import { DeveloperKnowledgeManager, buildKnowledgeFilter } from "../../src/rag/k
 import { getEmbedder } from "../../src/rag/embedder.js";
 import { KNOWLEDGE_TYPES, type KnowledgeType } from "../../src/types/knowledge.js";
 import { UserFacingError } from "../../src/utils/errors.js";
+import { MAX_VECTOR_SEARCH_LIMIT } from "../../src/utils/lanceFilter.js";
 import { hasEmbeddingModel } from "../integration/_helper.js";
 import {
   BUNDLED_KB,
@@ -207,16 +208,26 @@ describe.skipIf(!HAS_BUNDLED_TABLES)("개발자 지식 검색 — tags 필터", 
   });
 
   it("여러 태그는 하나라도 가진 행을 돌려준다", async () => {
-    useQueryVector(rows[0].vector);
+    // 두 태그 가운데 하나만 가진 행의 벡터로 찾으면 그 행이 결과에 있어야 한다
+    // (태그를 모두 가져야 일치한다면 어느 쪽도 나오지 않는다).
+    // 건수는 조건에 맞는 행 수와 검색 한 번의 상한 가운데 작은 쪽이다.
     const total = countWithAnyTag(["faq", "pdf"]);
-    const results = await manager.searchKnowledge("(저장된 벡터로 대체)", {
-      limit: total + 50,
-      tags: ["faq", "pdf"],
-    });
-    expect(results).toHaveLength(total);
-    expect(results.every((r) => r.tags.includes("faq") || r.tags.includes("pdf"))).toBe(true);
-    expect(results.some((r) => r.tags.includes("faq"))).toBe(true);
-    expect(results.some((r) => r.tags.includes("pdf"))).toBe(true);
+    for (const [tag, other] of [
+      ["faq", "pdf"],
+      ["pdf", "faq"],
+    ]) {
+      const only = rows.find((row) => row.tagList.includes(tag) && !row.tagList.includes(other));
+      if (!only) throw new Error(`${tag} 태그만 가진 행을 찾지 못했습니다`);
+
+      useQueryVector(only.vector);
+      const results = await manager.searchKnowledge("(저장된 벡터로 대체)", {
+        limit: total + 50,
+        tags: ["faq", "pdf"],
+      });
+      expect(results, tag).toHaveLength(Math.min(total, MAX_VECTOR_SEARCH_LIMIT));
+      expect(results.every((r) => r.tags.includes("faq") || r.tags.includes("pdf"))).toBe(true);
+      expect(results.map((r) => r.id), tag).toContain(only.id);
+    }
   });
 
   it("일치하는 태그가 없으면 빈 결과다", async () => {

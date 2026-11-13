@@ -13,7 +13,7 @@ import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import { resolveGuideDbDir } from '../utils/dataPaths.js';
 import { UserFacingError } from '../utils/errors.js';
-import { lanceIn, quoteFilterValue } from '../utils/lanceFilter.js';
+import { clampSearchLimit, lanceIn, quoteFilterValue } from '../utils/lanceFilter.js';
 
 // ─── 타입 정의 ────────────────────────────────────────────
 
@@ -45,8 +45,14 @@ export interface GuideSearchResult {
   score: number;       // 코사인 거리 (낮을수록 유사, 1 - score 가 코사인 유사도)
 }
 
+/** 가이드 검색에서 limit 을 주지 않았을 때 돌려주는 건수 */
+const DEFAULT_GUIDE_SEARCH_LIMIT = 5;
+
 /**
  * 가이드 검색 옵션
+ *
+ * limit 은 정수로 내림해 1 이상 MAX_VECTOR_SEARCH_LIMIT 이하로 맞춘다 (utils/lanceFilter 의
+ * clampSearchLimit). 숫자가 아니거나 유한하지 않으면 기본 5건이다.
  *
  * layer / category 는 테이블에 저장된 값에 대소문자 구분 없이 대응시킨다.
  * 대응되는 값이 없으면 유효한 값을 나열한 UserFacingError 를 던진다 (유효한 값: getFacets()).
@@ -522,7 +528,9 @@ export class GuideSearchManager {
     query: string,
     options: GuideSearchOptions = {}
   ): Promise<GuideSearchResult[]> {
-    const { limit = 5, layer, category } = options;
+    const { layer, category } = options;
+    // 전수 검색이라 limit 을 그대로 넘기면 음수·초대형 값 한 번에 테이블 전체가 결과로 나간다
+    const limit = clampSearchLimit(options.limit, DEFAULT_GUIDE_SEARCH_LIMIT);
 
     // 필터 조건 생성 — 입력 오류는 임베딩 모델을 불러오기 전에 알린다
     const filter = await this.buildFilter(layer, category);

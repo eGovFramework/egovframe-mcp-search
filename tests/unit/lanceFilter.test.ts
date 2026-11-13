@@ -10,6 +10,8 @@ import os from "node:os";
 import path from "node:path";
 import * as lancedb from "@lancedb/lancedb";
 import {
+  MAX_VECTOR_SEARCH_LIMIT,
+  clampSearchLimit,
   lanceArrayHasAny,
   lanceEquals,
   lanceIn,
@@ -93,6 +95,42 @@ describe("quoteFilterValue", () => {
   it("문자열이 아닌 값도 문구로 바꾼다", () => {
     expect(quoteFilterValue(123)).toBe('"123"');
     expect(quoteFilterValue(undefined)).toBe('"undefined"');
+  });
+});
+
+describe("clampSearchLimit", () => {
+  it("상한은 100 건이다", () => {
+    expect(MAX_VECTOR_SEARCH_LIMIT).toBe(100);
+  });
+
+  it("1 이상 상한 이하의 정수는 그대로 쓴다", () => {
+    for (const limit of [1, 5, 20, 99, MAX_VECTOR_SEARCH_LIMIT]) {
+      expect(clampSearchLimit(limit, 5), String(limit)).toBe(limit);
+    }
+  });
+
+  it("소수는 내림한다", () => {
+    expect(clampSearchLimit(2.9, 5)).toBe(2);
+    expect(clampSearchLimit(99.99, 5)).toBe(99);
+  });
+
+  it("1 보다 작은 값은 1 로 올린다 (음수가 '제한 없음'으로 해석되지 않게 한다)", () => {
+    for (const limit of [0, 0.4, -0.4, -1, -5, -1e9, Number.MIN_SAFE_INTEGER]) {
+      expect(clampSearchLimit(limit, 5), String(limit)).toBe(1);
+    }
+  });
+
+  it("상한을 넘는 값은 상한으로 줄인다", () => {
+    for (const limit of [MAX_VECTOR_SEARCH_LIMIT + 1, 100.5, 18_046, 1e9, Number.MAX_VALUE]) {
+      expect(clampSearchLimit(limit, 5), String(limit)).toBe(MAX_VECTOR_SEARCH_LIMIT);
+    }
+  });
+
+  it("숫자가 아니거나 유한하지 않은 값은 기본값을 쓴다", () => {
+    for (const limit of [undefined, null, Number.NaN, Infinity, -Infinity, "7", "", true, [3], {}, 10n]) {
+      expect(clampSearchLimit(limit, 5), String(limit)).toBe(5);
+      expect(clampSearchLimit(limit, 10), String(limit)).toBe(10);
+    }
   });
 });
 

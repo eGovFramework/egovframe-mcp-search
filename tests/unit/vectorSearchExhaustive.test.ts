@@ -12,6 +12,7 @@ import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import type { Table } from "@lancedb/lancedb";
 import { GuideSearchManager } from "../../src/rag/guideManager.js";
 import { DeveloperKnowledgeManager } from "../../src/rag/knowledgeManager.js";
+import { MAX_VECTOR_SEARCH_LIMIT } from "../../src/utils/lanceFilter.js";
 import { hasEmbeddingModel } from "../integration/_helper.js";
 import {
   BUNDLED_KB,
@@ -99,6 +100,8 @@ describe.skipIf(!HAS_BUNDLED_TABLES)("가이드 검색 — 전수 검색", () =>
     }
     const [smallest, total] = [...counts].sort((a, b) => a[1] - b[1])[0];
     expect(await table.countRows(`category = '${smallest}'`)).toBe(total);
+    // 검색 한 번의 상한 안에서 확인한다 — 그보다 큰 limit 은 상한으로 줄어든다
+    expect(total + 20).toBeLessThanOrEqual(MAX_VECTOR_SEARCH_LIMIT);
 
     useQueryVector(rows.find((row) => row.category !== smallest)!.vector);
     const results = await manager.searchGuide(STORED_VECTOR_QUERY, { limit: total + 20, category: smallest });
@@ -172,11 +175,15 @@ describe.skipIf(!HAS_BUNDLED_TABLES)("개발자 지식 검색 — 전수 검색"
   });
 
   it("limit 가 필터에 맞는 행 수보다 크면 맞는 행을 모두 돌려준다", async () => {
+    // 검색 한 번의 상한(MAX_VECTOR_SEARCH_LIMIT) 안에서 확인한다 — 그보다 큰 limit 은 상한으로 줄어든다
     const total = await table.countRows("type = 'best-practice'");
-    expect(total).toBeLessThan(200);
+    expect(total).toBeLessThan(MAX_VECTOR_SEARCH_LIMIT);
 
     useQueryVector(rows.find((row) => row.type !== "best-practice")!.vector);
-    const results = await manager.searchKnowledge(STORED_VECTOR_QUERY, { limit: 200, type: "best-practice" });
+    const results = await manager.searchKnowledge(STORED_VECTOR_QUERY, {
+      limit: MAX_VECTOR_SEARCH_LIMIT,
+      type: "best-practice",
+    });
     expect(results).toHaveLength(total);
   });
 

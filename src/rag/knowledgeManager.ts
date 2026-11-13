@@ -23,7 +23,11 @@ import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import { resolveDeveloperKnowledgeDbDir } from '../utils/dataPaths.js';
 import { UserFacingError } from '../utils/errors.js';
-import { lanceArrayHasAny, lanceEquals, quoteFilterValue } from '../utils/lanceFilter.js';
+import { clampSearchLimit, lanceArrayHasAny, lanceEquals, quoteFilterValue } from '../utils/lanceFilter.js';
+
+/** limit 을 주지 않았을 때 돌려주는 건수: 의미 검색 / 최근 목록 */
+const DEFAULT_SEARCH_LIMIT = 5;
+const DEFAULT_RECENT_LIMIT = 10;
 
 /**
  * type 필터 값을 검증한다.
@@ -335,12 +339,16 @@ export class DeveloperKnowledgeManager {
 
   /**
    * 지식 검색 (의미 기반)
+   *
+   * limit 은 정수로 내림해 1 이상 MAX_VECTOR_SEARCH_LIMIT 이하로 맞춘다 (utils/lanceFilter 의
+   * clampSearchLimit). 숫자가 아니거나 유한하지 않으면 기본 5건이다.
    */
   async searchKnowledge(
     query: string,
     options: KnowledgeSearchOptions = {}
   ): Promise<KnowledgeSearchResult[]> {
-    const { limit = 5 } = options;
+    // 전수 검색이라 limit 을 그대로 넘기면 음수·초대형 값 한 번에 테이블 전체가 결과로 나간다
+    const limit = clampSearchLimit(options.limit, DEFAULT_SEARCH_LIMIT);
 
     // 필터 조건 생성 (type·minImportance·verifiedOnly·tags) — 입력 오류는 임베딩 모델을 불러오기 전에 알린다
     const filter = buildKnowledgeFilter(options);
@@ -383,13 +391,16 @@ export class DeveloperKnowledgeManager {
 
   /**
    * 최근 지식 목록 조회
+   *
+   * limit 은 검색과 같은 방식으로 맞춘다 (1 이상 MAX_VECTOR_SEARCH_LIMIT 이하의 정수, 기본 10건).
    */
   async listRecentKnowledge(
-    limit: number = 10,
+    limit: number = DEFAULT_RECENT_LIMIT,
     type?: KnowledgeType
   ): Promise<RecentKnowledge[]> {
+    const rowLimit = clampSearchLimit(limit, DEFAULT_RECENT_LIMIT);
     let query = this.table.query();
-    
+
     if (type) {
       query = query.where(lanceEquals('type', requireKnowledgeType(type)));
     }
@@ -401,7 +412,7 @@ export class DeveloperKnowledgeManager {
       new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
     
-    return sorted.slice(0, limit).map((r: any) => ({
+    return sorted.slice(0, rowLimit).map((r: any) => ({
       id: r.id,
       type: r.type,
       title: r.title,
