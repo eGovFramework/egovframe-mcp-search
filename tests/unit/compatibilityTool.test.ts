@@ -806,7 +806,7 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       product_name,
       product_version: `${product_name} 1.0`,
     });
-    useCatalogue([seed("xFRAME"), seed("CESS"), seed("HMS"), seed("DevOnFrame"), seed("JEUS")]);
+    useCatalogue([seed("xFRAME"), seed("CESS"), seed("HMS"), seed("DevOnFrame"), seed("JEUS"), seed("Tibero"), seed("REDi")]);
 
     /** 제품 하나를 조회해 그 제품의 관련 지식 id 를 돌려준다 */
     const relatedIds = async (productName: string, candidates: unknown[]) => {
@@ -816,38 +816,62 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       return (response.relatedKnowledge ?? []).flatMap((entry) => entry.knowledge.map((item) => item.id));
     };
 
-    it("제품명이 다른 낱말의 일부로 들어 있을 뿐인 글은 싣지 않는다", async () => {
+    it("제품명이 다른 영문 낱말의 일부로 들어 있을 뿐인 글은 싣지 않는다", async () => {
       // 실제 데이터에서 제품 xFRAME 에 X-Frame-Options 헤더를 묻는 글이 실렸다
       expect(
         await relatedIds("xFRAME", [
           knowledge("k1", "xframeoptions 문의", "security 의 xframeOptions 옵션 때문에 화면이 표시되지 않습니다."),
           knowledge("k2", "UI 솔루션 연동", "화면은 xFrame 으로 개발하고 서버는 표준프레임워크입니다."),
-          knowledge("k3", "xFRAME5 설치", "설치 중 오류가 납니다."),
+          knowledge("k3", "iframe 설정", "myxframe 이라는 이름의 프레임을 씁니다."),
         ]),
       ).toEqual(["k2"]);
     });
 
-    it("네 글자 이하의 영문 제품명은 대소문자까지 같은 글만 싣는다", async () => {
-      // 실제 데이터에서 제품 CESS 에 access-denied-page 가 든 글이, HMS 에 프로젝트 이름 hms 가 든 글이 실렸다
+    it("제품명에 버전 숫자를 붙여 쓴 글은 싣는다", async () => {
+      // 앞뒤가 숫자여도 일치로 보지 않던 때에는 'tibero5' 로만 적은 글이 빠졌다
+      expect(
+        await relatedIds("Tibero", [
+          knowledge("k1", "tibero5 db연결 질문", "연결이 되지 않습니다."),
+          knowledge("k2", "DB 설정", "티베로 설정이 궁금합니다."),
+        ]),
+      ).toEqual(["k1"]);
+      expect(await relatedIds("xFRAME", [knowledge("k1", "xFRAME5 설치", "설치 중 오류가 납니다.")])).toEqual(["k1"]);
+    });
+
+    it("세 글자 이하의 영문 제품명은 대소문자까지 같은 글만 싣는다", async () => {
+      // 실제 데이터에서 제품 HMS 에 프로젝트 이름 hms 가 든 글이 실렸다
+      expect(
+        await relatedIds("HMS", [
+          knowledge("k1", "톰캣 구동시 에러", "Failed to execute goal (default-compile) on project hms: Compilation failure"),
+          knowledge("k2", "HMS 연동 문의", "설치 방법이 궁금합니다."),
+        ]),
+      ).toEqual(["k2"]);
+    });
+
+    it("네 글자인 영문 제품명은 대소문자가 달라도 찾고, 다른 영문 낱말 속에 든 글은 싣지 않는다", async () => {
+      // JEUS 를 소문자로 적은 글이 많다. 네 글자까지 대소문자를 가리던 때에는 그런 글이 빠졌다
+      expect(
+        await relatedIds("JEUS", [
+          knowledge("k1", "jeus 설정 문의", "jeus 8 에서 기동할 때 오류가 납니다."),
+          knowledge("k2", "WAS 기동 오류", "JEUS 8 에서 기동할 때 오류가 납니다."),
+          knowledge("k3", "Jeus기반 설치", "설치 절차가 궁금합니다."),
+        ]),
+      ).toEqual(["k1", "k2", "k3"]);
+      // 실제 데이터에서 제품 CESS 에 access-denied-page 가 든 글이, REDi 에 Redis 를 묻는 글이 실렸다
       expect(
         await relatedIds("CESS", [
           knowledge("k1", "context-security.xml 관련", '<http access-denied-page="/cmm/sec/accessDenied.do">'),
           knowledge("k2", "로그인 질문", "loginSuccess.do 는 아무 내용도 없는데 어디에서 이동하나요"),
           knowledge("k3", "CESS 연동 문의", "설치 방법이 궁금합니다."),
+          knowledge("k4", "솔루션 문의", "cess 를 도입하려고 합니다."),
         ]),
-      ).toEqual(["k3"]);
+      ).toEqual(["k3", "k4"]);
       expect(
-        await relatedIds("HMS", [
-          knowledge("k1", "톰캣 구동시 에러", "Failed to execute goal (default-compile) on project hms: Compilation failure"),
+        await relatedIds("REDi", [
+          knowledge("k1", "Redis 설정 문의", "세션 저장소로 Redis 를 쓰려고 합니다."),
+          knowledge("k2", "프록시 에러", "redirect 할 때 오류가 납니다."),
         ]),
       ).toEqual([]);
-      // 소문자로 적은 글은 제품을 가리키더라도 싣지 않는다
-      expect(
-        await relatedIds("JEUS", [
-          knowledge("k1", "jeus 설정 문의", "jeus 8 에서 기동할 때 오류가 납니다."),
-          knowledge("k2", "WAS 기동 오류", "JEUS 8 에서 기동할 때 오류가 납니다."),
-        ]),
-      ).toEqual(["k2"]);
     });
 
     it("다섯 글자 이상의 제품명은 대소문자가 달라도 찾고, 한글이 바로 붙어 있어도 찾는다", async () => {

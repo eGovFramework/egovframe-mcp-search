@@ -49,14 +49,32 @@ describe("findProductMention", () => {
   });
 
   describe("낱말 경계 (제품명의 끝 글자가 ASCII 영문자나 숫자인 쪽)", () => {
-    it("일치한 자리의 바로 앞뒤가 ASCII 영문자나 숫자이면 일치로 보지 않는다", () => {
+    it("일치한 자리의 바로 앞이나 뒤가 ASCII 영문자이면 일치로 보지 않는다", () => {
       // X-Frame-Options 헤더를 묻는 글이 제품 xFRAME 의 관련 지식으로 실렸다
       expect(mentions("xframeoptions 문의", "xFRAME")).toBe(false);
       expect(mentions("myxframe 설정", "xFRAME")).toBe(false);
-      expect(mentions("xFRAME5 버전", "xFRAME")).toBe(false);
       expect(mentions("X-Frame-Options 헤더 설정", "xFRAME")).toBe(false);
-      // 버전을 붙여 쓴 표기도 경계가 아니다
-      expect(mentions("tibero5 db연결 질문", "Tibero")).toBe(false);
+      // 다른 영문 낱말 속에 든 글자열
+      expect(mentions("DevOnFrameworks 는 다른 이름입니다", "DevOnFrame")).toBe(false);
+      expect(mentions("redirect 처리", "REDi")).toBe(false);
+      expect(mentions("SERVICE 계층", "ICE")).toBe(false);
+    });
+
+    it("앞이나 뒤에 숫자가 붙은 꼴은 일치로 본다 (제품명에 버전 숫자를 붙여 쓴 글)", () => {
+      // 앞뒤가 숫자여도 일치로 보지 않던 때에는 'tibero5', 'nexacro17' 로 적은 글이 빠졌다
+      expect(mentions("tibero5 설치", "Tibero")).toBe(true);
+      expect(findProductMention("tibero5 설치", "Tibero")).toBe(0);
+      expect(mentions("nexacro17", "nexacro")).toBe(true);
+      expect(mentions("화면은 nexacro17 로 개발합니다", "Nexacro")).toBe(true);
+      expect(mentions("xFRAME5 버전", "xFRAME")).toBe(true);
+      expect(mentions("JEUS8 기동 오류", "JEUS")).toBe(true);
+      // 앞에 숫자가 붙어도 같다
+      expect(mentions("2xFRAME", "xFRAME")).toBe(true);
+      // 제품명 바로 옆 글자만 본다: 숫자 다음에 영문자가 이어져도 일치로 본다
+      expect(mentions("tibero5x", "Tibero")).toBe(true);
+      // 숫자로 끝나는 제품명 뒤에 숫자가 이어져도 같다
+      expect(mentions("eXBuilder62", "eXBuilder6")).toBe(true);
+      expect(mentions("eXBuilder6a", "eXBuilder6")).toBe(false);
     });
 
     it("앞뒤가 글의 끝, 공백, 문장부호, 한글이면 일치로 본다", () => {
@@ -92,29 +110,46 @@ describe("findProductMention", () => {
   });
 
   describe("대소문자", () => {
-    it("공백을 뺀 길이가 4자 이하이고 ASCII 영문자·숫자뿐인 제품명은 대소문자까지 같아야 일치한다", () => {
-      // 제품 CESS 에 access-denied-page, loginSuccess.do 가 든 글이 실렸다
-      expect(mentions('<access-denied-handler error-page="/access-denied-page"/>', "CESS")).toBe(false);
-      expect(mentions("loginSuccess.do 로 이동합니다", "CESS")).toBe(false);
-      expect(mentions("cess 솔루션", "CESS")).toBe(false);
-      expect(mentions("CESS 솔루션", "CESS")).toBe(true);
+    it("공백을 뺀 길이가 3자 이하이고 ASCII 영문자·숫자뿐인 제품명은 대소문자까지 같아야 일치한다", () => {
       // 제품 HMS 에 Maven 프로젝트 이름이 든 글이 실렸다
+      expect(mentions("on project hms", "HMS")).toBe(false);
       expect(mentions("Failed to execute goal on project hms", "HMS")).toBe(false);
       expect(mentions("HMS 프로젝트", "HMS")).toBe(true);
       // 낱말로 떨어져 있어도 대소문자가 다르면 일치하지 않는다
       expect(mentions("ice cream", "ICE")).toBe(false);
-      expect(mentions("jeus 8 에서 기동", "JEUS")).toBe(false);
+      expect(mentions("Ice 솔루션", "ICE")).toBe(false);
+      expect(mentions("ICE 솔루션", "ICE")).toBe(true);
+      // 다른 낱말 속의 글자열은 대소문자가 달라서도, 낱말 경계로도 일치하지 않는다
+      expect(mentions("service", "ICE")).toBe(false);
       // 공백을 빼고 센다
       expect(mentions("k 2 솔루션", "K 2")).toBe(false);
       expect(mentions("K 2 솔루션", "K 2")).toBe(true);
     });
 
-    it("그 밖의 제품명은 ASCII 영문자의 대소문자를 가리지 않는다", () => {
+    it("4자 이상인 제품명은 ASCII 영문자의 대소문자를 가리지 않는다", () => {
+      // JEUS 를 'jeus', 'Jeus' 로 적은 글이 많다. 4자인 제품명까지 대소문자를 가리던 때에는 그런 글이 빠졌다
+      expect(mentions("jeus 설정", "JEUS")).toBe(true);
+      expect(mentions("Jeus 8 에서 기동", "JEUS")).toBe(true);
+      expect(mentions("jeus기반 설치", "JEUS")).toBe(true);
+      expect(mentions("cess 솔루션", "CESS")).toBe(true);
+      expect(mentions("CESS 솔루션", "CESS")).toBe(true);
+      expect(mentions("redi 도입 문의", "REDi")).toBe(true);
       // 다섯 글자 이상
       expect(mentions("ucare 연동", "UCARE")).toBe(true);
       expect(mentions("TIBERO 접속 오류", "Tibero")).toBe(true);
       expect(mentions("morpheus cms 2.0 에서 메뉴가 보이지 않습니다", "Morpheus CMS")).toBe(true);
-      // 네 글자 이하여도 ASCII 영문자·숫자뿐이 아니면 가리지 않는다
+    });
+
+    it("4자인 제품명이 다른 영문 낱말 속에 든 글은 대소문자를 가리지 않아도 낱말 경계에서 걸러진다", () => {
+      // 제품 CESS 에 access-denied-page, loginSuccess.do 가 든 글이, REDi 에 Redis 를 묻는 글이 실렸다
+      expect(mentions('<access-denied-handler error-page="/access-denied-page"/>', "CESS")).toBe(false);
+      expect(mentions("loginSuccess.do 로 이동합니다", "CESS")).toBe(false);
+      expect(mentions("Access is denied 오류", "CESS")).toBe(false);
+      expect(mentions("sessionExpired 혹은 accessDeined url호출 시", "CESS")).toBe(false);
+      expect(mentions("Redis 설정 문의", "REDi")).toBe(false);
+    });
+
+    it("3자 이하여도 ASCII 영문자·숫자뿐이 아닌 제품명은 대소문자를 가리지 않는다", () => {
       expect(mentions("E2스쿨 문의", "e2스쿨")).toBe(true);
       expect(mentions("ai+ 솔루션", "AI+")).toBe(true);
     });

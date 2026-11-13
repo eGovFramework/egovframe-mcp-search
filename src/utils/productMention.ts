@@ -41,12 +41,20 @@ function isAsciiAlphanumeric(char: string | undefined): boolean {
   return char !== undefined && /^[A-Za-z0-9]$/.test(char);
 }
 
+/** 글자 하나가 ASCII 영문자인지. 글의 끝을 벗어난 자리(undefined)는 아니다. */
+function isAsciiLetter(char: string | undefined): boolean {
+  return char !== undefined && /^[A-Za-z]$/.test(char);
+}
+
 /** 대소문자까지 같아야 일치로 보는 제품명의 최대 길이 (공백을 뺀 글자 수) */
-const MAX_CASE_SENSITIVE_NAME_LENGTH = 4;
+const MAX_CASE_SENSITIVE_NAME_LENGTH = 3;
 
 /**
- * 대소문자까지 같아야 일치로 보는 제품명인지: 공백을 뺀 길이가 4자 이하이고 ASCII 영문자와 숫자뿐인 이름.
- * 이런 이름(ICE, HMS, CESS)은 소문자로 쓰면 흔한 낱말이나 식별자와 겹친다 (ice, 프로젝트 이름 hms).
+ * 대소문자까지 같아야 일치로 보는 제품명인지: 공백을 뺀 길이가 3자 이하이고 ASCII 영문자와 숫자뿐인 이름.
+ * 이런 이름(ICE, HMS)은 소문자로 쓰면 흔한 낱말이나 식별자와 겹친다 (ice, 프로젝트 이름 hms).
+ *
+ * 4자인 이름은 대소문자를 가리지 않는다. 'JEUS' 를 'jeus', 'Jeus' 로 적은 글이 많고, 4자인 이름이 다른 영문 낱말
+ * 속에 든 경우(access 의 'cess', Redis 의 'redi')는 낱말 경계 조건으로 걸러진다.
  */
 function isCaseSensitiveName(name: string): boolean {
   const compact = name.replace(/\s+/g, '');
@@ -59,9 +67,9 @@ function isCaseSensitiveName(name: string): boolean {
  * 제품명이 글에 부분 문자열로 들어 있다고 그 제품을 언급하는 것은 아니다. 제품 'CESS' 는 access-denied-page 에,
  * 'xFRAME' 은 xframeoptions 에, 'HMS' 는 프로젝트 이름 hms 에 들어 있다. 그래서 다음 두 조건을 건다.
  * - 낱말 경계: 제품명의 첫 글자가 ASCII 영문자나 숫자이면 일치한 자리의 바로 앞 글자가, 끝 글자가 그러면 바로
- *   뒤 글자가 ASCII 영문자나 숫자가 아니어야 한다. 제품명의 끝이 한글이나 기호인 쪽에는 걸지 않는다
- *   (한글 뒤에는 조사가 붙는다).
- * - 대소문자: 공백을 뺀 길이가 4자 이하이고 ASCII 영문자와 숫자뿐인 제품명은 대소문자까지 같아야 한다.
+ *   뒤 글자가 ASCII 영문자가 아니어야 한다. 숫자가 붙은 꼴은 일치로 본다: 제품명 뒤에 버전 숫자를 붙여 쓴 글이
+ *   있다 ('tibero5', 'nexacro17'). 제품명의 끝이 한글이나 기호인 쪽에는 걸지 않는다 (한글 뒤에는 조사가 붙는다).
+ * - 대소문자: 공백을 뺀 길이가 3자 이하이고 ASCII 영문자와 숫자뿐인 제품명은 대소문자까지 같아야 한다.
  *   그 밖의 제품명은 ASCII 영문자의 대소문자를 가리지 않는다.
  *
  * 조건을 채우지 못한 자리는 건너뛰고 그 뒤의 자리를 이어서 찾는다. 빈 제품명은 어디에도 일치하지 않는다.
@@ -79,7 +87,7 @@ export function findProductMention(text: string, name: string): number {
   for (let at = haystack.indexOf(needle); at !== -1; at = haystack.indexOf(needle, at + 1)) {
     const before = at > 0 ? text[at - 1] : undefined;
     const after = text[at + needle.length];
-    if ((!boundaryBefore || !isAsciiAlphanumeric(before)) && (!boundaryAfter || !isAsciiAlphanumeric(after))) {
+    if ((!boundaryBefore || !isAsciiLetter(before)) && (!boundaryAfter || !isAsciiLetter(after))) {
       return at;
     }
   }
