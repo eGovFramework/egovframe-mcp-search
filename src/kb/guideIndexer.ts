@@ -134,9 +134,8 @@ export async function indexGuideDirectory(
     console.error(`  진행률: ${totalIndexed}/${allChunks.length} (${Math.round((totalIndexed / allChunks.length) * 100)}%)`);
   }
 
-  // 4. 인덱스 최적화
-  console.error('\n  🔨 가이드 벡터 인덱스 생성 중...');
-  await guideManager.createIndex();
+  // 4. 테이블 최적화 (조각 병합). 벡터 인덱스는 만들지 않는다: 검색은 항상 인덱스를 건너뛴 전수 검색이라
+  //    (GuideSearchManager.searchGuide) 인덱스가 쓰이지 않는다
   await guideManager.optimize();
 
   // 5. 통계 생성

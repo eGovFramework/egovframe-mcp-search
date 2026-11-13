@@ -13,7 +13,9 @@ import type { Table } from "@lancedb/lancedb";
 import { GuideSearchManager } from "../../src/rag/guideManager.js";
 import { DeveloperKnowledgeManager } from "../../src/rag/knowledgeManager.js";
 import { MAX_VECTOR_SEARCH_LIMIT } from "../../src/utils/lanceFilter.js";
-import { hasEmbeddingModel } from "../integration/_helper.js";
+import fs from "node:fs";
+import path from "node:path";
+import { REPO_ROOT, hasEmbeddingModel } from "../integration/_helper.js";
 import {
   BUNDLED_KB,
   GUIDE_TABLE,
@@ -36,6 +38,25 @@ function topSimilarities(rows: VectorRow[], query: ArrayLike<number>, k: number)
     .sort((a, b) => b - a)
     .slice(0, k);
 }
+
+describe("색인 구축 — 쓰이지 않는 벡터 인덱스를 만들지 않는다", () => {
+  // 검색은 항상 인덱스를 건너뛴 전수 검색이다. 그런데도 색인을 구축할 때 IVF_PQ 인덱스를 만들면 구축 시간과
+  // 지식베이스 크기만 늘고, 행 수에 비해 파티션이 많아 빈 파티션 경고가 수백 줄 나온다.
+  const SOURCES = [
+    "src/kb/guideIndexer.ts",
+    "src/scripts/buildIndex.ts",
+    "src/cli/lancedb/guide.ts",
+    "src/cli/lancedb/developerKnowledge.ts",
+    "src/rag/guideManager.ts",
+    "src/rag/knowledgeManager.ts",
+    "src/database/hybridManager.ts",
+  ];
+
+  it.each(SOURCES)("%s 는 벡터 인덱스를 만드는 코드를 두지 않는다", (file) => {
+    const source = fs.readFileSync(path.join(REPO_ROOT, file), "utf-8");
+    expect(source).not.toMatch(/\.createIndex\(|Index\.ivfPq|createIndex\(\)/);
+  });
+});
 
 describe.skipIf(!HAS_BUNDLED_TABLES)("가이드 검색 — 전수 검색", () => {
   let manager: GuideSearchManager;

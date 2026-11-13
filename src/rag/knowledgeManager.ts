@@ -361,7 +361,8 @@ export class DeveloperKnowledgeManager {
     const queryVector = await embedder.embed(query, 'query');
 
     // 벡터 검색 쿼리 — 인덱스를 건너뛰고 전수 검색한다.
-    // 동봉 테이블의 IVF_PQ 인덱스는 기본 설정으로 일부 파티션만 훑어, 필터(where)에 맞는 행이
+    // 이전에 구축한 테이블에는 IVF_PQ 인덱스가 있다 (새로 구축하는 테이블에는 만들지 않는다).
+    // 그 인덱스는 기본 설정으로 일부 파티션만 훑어, 필터(where)에 맞는 행이
     // 있어도 0건이나 limit 미만을 돌려주고 가장 가까운 행을 놓친다. 약 1.8만 행 규모에서는
     // 전수 검색이 인덱스 검색과 지연 시간이 같다. where 는 사전 필터라 조건에 맞는 행 안에서 limit 건을 채운다.
     // 거리는 코사인 거리로 계산한다 (기본값 l2 는 제곱 유클리드 거리라 1 - 거리가 유사도가 되지 않는다).
@@ -609,26 +610,6 @@ export class DeveloperKnowledgeManager {
       unverified: all.length - verifiedCount,
       topTags: topTags.slice(0, 10),
     };
-  }
-
-  /**
-   * 벡터 인덱스 생성 (성능 향상)
-   */
-  async createIndex(): Promise<void> {
-    console.error('🔨 벡터 인덱스 생성 중...');
-    
-    try {
-      await this.table.createIndex('vector', {
-        config: lancedb.Index.ivfPq({
-          numPartitions: 256,
-          numSubVectors: 96,
-        }),
-      });
-      
-      console.error('✅ 벡터 인덱스 생성 완료');
-    } catch (error) {
-      console.warn('⚠️ 인덱스 생성 실패 (데이터가 부족할 수 있음):', error);
-    }
   }
 
   /**

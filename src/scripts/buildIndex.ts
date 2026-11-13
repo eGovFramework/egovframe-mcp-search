@@ -1084,7 +1084,7 @@ async function indexDeveloperKnowledge(
     console.error(`  진행률: ${totalIndexed}/${knowledgeItems.length} (${Math.round((totalIndexed / knowledgeItems.length) * 100)}%)`);
   }
 
-  await knowledgeManager.createIndex();
+  // 벡터 인덱스는 만들지 않는다: 검색은 항상 인덱스를 건너뛴 전수 검색이라 인덱스가 쓰이지 않는다
   await knowledgeManager.optimize();
 
   console.error(`  ✓ 개발자 지식 벡터화 완료: ${knowledgeItems.length}개`);
