@@ -251,6 +251,21 @@ export function trimEdgeSeparators(candidate: string): string {
   return candidate.slice(start, end);
 }
 
+/**
+ * 검색어를 안쪽의 `.` `-` `_` 에서 나눈 조각을 차례대로 돌려준다 ('K2Web-Wizard' → 'K2Web', 'Wizard').
+ * 구분 문자가 이어져 있어도 빈 조각은 만들지 않는다. 구분 문자가 없는 검색어는 나눌 것이 없어 빈 배열을 돌려준다.
+ *
+ * extractSearchTerms 는 식별자('4.3', 'spring-boot')를 한 검색어로 지키려고 이 문자들을 검색어 안에 남긴다.
+ * 그 검색어가 저장된 표기와 달라('K2Web Wizard') 어떤 행과도 일치하지 않을 때, 키워드 검색이 이 조각으로 다시 찾는다.
+ * 조각의 길이는 가리지 않는다 (한 글자 조각을 쓸지는 호출부가 정한다).
+ */
+export function splitAtSeparators(term: string): string[] {
+  if (!/[._-]/.test(term)) {
+    return [];
+  }
+  return term.split(/[._-]+/).filter((piece) => piece !== '');
+}
+
 /** 영문·숫자·`.`·`-`·`_` 로만 된 앞부분 뒤에 한글 음절 1~3자가 붙은 꼴 ('JEUS는', '4.3에서') */
 const ASCII_HEAD_WITH_HANGUL_TAIL = /^([A-Za-z0-9._-]+)[가-힣]{1,3}$/;
 

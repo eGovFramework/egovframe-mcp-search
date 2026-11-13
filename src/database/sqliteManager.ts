@@ -11,11 +11,14 @@ import { getSQLiteDBPath } from '../utils/projectPath.js';
 import {
   COMPATIBILITY_GENERIC_WORDS,
   COMPONENT_GENERIC_WORDS,
+  MAX_SEARCH_TERMS,
   codePointLength,
   dropGenericTerms,
   extractSearchTerms,
+  isGenericTerm,
   parseKeywordQuery,
   particleStrippedForms,
+  splitAtSeparators,
   type KeywordQuery,
 } from '../utils/fts5Query.js';
 import { escapeLikePattern } from '../utils/sqlLike.js';
@@ -612,7 +615,7 @@ export class SQLiteManager {
    * 흔한 검색어만 일치한 행은 돌려주지 않는다 (distinctiveScope). 일치 기준도 그 조건을 건 채로 낮춘다.
    * 정렬과 필터 적용은 selectByMatchedTerms 를 따른다.
    *
-   * 결과의 terms.used 는 쓸 수 있는 검색어(조사를 떼어 쓴 것은 뗀 꼴), terms.ignored 는 쓰지 않은 검색어,
+   * 결과의 terms.used 는 쓸 수 있는 검색어(조사를 떼어 쓴 것은 뗀 꼴, 나눠 쓴 것은 조각), terms.ignored 는 쓰지 않은 검색어,
    * terms.required 는 실제로 적용한 일치 기준이다 (k 가 0 이면 0). 검색에서 뺀 검색어(dropped)는 이 단계에
    * 넘어오지 않으므로 호출부가 채운다.
    */
@@ -645,18 +648,29 @@ export class SQLiteManager {
   /**
    * 대체 검색에 쓸 수 있는 검색어를 고른다: 필터를 적용한 대상 안에 일치하는 행이 있는 검색어.
    *
-   * 검색어 그대로 일치하는 행이 없으면 조사를 뗀 꼴(particleStrippedForms)로 바꿔 보고, 그 꼴도 일치하는 행이
-   * 없으면 쓰지 않는다 (ignored). 조사가 붙은 제품명('JEUS는', '티맥스는')으로도 찾게 한다.
-   * 뗀 꼴이 다른 검색어와 같으면 한 번만 쓴다.
+   * 검색어마다 다음을 차례로 견줘, 일치하는 행이 있는 첫 꼴을 쓴다.
+   * 1) 검색어 그대로.
+   * 2) 조사를 뗀 꼴 (particleStrippedForms). 조사가 붙은 제품명('JEUS는', '티맥스는')으로도 찾게 한다.
+   * 3) 검색어 안쪽의 '.', '-', '_' 에서 나눈 조각 (splitAtSeparators). 낱말을 기호로 이어 적은 검색어가 저장된
+   *    표기와 다를 때('K2Web-Wizard' 와 'K2Web Wizard', 'sts_com' 과 'sts-com')에도 찾게 한다.
+   *    조각마다 1)과 2)를 견줘 일치하는 행이 있는 것을 모두 쓴다. 한 글자 조각과 행을 가려 주지 못하는 낱말
+   *    (isGenericTerm)인 조각은 쓰지 않는다: 부분 문자열로 견주면 찾는 것과 무관한 행과 일치한다.
+   *    숫자와 구분 문자뿐인 검색어('10.1', '03-21')는 나누지 않는다. 낱말을 이은 것이 아니라 버전이나 날짜를
+   *    적은 것이고, 나눈 숫자는 다른 값의 숫자와 우연히 일치한다 ('03-21' 의 '21' 이 'JEUS 21' 과).
+   *
+   * 어느 꼴도 일치하는 행이 없는 검색어는 쓰지 않는다 (ignored). 쓰는 꼴이 다른 검색어와 같으면 한 번만 쓴다.
+   *
+   * 나눠서 견주는 조각은 query 전체에서 MAX_SEARCH_TERMS 개까지고, 쓰는 검색어도 모두 합쳐 그만큼까지다.
+   * 조각마다 조회가 필요하고 검색어 하나가 수백 조각으로 나뉠 수 있어, 조회 횟수와 조회 문의 크기를 묶어 둔다.
    */
   private usableTerms(
     target: KeywordSearchTarget,
     terms: string[],
     filter: SqlCondition,
   ): { usable: UsableTerm[]; ignored: string[] } {
-    /** forms 가운데 필터를 적용한 대상 안에 일치하는 행이 있는 첫 꼴. 없으면 null */
-    const firstMatching = (forms: string[]): UsableTerm | null => {
-      for (const form of forms) {
+    /** term 그대로와 조사를 뗀 꼴 가운데, 필터를 적용한 대상 안에 일치하는 행이 있는 첫 꼴. 없으면 null */
+    const firstMatchingForm = (term: string): UsableTerm | null => {
+      for (const form of [term, ...particleStrippedForms(term)]) {
         const matcher = termMatcher(target, form);
         // 견줄 조건을 만들 수 없는 값은 어떤 행과도 일치하지 않는다
         const rows = matcher === null ? 0 : this.countInScope(target, matcher.matches, filter);
@@ -669,16 +683,49 @@ export class SQLiteManager {
 
     const usable: UsableTerm[] = [];
     const ignored: string[] = [];
-    // 조사를 뗀 꼴이 다른 검색어와 같으면 한 번만 센다 (LIKE 처럼 영문자의 대소문자는 가리지 않는다)
+    // 쓰는 꼴이 다른 검색어와 같으면 한 번만 센다 (LIKE 처럼 영문자의 대소문자는 가리지 않는다)
     const usedKeys = new Set<string>();
-    for (const term of terms) {
-      // 검색어 그대로 일치하는 행이 있으면 그대로 쓰고, 없을 때만 조사를 뗀 꼴을 차례로 견준다
-      const match = firstMatching([term, ...particleStrippedForms(term)]);
-      if (match === null) {
-        ignored.push(term);
-      } else if (!usedKeys.has(match.form.toLowerCase())) {
-        usedKeys.add(match.form.toLowerCase());
+    /** 쓸 수 있는 꼴 하나를 더한다 (이미 쓰는 꼴이거나 쓰는 검색어 수가 상한에 닿았으면 더하지 않는다) */
+    const use = (match: UsableTerm): void => {
+      const key = match.form.toLowerCase();
+      if (!usedKeys.has(key) && usable.length < MAX_SEARCH_TERMS) {
+        usedKeys.add(key);
         usable.push(match);
+      }
+    };
+
+    // 나눠서 견줄 수 있는 조각의 남은 수 (query 전체에서 센다)
+    let pieceBudget = MAX_SEARCH_TERMS;
+    for (const term of terms) {
+      const whole = firstMatchingForm(term);
+      if (whole !== null) {
+        use(whole);
+        continue;
+      }
+
+      // 그대로도 조사를 뗀 꼴로도 일치하는 행이 없을 때만 조각으로 나눠 본다
+      let usedPiece = false;
+      for (const piece of NUMBER_LIKE_TERM.test(term) ? [] : splitAtSeparators(term)) {
+        if (codePointLength(piece) < 2 || isGenericTerm(piece, target.genericTerms)) {
+          continue;
+        }
+        if (usedKeys.has(piece.toLowerCase())) {
+          // 이미 쓰는 검색어와 같은 조각은 다시 견주지 않는다
+          usedPiece = true;
+          continue;
+        }
+        if (pieceBudget === 0) {
+          break;
+        }
+        pieceBudget -= 1;
+        const match = firstMatchingForm(piece);
+        if (match !== null) {
+          use(match);
+          usedPiece = true;
+        }
+      }
+      if (!usedPiece) {
+        ignored.push(term);
       }
     }
     return { usable, ignored };
@@ -1339,7 +1386,7 @@ interface TermMatcher {
 
 /** 대체 검색이 쓰기로 한 검색어 하나 */
 interface UsableTerm {
-  /** 검색에 쓰는 꼴 (조사를 떼어 쓰면 뗀 꼴) */
+  /** 검색에 쓰는 꼴 (조사를 떼어 쓰면 뗀 꼴, 기호에서 나눠 쓰면 조각) */
   form: string;
   /** 그 꼴을 행과 견주는 조건 */
   matcher: TermMatcher;
@@ -1377,6 +1424,9 @@ function termMatcher(target: KeywordSearchTarget, term: string): TermMatcher | n
     inName: likeAnyColumn(target.nameColumns, pattern),
   };
 }
+
+/** 숫자와 '.', '-', '_' 뿐인 검색어: 버전이나 날짜를 적은 것 ('4.3', '10.1', '03-21', '2024-11') */
+const NUMBER_LIKE_TERM = /^[0-9._-]+$/;
 
 /** 확인일자와 견줄 수 있는 검색어의 꼴: YYYY, YYYY-MM, YYYY-MM-DD */
 const DATE_PREFIX_TERM = /^\d{4}(?:-\d{2}(?:-\d{2})?)?$/;

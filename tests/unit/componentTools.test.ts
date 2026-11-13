@@ -99,6 +99,13 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
       expect(idsOf(partial.suggestions)).toEqual(["bbs", "tpl"]);
     });
 
+    it("없는 패키지명을 넣으면 패키지명의 조각이 일치하는 컴포넌트를 후보로 돌려준다", () => {
+      // 'egovframework.com.cop.zzz' 는 어느 컴포넌트의 패키지도 아니다. 조각 'cop' 이 든 패키지의 컴포넌트가 후보다
+      const info = getComponentInfo("egovframework.com.cop.zzz");
+      expect(info.component).toBeNull();
+      expect(idsOf(info.suggestions)).toEqual(["bbs", "tpl"]);
+    });
+
     it("후보는 5건까지만 돌려주고, 없으면 빈 배열이다", () => {
       // 모든 컴포넌트의 패키지명이 egovframework 로 시작한다
       expect(getComponentInfo("egovframework").suggestions).toHaveLength(5);

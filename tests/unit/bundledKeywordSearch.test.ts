@@ -13,6 +13,7 @@
  * - 영어 기능어와 목록의 모든 항목에 해당하는 낱말이 결과를 흩뜨렸다 ("Is Tibero compatible with eGovFrame 4.3?",
  *   "eGovFrame 4.3 호환 CMS", "게시판 컴포넌트").
  * - 대체 검색이 흔한 낱말만 일치한 행으로 결과를 채웠다 ("티맥스 제품 목록", "게시판 기능 알려줘").
+ * - 낱말을 저장된 표기와 다른 기호로 이으면 0건이었다 ("K2Web-Wizard", "sts_com", "JEUS-8").
  *
  * DB 는 읽기 전용으로 열고, 조회가 파일을 바꾸지 않았는지 마지막에 확인한다.
  * 동봉 데이터는 갱신될 수 있으므로 건수를 숫자로 고정하지 않고, 같은 뜻의 두 조회가 같은 결과를 내는지와
@@ -126,6 +127,31 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       }
       // '기능' 은 대상의 절반 넘게 일치하는 흔한 낱말이다
       expect(sqlite.queryComponents({ query: "기능" }).total * 2).toBeGreaterThan(everyComponent);
+    });
+
+    it("기호로 이은 낱말이 저장된 표기와 달라도 찾는다", () => {
+      // 컴포넌트 ID 는 'sts-com', 'blog-management' 이고 이름은 'Web Messenger' 다. 다른 기호로 이으면 0건이었다
+      const cases: Array<[string, string, string[]]> = [
+        ["sts_com", "sts-com", ["sts", "com"]],
+        ["blog_management", "blog-management", ["blog", "management"]],
+        ["Web-Messenger", "msg", ["Web", "Messenger"]],
+      ];
+      for (const [query, id, pieces] of cases) {
+        const result = sqlite.queryComponents({ query });
+        expect(result.matchMode, `query=${query}`).toBe("any-term");
+        expect(result.terms, `query=${query}`).toEqual({ used: pieces, ignored: [], dropped: [], required: 1 });
+        expect(idsOf(result.rows)[0], `query=${query}`).toBe(id);
+      }
+      // 조각 'com' 은 모든 패키지명에 든 흔한 낱말이다. 그것만 일치한 컴포넌트는 나오지 않는다
+      const stats = sqlite.queryComponents({ query: "sts_com" });
+      expect(idsOf(stats.rows).sort()).toEqual(idsOf(sqlite.queryComponents({ query: "sts" }).rows).sort());
+      expect(stats.total).toBeLessThan(sqlite.queryComponents({ query: "com" }).total);
+      // 저장된 표기 그대로 적으면 나누지 않는다
+      for (const id of ["sts-com", "blog-management"]) {
+        const exact = sqlite.queryComponents({ query: id });
+        expect(idsOf(exact.rows), `query=${id}`).toEqual([id]);
+        expect(exact.matchMode, `query=${id}`).toBe("all-terms");
+      }
     });
 
     it("컴포넌트 ID 로도 찾는다 (패키지명과 다른 ID)", () => {
@@ -257,6 +283,28 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       expect(versions).toContain("JEUS 8.5");
       expect(versions).not.toContain("JEUS 21");
       expect(result.total).toBeLessThan(compatible("JEUS").total);
+    });
+
+    it("기호로 이은 낱말이 저장된 표기와 달라도 찾는다", () => {
+      // 저장된 표기는 'K2Web Wizard' 다. 'K2Web-Wizard' 는 어느 행에도 부분 문자열로 들어 있지 않아 0건이었다
+      const stored = compatible("K2Web Wizard");
+      expect(stored.matchMode).toBe("all-terms");
+      expect(stored.total).toBeGreaterThan(0);
+      const joined = compatible("K2Web-Wizard");
+      expect(joined.matchMode).toBe("any-term");
+      expect(joined.terms).toEqual({ used: ["K2Web", "Wizard"], ignored: [], dropped: [], required: 1 });
+      // 두 조각이 모두 든 행(K2Web Wizard)이 앞에 오고, 한 조각만 든 행이 뒤따른다
+      expect(rowKeys(joined).slice(0, stored.total).sort()).toEqual(rowSet(stored));
+
+      // 'SCP-SmartUI' 를 다른 기호로 이어도 같은 행을 찾는다
+      expect(rowSet(compatible("SCP_SmartUI"))).toEqual(rowSet(compatible("SCP-SmartUI")));
+      // 한 글자 조각은 쓰지 않는다: 'JEUS-8' 은 JEUS 행들이다
+      const jeus = compatible("JEUS");
+      for (const query of ["JEUS-8", "JEUS_8", "JEUS.8"]) {
+        const result = compatible(query);
+        expect(rowKeys(result), `query=${query}`).toEqual(rowKeys(jeus));
+        expect(result.terms?.used, `query=${query}`).toEqual(["JEUS"]);
+      }
     });
 
     it('전각으로 입력한 "ＣＭＳ" 는 "CMS" 와 같은 건수를 돌려준다', () => {

@@ -17,6 +17,7 @@ import {
   isGenericTerm,
   joinedTermKeys,
   particleStrippedForms,
+  splitAtSeparators,
   trimEdgeSeparators,
 } from "../../src/utils/fts5Query.js";
 
@@ -334,6 +335,37 @@ describe("extractSearchTerms 가 읽는 query 의 길이", () => {
     const words = Array.from({ length: 10 }, (_, index) => `낱말${index}`);
     expect(extractSearchTerms(words.join(" "))).toEqual(words);
     expect(extractSearchTerms("가".repeat(2000))).toEqual(["가".repeat(2000)]);
+  });
+});
+
+describe("splitAtSeparators", () => {
+  it("검색어 안쪽의 '.', '-', '_' 에서 나눈 조각을 차례대로 돌려준다", () => {
+    expect(splitAtSeparators("K2Web-Wizard")).toEqual(["K2Web", "Wizard"]);
+    expect(splitAtSeparators("sts_com")).toEqual(["sts", "com"]);
+    expect(splitAtSeparators("egovframework.com.cop.bbs")).toEqual(["egovframework", "com", "cop", "bbs"]);
+    expect(splitAtSeparators("spring-boot_starter.web")).toEqual(["spring", "boot", "starter", "web"]);
+  });
+
+  it("구분 문자가 이어져 있어도 빈 조각은 만들지 않는다", () => {
+    expect(splitAtSeparators("a.-_b")).toEqual(["a", "b"]);
+    expect(splitAtSeparators("게시판--템플릿")).toEqual(["게시판", "템플릿"]);
+  });
+
+  it("조각의 길이는 가리지 않는다 (한 글자 조각을 쓸지는 호출부가 정한다)", () => {
+    expect(splitAtSeparators("JEUS-8")).toEqual(["JEUS", "8"]);
+    expect(splitAtSeparators("4.3")).toEqual(["4", "3"]);
+  });
+
+  it("구분 문자가 없는 검색어는 나눌 것이 없어 빈 배열을 돌려준다", () => {
+    expect(splitAtSeparators("JEUS")).toEqual([]);
+    expect(splitAtSeparators("게시판")).toEqual([]);
+    expect(splitAtSeparators("")).toEqual([]);
+  });
+
+  it("아주 긴 검색어도 100ms 안에 나눈다", () => {
+    for (const term of [`${"a-".repeat(999)}a`, `a${".".repeat(1998)}a`, "a".repeat(2000)]) {
+      expect(elapsedMs(() => splitAtSeparators(term))).toBeLessThan(100);
+    }
   });
 });
 

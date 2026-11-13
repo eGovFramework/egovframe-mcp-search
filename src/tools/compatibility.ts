@@ -279,7 +279,10 @@ export interface CompatibilitySearchResponse {
   filters: CompatibilitySearchFilter;
   /** 키워드 검색이 결과를 찾은 방식. 키워드 검색을 하지 않았으면 없다 */
   matchMode?: KeywordMatchMode;
-  /** matchMode 가 any-term 일 때: 대체 검색에 쓴 검색어. 조사를 떼어 쓴 검색어는 뗀 꼴이다 */
+  /**
+   * matchMode 가 any-term 일 때: 대체 검색에 쓴 검색어. 조사를 떼어 쓴 검색어는 뗀 꼴이고,
+   * '.', '-', '_' 에서 나눠 쓴 검색어는 조각이다 ('K2Web-Wizard' → 'K2Web', 'Wizard')
+   */
   usedTerms?: string[];
   /**
    * matchMode 가 any-term 일 때: 결과의 행마다 일치한 검색어(usedTerms)의 최소 수.

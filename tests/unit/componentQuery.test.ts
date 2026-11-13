@@ -428,6 +428,56 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     });
   });
 
+  describe("2단계: 기호로 이은 검색어", () => {
+    /** 컴포넌트 ID 가 'sts-com' 인 컴포넌트 (ID 와 패키지명의 표기가 다르다) */
+    const STS_COM = {
+      ...extra("sts-com", "통계공통", "Common Statistics", "통계 패키지에서 공통으로 사용"),
+      package_name: "egovframework.com.sts.com",
+    };
+
+    it("저장된 표기와 다른 기호로 이은 검색어는 기호에서 나눈 조각으로 찾는다", () => {
+      sqlite.addCommonComponentsBatch([STS_COM]);
+      // 'sts_com' 은 어느 컬럼에도 그대로 들어 있지 않다. 조각 'sts' 는 sts-com 과 bst(패키지 …sts.bst)에 들어 있고,
+      // 조각 'com' 은 모든 패키지명(egovframework.com.…)에 든 흔한 낱말이라 그것만 일치한 컴포넌트는 나오지 않는다
+      const result = sqlite.queryComponents({ query: "sts_com" });
+      expect(idsOf(result.rows)).toEqual(["sts-com", "bst"]);
+      expect(result.total).toBe(2);
+      expect(result.matchMode).toBe("any-term");
+      expect(result.terms).toEqual({ used: ["sts", "com"], ignored: [], dropped: [], required: 1 });
+    });
+
+    it("컴포넌트 ID 나 패키지명 그대로 일치하면 나누지 않는다", () => {
+      sqlite.addCommonComponentsBatch([STS_COM]);
+      const byId = sqlite.queryComponents({ query: "sts-com" });
+      expect(idsOf(byId.rows)).toEqual(["sts-com"]);
+      expect(byId.matchMode).toBe("all-terms");
+      const byPackage = sqlite.queryComponents({ query: "egovframework.com.cop.bbs 없는말" });
+      expect(idsOf(byPackage.rows)).toEqual(["bbs"]);
+      expect(byPackage.terms).toEqual({
+        used: ["egovframework.com.cop.bbs"],
+        ignored: ["없는말"],
+        dropped: [],
+        required: 1,
+      });
+    });
+
+    it("목록의 모든 항목에 해당하는 낱말인 조각은 쓰지 않는다", () => {
+      // 없는 패키지명: egovframework(목록의 모든 항목에 해당) · com(여덟 컴포넌트 모두) · cop(bbs, tpl) · zzz(0행)
+      const result = sqlite.queryComponents({ query: "egovframework.com.cop.zzz" });
+      expect(idsOf(result.rows)).toEqual(["bbs", "tpl"]);
+      expect(result.terms).toEqual({ used: ["com", "cop"], ignored: [], dropped: [], required: 1 });
+    });
+
+    it("쓸 수 있는 조각이 하나도 없으면 검색어 전체를 쓰지 않은 검색어로 돌려준다", () => {
+      expect(sqlite.queryComponents({ query: "없는-낱말_뿐" }).terms).toEqual({
+        used: [],
+        ignored: ["없는-낱말_뿐"],
+        dropped: [],
+        required: 0,
+      });
+    });
+  });
+
   describe("쓴 검색어와 쓰지 않은 검색어 (terms)", () => {
     const termsOf = (query: string, filters = {}) => sqlite.queryComponents({ query, filters }).terms;
 

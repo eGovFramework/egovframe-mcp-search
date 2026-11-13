@@ -644,9 +644,9 @@ describe("integration — egov_search_knowledge 공통컴포넌트 조회", () =
   });
 
   it("후보가 없는 입력에는 후보 목록을 붙이지 않는다", async () => {
-    const res = await search({ scope: "components", filters: { componentId: "zzz-없는-컴포넌트" } });
+    const res = await search({ scope: "components", filters: { componentId: "zzz-없는컴포넌트" } });
     expect(res.isError).toBe(false);
-    expect(res.text).toContain("컴포넌트를 찾을 수 없습니다: zzz-없는-컴포넌트");
+    expect(res.text).toContain("컴포넌트를 찾을 수 없습니다: zzz-없는컴포넌트");
     expect(res.text).not.toContain("비슷한 컴포넌트");
   });
 
