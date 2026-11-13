@@ -23,7 +23,7 @@
 
 ## 🛠️ 제공 도구 (Tools)
 
-이 MCP 서버는 도구 **하나**만 노출합니다. 리소스와 프롬프트는 노출하지 않습니다.
+이 MCP 서버는 도구 **하나**만 노출합니다. 리소스와 프롬프트는 노출하지 않습니다. 서버는 초기화 응답의 `instructions` 로 이 도구의 사용법 요약(`scope` 로 출처를 고르고, `action` 은 `components` 에서만 쓰며, 필터는 모두 `filters` 객체 안에 넣는다는 내용)도 함께 제공합니다.
 
 | Tool | 분류 | 용도 |
 |------|------|------|
@@ -37,38 +37,42 @@
 
 | 파라미터 | 타입 | 설명 |
 |----------|------|------|
-| `query` | string | 검색 질문 또는 키워드. `guide`, `knowledge`, `all` 에서는 필수(`knowledge` 에서 `filters.sort` 가 `"recent"` 이면 예외). `components` 와 `compatibility` 에서는 선택이며, 주면 키워드 검색을 실행 |
+| `query` | string | 검색 질문 또는 키워드(최대 10,000자). `guide`, `knowledge`, `all` 에서는 필수. 다만 `knowledge` 에서 `filters.sort` 가 `"recent"` 일 때와 `guide` 에서 `filters.chunkId` 로 청크를 읽을 때는 쓰지 않음. `components` 와 `compatibility` 에서는 선택이며, 주면 키워드 검색을 실행 |
 | `scope` | enum | 검색할 출처: `auto`(기본), `guide`, `knowledge`, `components`, `compatibility`, `all` |
 | `action` | enum | `components` 에서만 쓰는 하위 동작: `get`, `info`, `dependencies`, `sourceFiles`, `readSource`, `ddl`, `dml` |
-| `filters` | object | scope 별 필터. 정의되지 않은 키나 타입이 틀린 값은 입력 검증 오류 |
+| `filters` | object | scope 별 필터. 정의되지 않은 키나 타입이 틀린 값은 입력 검증 오류. 값이 `null` 이거나 빈 문자열인 키는 지정하지 않은 것으로 처리 |
 | `limit` | integer | 최대 결과 수(1~200). 기본값은 `guide` 5, `knowledge` 5, `components` 키워드 검색 20, `compatibility` 20 이고, `all` 은 출처마다 5 |
 | `strictScope` | boolean | 효과 없음. 하위 호환을 위해 받기만 함 |
 
-- 파라미터는 모두 선택입니다. 아무것도 주지 않으면 공통컴포넌트의 카테고리 개요와 통계가 돌아옵니다.
-- `limit` 의 scope 별 최댓값은 `guide` 20, `knowledge` 20, `components` 200, `compatibility` 100 입니다. 더 큰 값은 최댓값으로 줄여 적용하고, 응답 끝에 그 사실을 알립니다.
-- 선택된 scope 나 action 이 쓰지 않는 필터는 무시하고, 무시한 키를 응답 끝에 알립니다.
+- 파라미터는 모두 선택입니다. 아무것도 주지 않으면 공통컴포넌트의 카테고리 개요와 통계가 돌아옵니다. 쓰지 않는 파라미터를 `null` 이나 빈 문자열로 채워 보내도 주지 않은 것으로 봅니다(`filters` 자체는 객체이거나 `null` 이어야 합니다). 글자나 숫자가 하나도 없는 `query` 도 주지 않은 것으로 봅니다.
+- `limit` 의 scope 별 최댓값은 `guide` 20, `knowledge` 20, `components` 200, `compatibility` 50 이고, `all` 은 출처마다 10 입니다. 더 큰 값은 최댓값으로 줄여 적용하고, 응답 끝에 그 사실을 알립니다.
+- `components` 와 `compatibility` 의 키워드 검색은 검색어를 영문 대소문자 구분 없이 부분 문자열로 견줍니다. 모든 검색어가 들어 있는 항목을 먼저 찾고, 없으면 일부 검색어가 들어 있는 항목을 돌려주면서 검색에 쓴 낱말과 쓰지 않은 낱말을 응답에 알립니다.
+- 필터는 모두 `filters` 객체 안에 넣습니다. 필터 키를 최상위에 두면 오류 없이 버려져서, 필터가 적용되지 않은 결과가 돌아옵니다.
+- 선택된 scope 나 action 이 쓰지 않는 필터는 무시하고, 무시한 키를 응답 끝에 알립니다. 쓰이지 않은 최상위 `query` 와 `limit` 도 같은 방식으로 알립니다.
 - 입력 스키마를 어긴 호출과 실행 중에 난 오류는 `isError: true` 인 결과로 돌아옵니다.
 
 ### scope 매트릭스
 
 | scope | 대상 (저장소) | 조회 방식 | `filters` 키 | 질문 예 |
 |-------|---------------|-----------|--------------|---------|
-| `guide` | 공식 가이드 (LanceDB) | 의미 검색 | `layer`, `category` | "트랜잭션 설정 방법" |
+| `guide` | 공식 가이드 (LanceDB) | 의미 검색, `chunkId` 로 청크 하나 읽기 | `layer`, `category`, `chunkId` | "트랜잭션 설정 방법" |
 | `knowledge` | 개발자 지식 (LanceDB) | 의미 검색, 최근 색인 순 목록 | `type`, `tags`, `minImportance`, `verifiedOnly`, `sort`, `knowledgeScope` | "페이징 처리가 안 될 때의 Q&A 사례" |
 | `components` | 공통컴포넌트 (SQLite + 소스 파일) | 키워드 검색, 목록, `action` 별 조회 | `componentId`, `componentIds`, `filePath`, `dbType`, `table`, `categoryId`, `keyword`, `hasWeb`, `version` | "게시판 컴포넌트의 의존성, DDL, 소스 파일" |
-| `compatibility` | 호환 소프트웨어 (SQLite) | 필터 조회, 키워드 검색 | `frameworkVersion`, `category`, `vendor`, `productName`, `minLevel`, `includeKnowledge` | "표준프레임워크 4.3 과 호환되는 CMS" |
+| `compatibility` | 호환 소프트웨어 (SQLite) | 필터 조회, 키워드 검색 | `frameworkVersion`, `category`, `vendor`, `productName`, `minLevel`, `level`, `includeKnowledge` | "표준프레임워크 4.3 과 호환되는 CMS" |
 | `all` | 네 출처 전부 | 출처마다 검색한 결과를 한 응답에 모으는 통합 검색 | 각 필터는 그 필터를 쓰는 출처에만 적용 | "페이징 처리 관련 자료 전부" |
 | `auto` | 입력에서 추론 | 아래 규칙 참조 | - | scope 를 지정하지 않은 호출 |
 
-구간을 나눠 조회할 때는 `filters.offset` 을 씁니다. `compatibility`, `components` 의 `action: "dml"`(`filters.table` 을 준 경우), `action: "readSource"` 에서 쓸 수 있습니다. `filters.limit` 은 최상위 `limit` 과 같은 뜻이고, 둘 다 주면 최상위 값이 우선합니다.
+구간을 나눠 조회할 때는 `filters.offset` 을 씁니다. `compatibility`, `components` 의 `action: "dml"`(`filters.table` 을 준 경우), `action: "readSource"`, `guide` 의 청크 읽기(`filters.chunkId`)에서 쓸 수 있습니다. `filters.limit` 은 최상위 `limit` 과 같은 뜻이고, 둘 다 주면 최상위 값이 우선합니다.
 
 `scope` 를 생략하면(`auto`) 다음 순서로 출처를 정합니다.
 
-1. `action` 이 있거나 컴포넌트 필터(`componentId`, `componentIds`, `filePath`, `dbType`, `table`, `categoryId`, `hasWeb`)가 있으면 `components`
-2. 호환성 필터(`frameworkVersion`, `vendor`, `productName`, `minLevel`, `includeKnowledge`)가 있거나 `category` 값이 호환 소프트웨어의 분류 이름이면 `compatibility`
-3. `layer` 가 있거나 `category` 값이 공식 가이드의 category 이면 `guide`
-4. 지식 필터(`type`, `tags`, `minImportance`, `verifiedOnly`, `sort`)가 있으면 `knowledge`
-5. 그 밖에는 `query` 가 있으면 `all`, 없으면 `components` 의 카테고리 개요
+1. `action` 이 있거나 공통컴포넌트 필터(`componentId`, `componentIds`, `filePath`, `dbType`, `table`, `categoryId`, `hasWeb`)가 있으면 `components`
+2. 호환 소프트웨어 필터(`frameworkVersion`, `vendor`, `productName`, `minLevel`, `level`, `includeKnowledge`)가 있거나 `category` 값이 호환 소프트웨어의 분류 이름이면 `compatibility`
+3. `layer` 나 `chunkId` 가 있거나 `category` 값이 공식 가이드의 category 이면 `guide`
+4. 개발자 지식 필터(`type`, `tags`, `minImportance`, `verifiedOnly`, `sort`)가 있으면 `knowledge`
+5. 그 밖에는 `query` 가 있으면 `all`, 없으면 `components` 의 카테고리 개요. 다만 `query` 없이 어느 출처의 분류도 아닌 `category` 만 주면 `compatibility` 로 처리하고, 쓸 수 있는 분류를 응답에 실음
+
+값이 기본값과 같은 필터(`includeKnowledge: false`, `verifiedOnly: false`, `sort: "relevance"`, `minImportance: 1`)는 출처를 정하는 데 쓰지 않습니다.
 
 ### components 의 action 별 동작
 
@@ -77,12 +81,13 @@
 | (없음) | - | `componentId` 가 있으면 상세 정보, `query` 가 있으면 키워드 검색, `categoryId`·`keyword`·`hasWeb`·`version` 만 있으면 목록, 아무것도 없으면 카테고리 개요와 통계 |
 | `get` / `info` | `componentId` | 컴포넌트 상세 정보 (기본 정보, 설명, 사용 테이블, 의존성) |
 | `dependencies` | `componentIds`(배열) 또는 `componentId` | 간접 의존성까지 모두 해결한 결과 (추가로 필요한 컴포넌트, 전체 컴포넌트와 패키지 목록) |
-| `sourceFiles` | `componentId` | 컴포넌트의 소스 파일 목록 |
-| `readSource` | `filePath` | 소스 파일 하나의 내용. 한 번에 60,000자까지이며 `filters.offset` 으로 이어서 읽음 |
-| `ddl` | `componentId`, `dbType`(선택) | 컴포넌트가 쓰는 테이블의 CREATE TABLE, 인덱스, 뷰 문 |
+| `sourceFiles` | `componentId` | 컴포넌트의 패키지 경로 아래에 있는 소스 파일(Java, 매퍼 XML, JSP, CSS, JavaScript, 이미지, 메시지)과 그 컴포넌트에 속한 Spring 설정의 목록 |
+| `readSource` | `filePath` | 소스 파일 하나의 내용. 한 번에 30,000자까지이며 `filters.offset` 으로 이어서 읽음 |
+| `ddl` | `componentId`, `dbType`(선택) | 컴포넌트가 쓰는 테이블의 CREATE TABLE, 인덱스, 뷰 문. 외래 키가 참조하는 테이블이 사용 테이블에 없으면 그 테이블의 DDL 도 함께 실음 |
 | `dml` | `componentId`, `dbType`(선택), `table`(선택) | 초기 데이터 INSERT 문. 기본은 테이블마다 처음 20건이고, `table` 을 주면 그 테이블을 `limit`(최대 100)과 `filters.offset` 으로 나눠 조회 |
 
-- `componentId` 에는 컴포넌트 ID(`bbs`), 패키지명(`egovframework.com.cop.bbs`), 정확한 컴포넌트 이름(`게시판`)을 쓸 수 있습니다. 컴포넌트 ID 는 키워드 검색과 목록의 결과에 나옵니다.
+- `componentId` 에는 컴포넌트 ID(`bbs`), 패키지명(`egovframework.com.cop.bbs`), 정확한 컴포넌트 이름(`게시판`)을 쓸 수 있습니다. 다만 `dependencies` 는 컴포넌트 ID 와 패키지명만 받습니다. 컴포넌트 ID 는 키워드 검색과 목록의 결과에 나옵니다.
+- `action` 없이 `action` 전용 필터(`componentIds`, `filePath`, `dbType`, `table`)를 주면 목록이나 검색으로 답하지 않고, 그 필터에 필요한 `action` 을 알려 주는 오류로 응답합니다. `componentId` 가 함께 있으면 상세 정보를 돌려주고, 그 필터는 무시한 필터로 알립니다.
 - `filePath` 는 `sourceFiles` 가 출력한 경로(소스 루트 기준 상대 경로)를 그대로 씁니다.
 - `dbType` 은 `mysql`(기본), `maria`, `oracle`, `postgres`, `tibero`, `cubrid`, `altibase`, `goldilocks` 가운데 하나이고, 별칭 `mariadb`, `postgresql`, `pgsql` 도 받습니다. 그 밖의 값은 오류입니다.
 
@@ -90,7 +95,7 @@
 
 ### Prerequisites
 
-- **Node.js 22**: 저장소의 `.nvmrc` 가 22 를 가리킵니다. `better-sqlite3` 의 네이티브 바이너리는 설치하거나 패키징할 때의 Node 메이저 버전에 맞춰 만들어집니다. MCP 클라이언트가 다른 메이저 버전의 `node` 로 서버를 실행하면 서버는 시작되지만, SQLite 를 쓰는 조회(공통컴포넌트, 호환 소프트웨어)가 "네이티브 모듈(better-sqlite3)을 불러오지 못했습니다" 오류로 응답합니다. `package.json` 의 `engines` 도 `>=22 <23` 으로 Node.js 22 를 요구합니다.
+- **Node.js 22**: 저장소의 `.nvmrc` 가 22 를 가리킵니다. `better-sqlite3` 의 네이티브 바이너리는 설치하거나 패키징할 때의 Node 메이저 버전에 맞춰 만들어집니다. MCP 클라이언트가 다른 메이저 버전의 `node` 로 서버를 실행하면 서버는 시작되지만, SQLite 를 쓰는 조회(공통컴포넌트, 호환 소프트웨어)가 "네이티브 모듈(better-sqlite3)을 불러오지 못했습니다" 오류로 응답합니다. `package.json` 의 `engines` 도 `>=22 <23` 으로 Node.js 22 를 요구합니다. 다만 다른 버전에서 설치해도 npm 은 `EBADENGINE` 경고만 내고 설치를 진행하므로, 설치하기 전에 `node -v` 로 버전을 확인합니다.
 - **npm**: Node.js 22 에 포함된 npm (10.x)
 - **git**: 서브모듈과 가이드 소스를 받는 데 사용
 
@@ -110,6 +115,7 @@ npm run fetch-model            # 임베딩 모델을 models/ 에 내려받음 (�
 저장소에는 미리 구축한 지식베이스(`knowledge-base/`)가 들어 있으므로, 위 단계를 마치면 바로 MCP 클라이언트에 등록할 수 있습니다(아래 "MCP 클라이언트 설정" 참조).
 
 - `models/` 는 파일 크기 때문에 git 에 넣지 않습니다. 모델이 없으면 공식 가이드와 개발자 지식의 의미 검색이 "임베딩 모델을 찾을 수 없습니다 (models/Xenova/multilingual-e5-small). 저장소를 클론해 쓰는 경우 npm run fetch-model 을 실행하세요." 로 응답합니다. 공통컴포넌트와 호환 소프트웨어 조회는 모델 없이 동작합니다.
+- `npm run fetch-model` 은 모델이 이미 있으면 내려받지 않고, 모델을 불러와서 확인만 합니다. 불러오지 못한 모델(내려받다가 끊긴 파일 등)은 지우고 종료 코드 1 로 끝나므로, 한 번 더 실행해서 다시 내려받습니다.
 - `templates/common-components-src` 서브모듈이 없으면 공통컴포넌트의 `sourceFiles`, `readSource`, `ddl`, `dml` 이 "공통컴포넌트 소스가 설치되어 있지 않습니다" 오류로 응답합니다. 목록, 상세 정보, 의존성 조회는 서브모듈 없이 동작합니다.
 - `templates/egovframe_guide` 서브모듈은 `npm run build-index` 로 가이드 인덱스를 다시 만들 때만 필요합니다.
 
@@ -161,18 +167,20 @@ npm run build-index -- --source=local \
 
 소스 모드, 버전 태그, 실행 계획 확인 같은 질문은 모두 빌드를 시작하기 전에 끝나고, 그 뒤로는 입력 없이 끝까지 진행합니다. 새 인덱스는 `knowledge-base.staging/` 에 만든 뒤 검증을 거쳐 `knowledge-base/` 와 교체하므로, 도중에 실패해도 기존 인덱스는 그대로 남습니다. 직전 인덱스는 `knowledge-base.prev/` 에 하나 보존됩니다.
 
-결과물은 `egovframe.db`(SQLite), `egovframe_guide.lance/` 와 `developer_knowledge.lance/`(LanceDB), `state.json`(리소스별 적용 버전 기록), `manifest.json` 과 `snapshot.jsonl.gz`(개발자 지식 스냅샷)입니다. `update` CLI 는 `state.json` 으로 동봉 리소스의 현재 버전을 판단하고, `snapshot.jsonl.gz` 를 기준으로 개발자 지식의 변경분을 계산합니다.
+공통컴포넌트의 사용 테이블 목록은 어느 소스 모드에서나 저장소의 `templates/common-components-src` 소스 트리(컴포넌트별 DDL 스크립트와 매퍼 XML)에서 도출합니다. 이 서브모듈이 없으면 메타(`templates/common-components.json`)에 적힌 목록을 그대로 적재하고 경고를 출력합니다. 소스 트리의 태그와 메타의 버전이 다를 때에도 경고를 출력하는데, 지금 동봉된 데이터(소스 v5.0.1, 메타 5.0.0)가 그 경우이고 오류는 아닙니다.
+
+결과물은 `egovframe.db`(SQLite), `egovframe_guide.lance/` 와 `developer_knowledge.lance/`(LanceDB), `state.json`(리소스별 적용 버전 기록), `manifest.json` 과 `snapshot.jsonl.gz`(개발자 지식 스냅샷)입니다. 저장소와 배포 tgz 에 들어 있는 지식베이스도 같은 구성입니다. `update` CLI 는 `state.json` 으로 동봉 리소스의 현재 버전을 판단하고, `snapshot.jsonl.gz` 를 기준으로 개발자 지식의 변경분을 계산합니다.
 
 ## 🔄 지식베이스 갱신 (update CLI)
 
-`update` 는 지식베이스를 원격의 최신 자료로 갱신하는 CLI 입니다. 갱신분은 패키지 디렉토리가 아니라 **사용자 데이터 디렉토리(오버레이)** 에 저장하므로, 패키지를 다시 설치하거나 업그레이드해도 남습니다. 서버는 리소스마다 오버레이에 유효한 갱신분이 있으면 그것을 읽고, 없으면 패키지에 동봉된 것을 읽습니다.
+`update` 는 지식베이스를 원격의 최신 자료로 갱신하는 CLI 입니다. 갱신분은 패키지 디렉토리가 아니라 **사용자 데이터 디렉토리(오버레이)** 에 저장하므로, 패키지를 다시 설치하거나 업그레이드해도 남습니다. 서버는 리소스마다 오버레이에 유효한 갱신분이 있으면 그것을 읽고, 없으면 패키지에 동봉된 것을 읽습니다. 오버레이의 공식 가이드나 개발자 지식 인덱스를 읽다가 실패하면 동봉 인덱스로 물러나서 응답하고, 그 사실을 서버 로그(stderr)에 남깁니다.
 
 ```bash
 egovframe-mcp-search update [옵션]     # tgz 를 npm install -g 로 설치한 경우
 node build/index.js update [옵션]      # 저장소를 클론한 경우 (저장소 루트에서 실행)
 ```
 
-`npx egovframe-mcp-search update` 도 이 두 곳(전역 설치한 PC, 저장소 루트)에서는 같은 CLI 를 실행합니다. 이 패키지는 npm 레지스트리에 게시하지 않으므로(`"private": true`), 그 밖의 위치에서는 `npx` 형태를 쓰지 않습니다. CLI 의 출력은 모두 stderr 로 나갑니다.
+tgz 를 전역 설치한 PC 에서는 `npx egovframe-mcp-search update` 도 같은 CLI 를 실행합니다. 저장소 루트에서 `npx` 형태를 쓰면 npm 이 실행할 때마다 `prepare` 스크립트(`npm run build`)를 먼저 실행하므로, 저장소에서는 `node build/index.js update` 를 씁니다. 이 패키지는 npm 레지스트리에 게시하지 않으므로(`"private": true`), 그 밖의 위치에서는 `npx` 형태를 쓰지 않습니다. CLI 의 출력은 모두 stderr 로 나갑니다.
 
 ```bash
 egovframe-mcp-search update --check                    # 현재 버전과 원격의 최신 버전만 조회
@@ -200,7 +208,7 @@ egovframe-mcp-search update --rollback=guide           # 지정한 리소스만 
 |--------|-----------|------|
 | `developer_knowledge` (개발자 지식의 Q&A·FAQ) | 직전에 적용한 스냅샷과 id 를 대조해 바뀐 행만 다시 임베딩. 기준 스냅샷이 없거나 `--full` 을 주면 Q&A·FAQ 전체를 다시 임베딩. 적용가이드 PDF 의 청크는 그대로 유지 | 릴리스 스냅샷 (`manifest.json` + `snapshot.jsonl.gz`) |
 | `guide` (공식 가이드) | 전체 재인덱싱 | GitHub 태그의 마크다운 (이미지를 뺀 sparse checkout, 실패하면 소스 tarball) |
-| `components` (공통컴포넌트 소스) | 소스 트리 교체. 임베딩 없음. 컴포넌트 목록과 설명(SQLite)은 패키지에 동봉된 것을 그대로 사용 | GitHub 태그의 소스 tarball |
+| `components` (공통컴포넌트 소스) | 소스 트리 교체. 임베딩 없음. 컴포넌트 목록, 설명, 사용 테이블 목록(SQLite)은 패키지에 동봉된 것을 그대로 사용 | GitHub 태그의 소스 tarball |
 | `compatibility` (호환 소프트웨어) | 비활성화. 갱신하지 않고 건너뜀 | 패키지(tgz) 업그레이드로만 반영 |
 
 - 오버레이 위치는 macOS `~/Library/Application Support/egovframe-mcp-search`, Linux `$XDG_DATA_HOME/egovframe-mcp-search`(`XDG_DATA_HOME` 이 없으면 `~/.local/share/egovframe-mcp-search`), Windows `%LOCALAPPDATA%\egovframe-mcp-search` 입니다. `EGOV_MCP_DATA_DIR` 환경 변수로 바꿀 수 있습니다.
@@ -208,11 +216,11 @@ egovframe-mcp-search update --rollback=guide           # 지정한 리소스만 
 - 리소스는 서로 독립적으로 갱신합니다. 하나가 실패해도 나머지는 적용되고, 실패한 리소스는 이전 상태를 유지하며, 종료 코드는 1 입니다.
 - 공식 가이드와 개발자 지식의 갱신분과 롤백 결과는 MCP 서버를 다시 시작한 뒤부터 검색에 반영됩니다. 공통컴포넌트 소스는 실행 중인 서버에도 다음 조회부터 반영됩니다.
 - 공식 가이드와 개발자 지식의 임베딩은 로컬 모델(`models/`)로 계산합니다.
-- 오버레이의 갱신분은 패키지를 업그레이드한 뒤에도 동봉본보다 우선합니다(버전을 비교하지 않습니다). 새 패키지의 동봉본을 쓰려면 `update` 로 다시 갱신하거나 `--rollback` 으로 오버레이 항목을 없앱니다.
-- `--rollback` 은 직전 적용본이 남아 있으면 그것으로 돌아가고, 없으면 오버레이 항목을 지워 패키지 동봉본을 다시 쓰게 합니다. 개발자 지식과 가이드는 직전 적용본을 하나 보존하고, 공통컴포넌트는 `--keep-previous` 로 갱신했을 때만 보존합니다.
+- 오버레이의 갱신분은 패키지를 업그레이드한 뒤에도 동봉본보다 우선합니다(버전을 비교하지 않습니다). 그래서 업그레이드한 뒤에도 예전에 받은 갱신분이 계속 쓰입니다. 새 패키지에 동봉된 지식베이스를 쓰려면 `--rollback` 으로 오버레이 항목을 없애고, 최신 자료가 필요하면 `update` 를 다시 실행합니다.
+- `--rollback` 은 직전 적용본이 남아 있으면 그것으로 돌아가고, 없으면 오버레이 항목을 지워 패키지 동봉본을 다시 쓰게 합니다. 직전 적용본으로 돌아간 리소스는 한 번 더 실행해야 오버레이 항목이 지워집니다. 개발자 지식과 가이드는 직전 적용본을 하나 보존하고, 공통컴포넌트는 `--keep-previous` 로 갱신했을 때만 보존합니다.
 - 폐쇄망에서는 반입 디렉토리에 `manifest.json` 과 `snapshot.jsonl.gz`(개발자 지식), `guide-md.tar.gz` 또는 `egovframe_guide/` 디렉토리(가이드, 최상위가 문서 루트), `components-src.tar.gz`(공통컴포넌트, GitHub 소스 tarball 처럼 최상위 디렉토리 하나 아래에 소스 전체가 들어 있는 형태)를 넣고 `--from-file` 로 지정합니다. 파일이 없는 리소스는 건너뜁니다. 가이드와 공통컴포넌트는 `--guide-tag`, `--components-tag` 로 버전을 함께 알려 줍니다. 생략하면 버전이 `from-file` 로 기록되어, 다음에 반입한 파일이 같은 버전으로 판단되어 건너뛰어집니다(`--force` 로 다시 적용할 수 있습니다).
 - 개발자 지식 스냅샷을 내려받는 주소는 `EGOV_MCP_UPDATE_URL` 환경 변수로 바꿀 수 있습니다. 릴리스 저장소에 스냅샷이 게시되어 있지 않거나 접속할 수 없으면 `--check` 는 이 리소스를 "원격 확인 실패" 로 표시합니다. 다른 리소스에 새 버전이 있어 갱신이 진행되면 이 리소스만 실패로 처리합니다.
-- 현재 저장소에 커밋된 `knowledge-base/` 에는 버전 기록(`state.json`)과 스냅샷 파일(`manifest.json`, `snapshot.jsonl.gz`)이 없습니다. 이 상태에서는 `--check` 가 동봉 리소스의 현재 버전을 "(기록 없음)" 으로 표시하고, 처음 갱신할 때 가이드와 공통컴포넌트는 원격의 최신 태그를 새 버전으로 보고 내려받으며, 개발자 지식은 Q&A·FAQ 전체를 다시 임베딩합니다. `npm run build-index` 로 지식베이스를 다시 만들면 세 파일이 함께 생깁니다.
+- 저장소와 배포 tgz 에 동봉된 `knowledge-base/` 에는 버전 기록(`state.json`)과 개발자 지식 스냅샷(`manifest.json`, `snapshot.jsonl.gz`)이 들어 있습니다. 그래서 `--check` 는 동봉 리소스의 현재 버전을 `state.json` 에 기록된 값으로 표시하고, 개발자 지식은 처음 갱신할 때부터 동봉 스냅샷과 대조해서 바뀐 행만 다시 임베딩합니다. 이 파일들이 없는 지식베이스에서는 현재 버전이 "(기록 없음)" 으로 표시되고, 처음 갱신할 때 가이드와 공통컴포넌트는 원격의 최신 태그를 새 버전으로 보고 내려받으며, 개발자 지식은 Q&A·FAQ 전체를 다시 임베딩합니다.
 
 **호환 소프트웨어(SQLite) 갱신은 현재 비활성화되어 있습니다.** SQLite 로 갱신하는 리소스가 호환 소프트웨어 하나뿐이라, 오버레이에 SQLite 사본을 유지할 실익이 적다고 판단했기 때문입니다. `update` 와 `--rollback` 은 `compatibility` 를 처리하지 않고 건너뛰며, 호환 소프트웨어 목록은 패키지(tgz)를 업그레이드해야 바뀝니다. 구현은 `src/cli/sqlite/` 에 남아 있습니다.
 
@@ -251,7 +259,7 @@ MCP 클라이언트에는 Node.js 22 로 `build/index.js` 를 실행하도록 �
 - `command` 는 Node.js 22 실행 파일이어야 합니다. 경로는 macOS/Linux 에서는 `which node`, Windows 에서는 `where node` 로 확인하고, 그 `node` 의 `node -v` 가 v22 인지 확인합니다. 클라이언트가 셸의 nvm 설정을 따르지 않을 수 있으므로 `"command": "node"` 보다 절대 경로가 안전합니다.
 - tgz 를 `npm install -g` 로 설치했다면 `args` 에는 `npm root -g` 가 출력한 디렉토리 아래의 `egovframe-mcp-search/build/index.js` 를 적습니다.
 - 서버는 `build/index.js` 가 속한 패키지 디렉토리에서 `knowledge-base/`, `models/`, `templates/common-components-src/` 를 찾으므로, 경로를 알려 주는 환경 변수는 필요하지 않습니다.
-- 이 프로젝트가 정의한 환경 변수는 `EGOV_MCP_DATA_DIR`(오버레이 위치)와 `EGOV_MCP_UPDATE_URL`(개발자 지식 스냅샷을 내려받는 주소) 둘입니다. 서버가 읽는 것은 `EGOV_MCP_DATA_DIR` 뿐입니다. `update` 를 이 변수와 함께 실행했다면, 클라이언트 등록의 `env` 에도 같은 값을 넣어야 서버가 그 오버레이를 읽습니다.
+- 서버와 CLI(`update`, `build-index`)가 읽는 이 프로젝트의 환경 변수는 `EGOV_MCP_DATA_DIR`(오버레이 위치)와 `EGOV_MCP_UPDATE_URL`(개발자 지식 스냅샷을 내려받는 주소) 둘입니다. 서버가 읽는 것은 `EGOV_MCP_DATA_DIR` 뿐입니다. `update` 를 이 변수와 함께 실행했다면, 클라이언트 등록의 `env` 에도 같은 값을 넣어야 서버가 그 오버레이를 읽습니다.
 
 ### Cursor
 
@@ -273,7 +281,7 @@ User: "eGovFrame Spring Boot 환경에서 트랜잭션 어떻게 설정해?"
 { "query": "Spring Boot 트랜잭션 설정", "scope": "guide", "limit": 5 }
 ```
 
-`## eGovFrame 가이드 검색 결과 (5건)` 아래에 결과마다 제목, 문서, 분류, 소스 경로, URL, 유사도, 본문이 나옵니다.
+`## eGovFrame 가이드 검색 결과 (5건)` 아래에 결과마다 제목, 문서, 분류, 소스 경로, URL, 유사도, 본문이 나옵니다. 긴 절은 색인할 때 여러 조각으로 나뉘어 있어서, 그런 절의 결과에는 조각 번호(제목 끝의 `(2/3)` 과 `조각` 줄)와 이 조각과 이웃 조각의 `chunkId` 가 함께 나옵니다. 본문이 1,500자를 넘는 결과는 앞부분만 싣고, 나머지를 읽을 `chunkId` 와 `filters.offset` 값을 안내합니다. 이웃 조각이나 잘린 본문은 `scope: "guide"` 에 `filters.chunkId` 를 주어 읽고, 이때 `query` 는 필요하지 않습니다.
 
 ### 예시 2. 통합 검색 (scope 생략)
 
@@ -285,7 +293,7 @@ User: "페이징 처리 관련 자료 다 보여줘"
 { "query": "페이징 처리" }
 ```
 
-`scope` 와 필터가 없고 `query` 만 있으므로 `all` 로 처리됩니다. `# 통합 지식 검색 결과` 아래에 공식 가이드, 개발자 지식, 공통컴포넌트, 호환 소프트웨어 네 섹션이 출처마다 5건까지 나옵니다.
+`scope` 와 필터가 없고 `query` 만 있으므로 `all` 로 처리됩니다. `# 통합 지식 검색 결과` 아래에 공식 가이드, 개발자 지식, 공통컴포넌트, 호환 소프트웨어 네 섹션이 출처마다 5건까지 나옵니다. `limit` 을 주면 출처마다 10건까지 늘릴 수 있고, 한 출처의 결과를 더 보려면 `scope` 로 그 출처를 지정합니다. 개발자 지식 섹션의 본문은 600자를 넘으면 발췌해서 싣습니다.
 
 ### 예시 3. 호환 소프트웨어 조회
 
@@ -381,9 +389,10 @@ User: "공통(cmm) 컴포넌트의 EgovFileMngServiceImpl 구현 좀 열어봐"
 | `tools/compatibility.ts`       | 호환 소프트웨어 조회                                             |
 | `tools/knowledge.ts`           | 개발자 지식 검색                                                 |
 | `rag/embedder.ts`              | 로컬 임베딩 (Transformers.js)                                    |
+| `rag/guideChunking.ts`         | 공식 가이드 문서를 색인 단위(청크)로 나누는 청킹                   |
 | `rag/guideManager.ts`          | 공식 가이드의 LanceDB 의미 검색                                   |
 | `rag/knowledgeManager.ts`      | 개발자 지식의 LanceDB 의미 검색                                   |
-| `database/sqliteManager.ts`    | SQLite 접근 (호환 소프트웨어, 공통컴포넌트 메타)                   |
+| `database/sqliteManager.ts`    | SQLite 접근과 키워드 검색 (호환 소프트웨어, 공통컴포넌트 메타)      |
 | `database/hybridManager.ts`    | SQLite 와 개발자 지식(LanceDB)을 함께 다루는 진입점                |
 | `utils/dataPaths.ts`           | 리소스별 데이터 경로 해석 (오버레이 우선, 없으면 패키지 동봉본)     |
 | `cli/update.ts`                | 지식베이스 갱신 CLI                                              |
@@ -405,14 +414,17 @@ egovframe-mcp-search/
 │   ├── kb/
 │   │   ├── snapshot.ts                     # 개발자 지식 스냅샷 형식 (manifest, jsonl.gz, 변경분 계산)
 │   │   ├── sources.ts                      # 원격 소스 주소와 태그 조회
+│   │   ├── guideSite.ts                    # 공식 가이드가 게시되는 사이트의 기준 주소
 │   │   ├── guideIndexer.ts                 # 가이드 마크다운 인덱싱 (build-index 와 update 공용)
 │   │   ├── sqliteLoaders.ts                # SQLite 적재 (호환 소프트웨어, 공통컴포넌트 메타)
-│   │   └── componentIds.ts                 # 공통컴포넌트 메타의 겹치는 id 를 고유하게 변환
+│   │   ├── componentIds.ts                 # 공통컴포넌트 메타의 겹치는 id 를 고유하게 변환
+│   │   └── componentTables.ts              # 공통컴포넌트의 사용 테이블 목록을 소스 트리에서 도출
 │   ├── database/
-│   │   ├── sqliteManager.ts                # SQLite 접근 계층
+│   │   ├── sqliteManager.ts                # SQLite 접근 계층, 키워드 검색
 │   │   └── hybridManager.ts                # SQLite + 개발자 지식(LanceDB) 진입점
 │   ├── rag/
 │   │   ├── embedder.ts                     # 로컬 임베딩 (Transformers.js)
+│   │   ├── guideChunking.ts                # 가이드 문서 청킹 (긴 절을 임베딩 입력 한도에 맞게 나눔)
 │   │   ├── guideManager.ts                 # 공식 가이드 의미 검색
 │   │   └── knowledgeManager.ts             # 개발자 지식 의미 검색
 │   ├── tools/
@@ -425,8 +437,10 @@ egovframe-mcp-search/
 │   │   ├── dataPaths.ts                    # 리소스별 경로 해석 (오버레이 우선), state.json 읽기와 쓰기
 │   │   ├── projectPath.ts                  # 패키지 루트 기준 경로
 │   │   ├── errors.ts                       # 도구 응답에 싣는 오류 문구
-│   │   ├── fts5Query.ts, sqlLike.ts, lanceFilter.ts   # SQLite·LanceDB 검색식과 조건식 조립
-│   │   ├── knowledgeExcerpt.ts, text.ts    # 개발자 지식 본문 발췌, 문자열 자르기
+│   │   ├── fts5Query.ts, sqlLike.ts, lanceFilter.ts   # 키워드 검색어 추출, SQLite·LanceDB 조건식 조립
+│   │   ├── frameworkVersion.ts, vendorName.ts, productMention.ts   # 호환 소프트웨어의 버전, 업체명, 제품명 비교
+│   │   ├── knowledgeExcerpt.ts, knowledgePresentation.ts   # 개발자 지식의 본문 발췌와 응답 표시
+│   │   ├── sensitiveText.ts, text.ts       # 주민등록번호 형식의 값 가림, 문자열 자르기
 │   │   └── download.ts, tarSafe.ts         # HTTPS 내려받기, tar.gz 해제 (update 와 build-index 가 사용)
 │   └── scripts/
 │       ├── buildIndex.ts                   # 인덱스 구축 (npm run build-index)
@@ -446,8 +460,9 @@ egovframe-mcp-search/
 ├── knowledge-base/                         # build-index 결과물 (git 에 포함)
 │   ├── egovframe.db                        # SQLite (호환 소프트웨어, 공통컴포넌트 메타)
 │   ├── egovframe_guide.lance/              # LanceDB (공식 가이드)
-│   └── developer_knowledge.lance/          # LanceDB (개발자 지식)
-│                                           # build-index 를 실행하면 state.json, manifest.json, snapshot.jsonl.gz 도 생성
+│   ├── developer_knowledge.lance/          # LanceDB (개발자 지식)
+│   ├── state.json                          # 리소스별 적용 버전 기록
+│   └── manifest.json, snapshot.jsonl.gz    # 개발자 지식 스냅샷 (update 의 변경분 계산 기준)
 │
 ├── models/                                 # 임베딩 모델 (git 미추적, npm run fetch-model 로 생성, tgz 에 동봉)
 │
@@ -462,6 +477,7 @@ egovframe-mcp-search/
 ├── .nvmrc                                  # Node.js 22
 ├── package.json
 ├── tsconfig.json
+├── tsconfig.tests.json                     # 테스트 코드의 타입 검사 설정 (npx tsc -p tsconfig.tests.json)
 └── vitest.config.mjs
 ```
 
@@ -504,7 +520,7 @@ MCP 서버가 검색에 쓰는 데이터는 모두 **로컬**에 있습니다.
 
 - `git submodule update --init`: 공통컴포넌트와 가이드 소스 (github.com)
 - `npm run fetch-model`: 임베딩 모델 (huggingface.co)
-- `update` CLI 와 `npm run build-index` 의 online 모드: 가이드, 공통컴포넌트 소스, 개발자 지식 스냅샷 (github.com, api.github.com)
+- `update` CLI 와 `npm run build-index` 의 online 모드: 가이드, 공통컴포넌트 소스, 개발자 지식 스냅샷 (github.com, api.github.com. 내려받기 요청은 GitHub 이 응답하는 리다이렉트를 따라갑니다)
 - `npm install`, `npm run pack:platforms`, `npm run inspector`: npm 패키지 (npm 레지스트리)
 
 폐쇄망에서는 `update --from-file` 과 `build-index` 의 bundled 또는 local 모드를 씁니다.
@@ -522,7 +538,7 @@ MCP 서버가 검색에 쓰는 데이터는 모두 **로컬**에 있습니다.
 | [`docs/DATABASE_SCHEMA.md`](docs/DATABASE_SCHEMA.md)                                       | DB 스키마                                       |
 | [`docs/DEPLOYMENT_GUIDE.md`](docs/DEPLOYMENT_GUIDE.md)                                     | 배포 가이드                                      |
 | [`docs/TESTING_GUIDE.md`](docs/TESTING_GUIDE.md)                                           | 빌드/테스트 가이드                               |
-| [`docs/tests/`](docs/tests/)                                                               | 테스트 파일별 설명                               |
+| [`docs/tests/`](docs/tests/)                                                               | 테스트 코드를 설명하는 문서                       |
 | [`docs/test-scenarios/`](docs/test-scenarios/)                                             | 폐쇄망 OSS LLM 테스트 시나리오                  |
 
 ## 🔗 함께 쓰는 자매 MCP
