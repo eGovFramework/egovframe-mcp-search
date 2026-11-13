@@ -210,7 +210,9 @@ export function cleanText(value: unknown): string {
     ? value.toString()
     : '';
 
+  // 원본에는 자모가 분리된(NFD) 글이 섞여 있다. 응답에 그대로 나가지 않도록 NFC 로 합친다
   return text
+    .normalize('NFC')
     .replaceAll('<br />', '\n')
     .replaceAll('<br/>', '\n')
     .replaceAll('<br>', '\n')
@@ -228,7 +230,8 @@ export function cleanText(value: unknown): string {
 
 /** 파일명으로 게시판 종류 추정 (기존 build-index 의 inferKnowledgeKind 이관) */
 export function inferKnowledgeKind(filePath: string): 'faq' | 'qa' {
-  const baseName = path.basename(filePath).toLowerCase();
+  // macOS 의 파일 시스템은 한글 파일 이름을 자모가 분리된 NFD 로 돌려준다
+  const baseName = path.basename(filePath).normalize('NFC').toLowerCase();
   return baseName.includes('faq') || baseName.includes('자주묻') ? 'faq' : 'qa';
 }
 

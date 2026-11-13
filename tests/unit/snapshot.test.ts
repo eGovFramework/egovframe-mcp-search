@@ -17,6 +17,8 @@ import {
   diffSnapshots,
   xlsxToSnapshotRows,
   snapshotRowToKnowledgeInput,
+  cleanText,
+  inferKnowledgeKind,
   type SnapshotRow,
 } from '../../src/kb/snapshot.js';
 
@@ -161,6 +163,20 @@ describe('xlsxToSnapshotRows', () => {
     const rows = xlsxToSnapshotRows(p);
     expect(rows[0].id).toBe('faq:12');
     expect(rows[0].kind).toBe('faq');
+  });
+});
+
+describe('색인 입력의 유니코드 정규화', () => {
+  it('cleanText 는 자모가 분리된(NFD) 글을 NFC 로 합친다', () => {
+    const nfd = '더이상 진행이 되질 않습니다'.normalize('NFD');
+    expect(nfd).not.toBe(nfd.normalize('NFC'));
+
+    expect(cleanText(nfd)).toBe('더이상 진행이 되질 않습니다');
+  });
+
+  it('inferKnowledgeKind 는 자모가 분리된 파일 이름(macOS)에서도 FAQ 파일을 알아본다', () => {
+    expect(inferKnowledgeKind('/tmp/자주묻는질문.xlsx'.normalize('NFD'))).toBe('faq');
+    expect(inferKnowledgeKind('/tmp/묻고답하기.xlsx'.normalize('NFD'))).toBe('qa');
   });
 });
 
