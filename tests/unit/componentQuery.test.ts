@@ -253,6 +253,44 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     });
   });
 
+  describe("쓴 검색어와 쓰지 않은 검색어 (terms)", () => {
+    const termsOf = (query: string, filters = {}) => sqlite.queryComponents({ query, filters }).terms;
+
+    it("모든 검색어가 일치하는 컴포넌트를 찾았으면 검색어를 모두 used 로 돌려준다", () => {
+      expect(termsOf("게시판 템플릿")).toEqual({ used: ["게시판", "템플릿"], ignored: [] });
+    });
+
+    it("대체 검색에서는 일치하는 컴포넌트가 없어 쓰지 않은 검색어를 ignored 로 돌려준다", () => {
+      expect(termsOf("게시판 컴포넌트 DDL 보여줘")).toEqual({
+        used: ["게시판"],
+        ignored: ["컴포넌트", "DDL", "보여줘"],
+      });
+      expect(termsOf("만들기 방법")).toEqual({ used: [], ignored: ["만들기", "방법"] });
+    });
+
+    it("조사를 떼어 쓴 검색어는 used 에 뗀 꼴로 싣는다", () => {
+      expect(termsOf("게시판을 만들고")).toEqual({ used: ["게시판"], ignored: ["만들고"] });
+      expect(termsOf("BBS는")).toEqual({ used: ["BBS"], ignored: [] });
+    });
+
+    it("필터를 적용한 대상 안에서 일치하는 컴포넌트가 없는 검색어도 ignored 다", () => {
+      expect(termsOf("증서 게시판 관리", { categoryId: "로그인" })).toEqual({
+        used: ["증서"],
+        ignored: ["게시판", "관리"],
+      });
+    });
+
+    it("두 글자 이상인 검색어가 있어 뺀 한 글자 검색어는 used 에도 ignored 에도 싣지 않는다", () => {
+      expect(termsOf("x y 증서")).toEqual({ used: ["증서"], ignored: [] });
+      expect(termsOf("y")).toEqual({ used: ["y"], ignored: [] });
+    });
+
+    it("검색어가 추출되지 않은 조회에는 terms 를 넣지 않는다", () => {
+      expect(sqlite.queryComponents({ filters: { categoryId: "게시판" } })).not.toHaveProperty("terms");
+      expect(sqlite.queryComponents({ query: "?!" })).not.toHaveProperty("terms");
+    });
+  });
+
   describe("필터", () => {
     it("키워드 검색 결과에 카테고리 필터를 함께 적용한다", () => {
       // '관리' 는 ram·drm(역할-권한관리)의 이름, tpl(게시판)의 설명과 일치한다
@@ -350,6 +388,7 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
       expect(sqlite.queryComponents({ query: "게시", filters: { keyword: "\u0000템플릿" } })).toEqual({
         ...NO_ROWS,
         matchMode: "any-term",
+        terms: { used: [], ignored: ["게시"] },
       });
       // 부분 일치 대체 검색으로 넘어가는 질의도 같다
       expect(sqlite.queryComponents({ query: "증서", filters: { keyword: "\u0000" } }).total).toBe(0);

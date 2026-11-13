@@ -39,6 +39,18 @@ export interface CompatibilitySearchFilter {
  */
 export type KeywordMatchMode = 'all-terms' | 'any-term';
 
+/**
+ * 키워드 검색이 query 에서 추출한 검색어를 어떻게 썼는지.
+ * 검색어로 추출하지 않는 접속사(AND, OR 등)와, 두 글자 이상인 검색어가 있어 뺀 한 글자 검색어는
+ * 어느 쪽에도 들어가지 않는다.
+ */
+export interface KeywordTermUsage {
+  /** 실제로 검색에 쓴 검색어. 조사를 떼어 쓴 검색어는 뗀 꼴이다 ('JEUS는' → 'JEUS') */
+  used: string[];
+  /** 일치하는 행이 없어 쓰지 않은 검색어 (query 에 적힌 꼴 그대로) */
+  ignored: string[];
+}
+
 // 호환성 소프트웨어 조회 옵션
 export interface CompatibilityQueryOptions {
   query?: string;  // 키워드 질의
@@ -52,6 +64,7 @@ export interface CompatibilityQueryResult {
   rows: CompatibilitySoftwareInfo[];  // offset 부터 limit 건
   total: number;  // 같은 조건에 맞는 전체 건수 (limit/offset 적용 전)
   matchMode?: KeywordMatchMode;  // 키워드 검색을 수행했을 때만 채워진다
+  terms?: KeywordTermUsage;  // 키워드 검색을 수행했을 때만 채워진다
 }
 
 // 호환성 요약 통계
@@ -119,6 +132,7 @@ export interface ComponentQueryResult {
   rows: CommonComponent[];  // 앞에서부터 limit 건
   total: number;  // 조건에 맞는 전체 건수 (limit 적용 전)
   matchMode?: KeywordMatchMode;  // 키워드 검색을 수행했을 때만 채워진다
+  terms?: KeywordTermUsage;  // 키워드 검색을 수행했을 때만 채워진다
 }
 
 // 컴포넌트 요약 통계

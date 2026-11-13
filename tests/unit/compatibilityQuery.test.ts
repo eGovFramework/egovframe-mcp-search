@@ -385,6 +385,69 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     });
   });
 
+  describe("쓴 검색어와 쓰지 않은 검색어 (terms)", () => {
+    const termsOf = (query: string, filters = {}) => sqlite.queryCompatibleSoftware({ query, filters }).terms;
+
+    it("모든 검색어가 일치하는 행을 찾았으면 검색어를 모두 used 로 돌려준다", () => {
+      expect(termsOf("JEUS")).toEqual({ used: ["JEUS"], ignored: [] });
+      expect(termsOf("맥스 jeus")).toEqual({ used: ["맥스", "jeus"], ignored: [] });
+    });
+
+    it("대체 검색에서는 일치하는 행이 없어 쓰지 않은 검색어를 ignored 로 돌려준다", () => {
+      expect(termsOf("JEUS 호환 여부")).toEqual({ used: ["JEUS", "호환"], ignored: ["여부"] });
+      // query 에 적힌 순서를 지킨다
+      expect(termsOf("추천 JEUS 문의 Tibero 여부")).toEqual({
+        used: ["JEUS", "Tibero"],
+        ignored: ["추천", "문의", "여부"],
+      });
+    });
+
+    it("조사를 떼어 쓴 검색어는 used 에 뗀 꼴로, 쓰지 않은 검색어는 ignored 에 적힌 꼴로 싣는다", () => {
+      expect(termsOf("JEUS는")).toEqual({ used: ["JEUS"], ignored: [] });
+      expect(termsOf("JEUS는 티맥스는 없는말은")).toEqual({ used: ["JEUS", "티맥스"], ignored: ["없는말은"] });
+      // 검색어 그대로 일치하는 행이 있으면 떼지 않는다 ('티베로' 는 '로' 로 끝난다)
+      expect(termsOf("티베로 없는말")).toEqual({ used: ["티베로"], ignored: ["없는말"] });
+    });
+
+    it("뗀 꼴이 다른 검색어와 같으면 used 에 한 번만 싣는다", () => {
+      expect(termsOf("JEUS JEUS는 Tibero")).toEqual({ used: ["JEUS", "Tibero"], ignored: [] });
+      expect(termsOf("jeus는 JEUS Tibero")).toEqual({ used: ["jeus", "Tibero"], ignored: [] });
+    });
+
+    it("쓸 검색어가 하나도 남지 않으면 used 는 비고 결과는 0건이다", () => {
+      expect(sqlite.queryCompatibleSoftware({ query: "없는말 다른말" })).toEqual({
+        rows: [],
+        total: 0,
+        matchMode: "any-term",
+        terms: { used: [], ignored: ["없는말", "다른말"] },
+      });
+    });
+
+    it("필터를 적용한 대상 안에서 일치하는 행이 없는 검색어도 ignored 다", () => {
+      expect(termsOf("JEUS WebLogic 맥스", { category: "DBMS" })).toEqual({
+        used: ["맥스"],
+        ignored: ["JEUS", "WebLogic"],
+      });
+      // 필터가 없으면 세 검색어 모두 일치하는 행이 있다 (둘 이상 일치하는 행은 JEUS 두 행이다)
+      expect(termsOf("JEUS WebLogic 맥스")).toEqual({ used: ["JEUS", "WebLogic", "맥스"], ignored: [] });
+    });
+
+    it("두 글자 이상인 검색어가 있어 뺀 한 글자 검색어는 used 에도 ignored 에도 싣지 않는다", () => {
+      // ignored 는 '일치하는 행이 없어' 쓰지 않은 검색어다. '8' 은 일치하는 행이 있지만 한 글자라서 뺐다
+      expect(termsOf("JEUS 8")).toEqual({ used: ["JEUS"], ignored: [] });
+      expect(termsOf("T M 오라클 없는말")).toEqual({ used: ["오라클"], ignored: ["없는말"] });
+      // 모든 검색어가 한 글자이면 그대로 쓰고, 일치하는 행이 없는 것은 ignored 다
+      expect(termsOf("T M")).toEqual({ used: ["T", "M"], ignored: [] });
+      expect(termsOf("T 9")).toEqual({ used: ["T"], ignored: ["9"] });
+    });
+
+    it("검색어가 추출되지 않은 조회에는 terms 를 넣지 않는다", () => {
+      expect(sqlite.queryCompatibleSoftware({ filters: { category: "WAS" } })).not.toHaveProperty("terms");
+      expect(sqlite.queryCompatibleSoftware({ query: "?!" })).not.toHaveProperty("terms");
+      expect(sqlite.queryCompatibleSoftware({ query: "AND or" })).not.toHaveProperty("terms");
+    });
+  });
+
   describe("필터", () => {
     it("query 없이 필터만 주면 확인일자가 최근인 순으로 돌려주고 matchMode 는 넣지 않는다", () => {
       const result = sqlite.queryCompatibleSoftware({ filters: { category: "WAS" } });
@@ -462,7 +525,12 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     it("대상 안에서 일치하는 검색어가 하나도 남지 않으면 빈 결과를 돌려준다", () => {
       // JEUS(2행)와 WebLogic(1행) 모두 DBMS 안에는 없다 → k=0
       const result = sqlite.queryCompatibleSoftware({ query: "JEUS WebLogic", filters: { category: "DBMS" } });
-      expect(result).toEqual({ rows: [], total: 0, matchMode: "any-term" });
+      expect(result).toEqual({
+        rows: [],
+        total: 0,
+        matchMode: "any-term",
+        terms: { used: [], ignored: ["JEUS", "WebLogic"] },
+      });
     });
 
     it("query 에서 검색어가 하나도 추출되지 않으면 query 가 없는 것으로 보고 필터만 적용한다", () => {
@@ -553,6 +621,7 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(sqlite.queryCompatibleSoftware({ query: "JEUS", filters: { vendor: "\u0000티맥스" } })).toEqual({
         ...NO_ROWS,
         matchMode: "any-term",
+        terms: { used: [], ignored: ["JEUS"] },
       });
       expect(sqlite.queryCompatibleSoftware({ query: "티맥스", filters: { productName: "\u0000" } }).total).toBe(0);
       // 부분 일치 대체 검색으로 넘어가는 질의도 같다

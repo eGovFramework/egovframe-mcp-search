@@ -27,6 +27,7 @@ import {
   ComponentQueryOptions,
   ComponentQueryResult,
   KeywordMatchMode,
+  KeywordTermUsage,
 } from '../types/database.js';
 
 export interface SQLiteManagerOptions {
@@ -335,6 +336,7 @@ export class SQLiteManager {
    *
    * total 은 같은 조건에 맞는 전체 건수이고, rows 는 그 가운데 offset 부터 limit 건이다.
    * rows 에는 내부용 컬럼(id, created_at)을 넣지 않는다.
+   * 키워드 검색을 했으면 결과를 찾은 방식(matchMode)과 쓴 검색어·쓰지 않은 검색어(terms)를 함께 돌려준다.
    */
   queryCompatibleSoftware(options: CompatibilityQueryOptions = {}): CompatibilityQueryResult {
     return this.selectCompatibleSoftware<CompatibilitySoftwareInfo>(COMPATIBILITY_SEARCH, options);
@@ -344,7 +346,7 @@ export class SQLiteManager {
   private selectCompatibleSoftware<Row>(
     target: KeywordSearchTarget,
     options: CompatibilityQueryOptions,
-  ): { rows: Row[]; total: number; matchMode?: KeywordMatchMode } {
+  ): { rows: Row[]; total: number; matchMode?: KeywordMatchMode; terms?: KeywordTermUsage } {
     const filter = this.buildCompatibilityFilter(options.filters ?? {});
     const page: SqlPage = { limit: toSqlLimit(options.limit), offset: toSqlOffset(options.offset) };
 
@@ -426,18 +428,20 @@ export class SQLiteManager {
    *
    * 두 단계 모두 일치한 검색어가 많은 행, 이름 컬럼(nameColumns)에 일치한 검색어가 많은 행, 대상의 기본 정렬,
    * rowid 순으로 돌려준다 (selectByMatchedTerms).
+   *
+   * 결과의 terms 는 실제로 쓴 검색어(used)와 일치하는 행이 없어 쓰지 않은 검색어(ignored)다.
    */
   private keywordSearch<Row>(
     target: KeywordSearchTarget,
     terms: string[],
     filter: SqlCondition,
     page: SqlPage,
-  ): { rows: Row[]; total: number; matchMode: KeywordMatchMode } {
+  ): { rows: Row[]; total: number; matchMode: KeywordMatchMode; terms: KeywordTermUsage } {
     const searchable = dropSingleCharacterTerms(terms);
 
     const allTerms = this.allTermsSearch<Row>(target, searchable, filter, page);
     if (allTerms) {
-      return { ...allTerms, matchMode: 'all-terms' };
+      return { ...allTerms, matchMode: 'all-terms', terms: { used: searchable, ignored: [] } };
     }
     return { ...this.anyTermSearch<Row>(target, searchable, filter, page), matchMode: 'any-term' };
   }
@@ -524,53 +528,59 @@ export class SQLiteManager {
    *
    * 남은 검색어가 k 개일 때 ceil(k/2) 개 이상 일치한 행만 돌려준다 (k 가 0 이면 빈 결과).
    * 정렬과 필터 적용은 selectByMatchedTerms 를 따른다.
+   *
+   * 결과의 terms.used 는 남은 검색어(조사를 떼어 쓴 것은 뗀 꼴)이고, terms.ignored 는 쓰지 않은 검색어다.
    */
   private anyTermSearch<Row>(
     target: KeywordSearchTarget,
     terms: string[],
     filter: SqlCondition,
     page: SqlPage,
-  ): { rows: Row[]; total: number } {
+  ): { rows: Row[]; total: number; terms: KeywordTermUsage } {
     const existsInScope = this.db.prepare(
       `SELECT EXISTS(
          SELECT 1 FROM ${target.table} ${target.joins ?? ''}
          WHERE ${likeAnyColumn(target.searchColumns)}${filter.sql}
        ) AS found`,
     );
-    /** 필터를 적용한 대상 안에 form 과 일치하는 행이 있으면 그 LIKE 패턴, 없으면 null */
-    const matchingPattern = (form: string): string | null => {
-      const pattern = containsPattern(form);
-      // LIKE 패턴을 만들 수 없는 값은 어떤 행과도 일치하지 않는다
-      if (pattern === null) {
-        return null;
-      }
-      const params = [...target.searchColumns.map(() => pattern), ...filter.params];
-      return (existsInScope.get(...params) as { found: number }).found ? pattern : null;
-    };
-
-    // 쓰기로 한 검색어의 LIKE 패턴. 이 배열의 길이가 k 다.
-    const patterns: string[] = [];
-    // 조사를 뗀 꼴이 다른 검색어와 같으면 한 번만 센다 (LIKE 처럼 영문자의 대소문자는 가리지 않는다)
-    const usedForms = new Set<string>();
-    for (const term of terms) {
-      // 검색어 그대로 일치하는 행이 있으면 그대로 쓰고, 없을 때만 조사를 뗀 꼴을 차례로 견준다
-      for (const form of [term, ...particleStrippedForms(term)]) {
-        const pattern = matchingPattern(form);
+    /** forms 가운데 필터를 적용한 대상 안에 일치하는 행이 있는 첫 꼴과 그 LIKE 패턴. 없으면 null */
+    const firstMatching = (forms: string[]): { form: string; pattern: string } | null => {
+      for (const form of forms) {
+        const pattern = containsPattern(form);
+        // LIKE 패턴을 만들 수 없는 값은 어떤 행과도 일치하지 않는다
         if (pattern === null) {
           continue;
         }
-        if (!usedForms.has(form.toLowerCase())) {
-          usedForms.add(form.toLowerCase());
-          patterns.push(pattern);
+        const params = [...target.searchColumns.map(() => pattern), ...filter.params];
+        if ((existsInScope.get(...params) as { found: number }).found) {
+          return { form, pattern };
         }
-        break;
+      }
+      return null;
+    };
+
+    // 쓰기로 한 검색어(used)와 그 LIKE 패턴. 두 배열의 길이가 k 다.
+    const usage: KeywordTermUsage = { used: [], ignored: [] };
+    const patterns: string[] = [];
+    // 조사를 뗀 꼴이 다른 검색어와 같으면 한 번만 센다 (LIKE 처럼 영문자의 대소문자는 가리지 않는다)
+    const usedKeys = new Set<string>();
+    for (const term of terms) {
+      // 검색어 그대로 일치하는 행이 있으면 그대로 쓰고, 없을 때만 조사를 뗀 꼴을 차례로 견준다
+      const match = firstMatching([term, ...particleStrippedForms(term)]);
+      if (match === null) {
+        usage.ignored.push(term);
+      } else if (!usedKeys.has(match.form.toLowerCase())) {
+        usedKeys.add(match.form.toLowerCase());
+        usage.used.push(match.form);
+        patterns.push(match.pattern);
       }
     }
 
     if (patterns.length === 0) {
-      return { rows: [], total: 0 };
+      return { rows: [], total: 0, terms: usage };
     }
-    return this.selectByMatchedTerms<Row>(target, patterns, Math.ceil(patterns.length / 2), filter, page);
+    const found = this.selectByMatchedTerms<Row>(target, patterns, Math.ceil(patterns.length / 2), filter, page);
+    return { ...found, terms: usage };
   }
 
   /**
