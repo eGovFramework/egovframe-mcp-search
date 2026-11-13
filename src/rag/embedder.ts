@@ -10,6 +10,8 @@
  */
 
 import { pipeline, env } from '@xenova/transformers';
+import fs from 'fs';
+import path from 'path';
 import { fileURLToPath } from 'url';
 import { getModelsPath } from '../utils/projectPath.js';
 import { EMBEDDING_MODEL_ID } from '../utils/dataPaths.js';
@@ -20,6 +22,12 @@ import { sliceHead } from '../utils/text.js';
 // 절대 경로로 지정해 MCP 서버가 임의의 cwd 에서 실행돼도 모델을 찾을 수 있게 한다.
 env.localModelPath = getModelsPath(fileURLToPath(import.meta.url));
 env.allowRemoteModels = false;
+
+// onnxruntime-node 가 모델을 불러오지 못하면 transformers.js 는 wasm 실행기로 대체한다. 그 대체 경로가
+// 워커 스레드를 띄우려다 실패하면 반쯤 초기화된 채 남아, 다음 호출에서 메인 스레드를 멈춘다
+// (서버 전체가 응답하지 않게 된다). 스레드를 하나로 제한하면 워커를 띄우지 않는다.
+// 정상 모델은 onnxruntime-node 로 실행되므로 영향이 없다.
+env.backends.onnx.wasm.numThreads = 1;
 
 /** 임베딩 용도 구분 (E5 모델 prefix) */
 export type EmbedPurpose = 'query' | 'passage';
@@ -52,6 +60,57 @@ const MODEL_NOT_FOUND_MESSAGE =
   '저장소를 클론해 쓰는 경우 npm run fetch-model 을 실행하세요.';
 
 /**
+ * 모델 파일이 있지만 불러올 수 없을 때 호출자에게 보여 주는 안내.
+ * 내려받다가 끊긴 파일, 불완전하게 복사된 파일, 읽을 권한이 없는 파일이 해당한다.
+ */
+const MODEL_DAMAGED_MESSAGE =
+  `임베딩 모델 파일을 읽지 못했습니다 (models/${EMBEDDING_MODEL_ID}). 파일이 손상되었거나 읽을 권한이 없습니다. ` +
+  '저장소를 클론해 쓰는 경우 models 디렉토리를 지우고 npm run fetch-model 을 다시 실행하고, ' +
+  '배포 패키지를 쓰는 경우 패키지를 다시 설치한 뒤 MCP 서버를 재시작하세요.';
+
+/** 모델을 이루는 파일 (모델 디렉토리 기준 상대 경로). 하나라도 없으면 모델을 불러올 수 없다. */
+const MODEL_FILES = [
+  'config.json',
+  'tokenizer.json',
+  'tokenizer_config.json',
+  path.join('onnx', 'model_quantized.onnx'),
+];
+
+/**
+ * 모델 파일의 상태를 불러오기 전에 확인한다.
+ *
+ * - missing: 파일이 하나라도 없다 (모델을 내려받지 않은 설치).
+ * - damaged: 파일 자리에 일반 파일이 아닌 것이 있거나, 크기가 0 이거나, 읽을 권한이 없다.
+ *   이런 파일을 transformers.js 에 넘기면 처리되지 않은 프라미스 거부가 나서 서버 프로세스가 죽는다.
+ */
+function inspectModelFiles(modelRoot: string, modelId: string): 'ok' | 'missing' | 'damaged' {
+  let damaged = false;
+  for (const file of MODEL_FILES) {
+    const filePath = path.join(modelRoot, modelId, file);
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(filePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return 'missing';
+      }
+      damaged = true;
+      continue;
+    }
+    if (!stat.isFile() || stat.size === 0) {
+      damaged = true;
+      continue;
+    }
+    try {
+      fs.accessSync(filePath, fs.constants.R_OK);
+    } catch {
+      damaged = true;
+    }
+  }
+  return damaged ? 'damaged' : 'ok';
+}
+
+/**
  * 모델 파일을 찾지 못해 난 로드 실패인지 판별한다.
  *
  * 원격 다운로드를 막아 두었으므로(allowRemoteModels=false) transformers.js 는 필요한 파일
@@ -67,6 +126,11 @@ export class LocalEmbedder {
   private modelName = EMBEDDING_MODEL_ID;  // 384차원, 다국어 모델 (models/ 에 동봉, ~130MB)
   private isInitializing = false;
   private initPromise: Promise<void> | null = null;
+  /**
+   * 모델을 불러오다가 실패했을 때의 오류. 한 번 실패한 모델은 같은 프로세스에서 다시 불러오지 않는다
+   * (다시 불러오면 transformers.js 의 대체 실행기가 메인 스레드를 멈출 수 있다).
+   */
+  private loadFailure: UserFacingError | null = null;
 
   /**
    * 모델 초기화 (첫 사용 시 자동 다운로드)
@@ -94,6 +158,22 @@ export class LocalEmbedder {
   }
 
   private async _doInitialize(): Promise<void> {
+    if (this.loadFailure) {
+      throw this.loadFailure;
+    }
+
+    // 불러오기 전에 파일 상태를 확인한다. 없는 파일과 읽을 수 없는 파일은 여기서 걸러 낸다
+    const fileState = inspectModelFiles(env.localModelPath, this.modelName);
+    if (fileState === 'missing') {
+      // 모델을 내려받지 않은 설치에서는 예상되는 상황이다. 호출마다 스택을 찍지 않고 한 줄만 남긴다
+      console.error(`❌ 임베딩 모델을 찾을 수 없습니다: ${env.localModelPath}`);
+      throw new UserFacingError(MODEL_NOT_FOUND_MESSAGE);
+    }
+    if (fileState === 'damaged') {
+      console.error(`❌ 임베딩 모델 파일을 읽을 수 없습니다: ${env.localModelPath}`);
+      throw new UserFacingError(MODEL_DAMAGED_MESSAGE);
+    }
+
     console.error(`🤖 임베딩 모델 로드 중: ${this.modelName}`);
     console.error(`   (로컬 모델 사용: ${env.localModelPath} — 원격 다운로드 없음)`);
     
@@ -102,14 +182,14 @@ export class LocalEmbedder {
       console.error('✅ 임베딩 모델 로드 완료');
     } catch (error) {
       if (isModelNotFound(error)) {
-        // 모델을 내려받지 않은 설치에서는 예상되는 상황이다. 호출마다 스택을 찍지 않고 한 줄만 남긴다
         console.error(`❌ 임베딩 모델을 찾을 수 없습니다: ${env.localModelPath}`);
         throw new UserFacingError(MODEL_NOT_FOUND_MESSAGE);
       }
-      // 그 밖의 실패(깨진 파일, 런타임 오류 등)는 상세 내용(절대 경로 포함)을 서버 로그에 남기고
-      // 원래 오류를 그대로 던진다 — 서버가 고정 문구로 바꾼다
+      // 파일은 있지만 불러오지 못했다 (깨진 JSON, 잘린 가중치 파일 등). 상세 내용(절대 경로 포함)은
+      // 서버 로그에만 남기고, 호출자에게는 다시 받으라는 안내를 돌려준다. 실패는 기억해 두고 다시 불러오지 않는다
       console.error('❌ 임베딩 모델 로드 실패:', error);
-      throw error;
+      this.loadFailure = new UserFacingError(MODEL_DAMAGED_MESSAGE);
+      throw this.loadFailure;
     }
   }
 

@@ -82,18 +82,98 @@ describe("LocalEmbedder — 모델 로드 실패", () => {
     expect((error as Error).message).toBe(MODEL_NOT_FOUND_MESSAGE);
   });
 
-  it("그 밖의 로드 실패는 원래 오류를 그대로 던진다 (서버가 고정 문구로 바꾼다)", async () => {
-    // 모델 파일은 있지만 내용이 깨진 경우: 어느 파일을 먼저 읽든 JSON 파싱 오류가 난다
-    const modelDir = path.join(tmpDir, EMBEDDING_MODEL_ID);
-    await fs.ensureDir(modelDir);
-    for (const file of ["config.json", "tokenizer.json", "tokenizer_config.json"]) {
-      await fs.writeFile(path.join(modelDir, file), "{ 깨진 JSON");
+  describe("모델 파일이 있지만 쓸 수 없는 경우", () => {
+    const MODEL_FILES = ["config.json", "tokenizer.json", "tokenizer_config.json", "onnx/model_quantized.onnx"];
+    const DAMAGED = /임베딩 모델 파일을 읽지 못했습니다/;
+
+    /** 임시 모델 디렉토리에 네 파일을 만든다. 내용을 주지 않은 파일은 한 글자짜리 자리 채움이다. */
+    async function writeModelFiles(contents: Record<string, string | Buffer> = {}): Promise<string> {
+      const modelDir = path.join(tmpDir, EMBEDDING_MODEL_ID);
+      for (const file of MODEL_FILES) {
+        await fs.outputFile(path.join(modelDir, file), contents[file] ?? "x");
+      }
+      return modelDir;
     }
 
-    const error = await new LocalEmbedder().initialize().catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(SyntaxError);
-    expect(error).not.toBeInstanceOf(UserFacingError);
-    expect(toUserMessage(error)).toBe(INTERNAL_ERROR_MESSAGE);
+    it("내용이 깨진 파일은 다시 받으라는 안내로 알린다 (경로는 싣지 않는다)", async () => {
+      await writeModelFiles({
+        "config.json": "{ 깨진 JSON",
+        "tokenizer.json": "{ 깨진 JSON",
+        "tokenizer_config.json": "{ 깨진 JSON",
+      });
+
+      const error = await new LocalEmbedder().initialize().catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(UserFacingError);
+      expect((error as Error).message).toMatch(DAMAGED);
+      expect((error as Error).message).toContain("npm run fetch-model");
+      expect((error as Error).message).not.toContain(tmpDir);
+    });
+
+    it("크기가 0 인 파일은 불러오기 전에 걸러 낸다", async () => {
+      await writeModelFiles({ "onnx/model_quantized.onnx": "" });
+      const error = await new LocalEmbedder().initialize().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(UserFacingError);
+      expect((error as Error).message).toMatch(DAMAGED);
+    });
+
+    it("파일 자리에 디렉토리가 있으면 불러오기 전에 걸러 낸다", async () => {
+      const modelDir = await writeModelFiles();
+      await fs.remove(path.join(modelDir, "onnx/model_quantized.onnx"));
+      await fs.ensureDir(path.join(modelDir, "onnx/model_quantized.onnx"));
+
+      const error = await new LocalEmbedder().initialize().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(UserFacingError);
+      expect((error as Error).message).toMatch(DAMAGED);
+    });
+
+    // 권한을 뺏어도 읽을 수 있는 환경(Windows, root)에서는 재현되지 않는다
+    it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+      "읽을 권한이 없는 파일은 불러오기 전에 걸러 낸다 (불러오면 서버 프로세스가 죽는다)",
+      async () => {
+        const modelDir = await writeModelFiles();
+        const onnx = path.join(modelDir, "onnx/model_quantized.onnx");
+        await fs.chmod(onnx, 0o000);
+        try {
+          const error = await new LocalEmbedder().initialize().catch((e: unknown) => e);
+          expect(error).toBeInstanceOf(UserFacingError);
+          expect((error as Error).message).toMatch(DAMAGED);
+        } finally {
+          await fs.chmod(onnx, 0o644);
+        }
+      },
+    );
+
+    // 잘린 가중치 파일: 설정·토크나이저는 실제 모델의 것을 써야 해서 모델이 있을 때만 돈다
+    it.skipIf(!hasEmbeddingModel())(
+      "불러오기에 실패한 모델은 다시 불러오지 않고 같은 안내를 돌려준다 (다시 불러오면 서버가 멈춘다)",
+      async () => {
+        const realDir = path.join(savedModelPath, EMBEDDING_MODEL_ID);
+        const modelDir = path.join(tmpDir, EMBEDDING_MODEL_ID);
+        await fs.ensureDir(path.join(modelDir, "onnx"));
+        for (const file of MODEL_FILES.slice(0, 3)) {
+          await fs.copyFile(path.join(realDir, file), path.join(modelDir, file));
+        }
+        // 가중치 파일의 앞 1MB 만 남긴다 (내려받다가 끊긴 파일)
+        const head = Buffer.alloc(1024 * 1024);
+        const fd = await fs.open(path.join(realDir, "onnx/model_quantized.onnx"), "r");
+        await fs.read(fd, head, 0, head.length, 0);
+        await fs.close(fd);
+        await fs.writeFile(path.join(modelDir, "onnx/model_quantized.onnx"), head);
+
+        const embedder = new LocalEmbedder();
+        const first = await embedder.initialize().catch((e: unknown) => e);
+        expect(first).toBeInstanceOf(UserFacingError);
+        expect((first as Error).message).toMatch(DAMAGED);
+
+        const startedAt = Date.now();
+        const second = await embedder.embed("게시판", "query").catch((e: unknown) => e);
+        expect(second).toBeInstanceOf(UserFacingError);
+        expect((second as Error).message).toMatch(DAMAGED);
+        expect(Date.now() - startedAt).toBeLessThan(1000);
+      },
+      60_000,
+    );
   });
 
   it.skipIf(!hasEmbeddingModel())(
