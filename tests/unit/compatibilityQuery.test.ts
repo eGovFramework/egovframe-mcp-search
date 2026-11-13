@@ -7,7 +7,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { SQLiteManager } from "../../src/database/sqliteManager.js";
-import { CATALOGUE, DATED, versionsOf } from "./_compatibilityFixture.js";
+import { CATALOGUE, DATED, SAME_DAY, versionsOf } from "./_compatibilityFixture.js";
+import { orderByClausesOf } from "./_sqlStatements.js";
 import fs from "fs-extra";
 import path from "node:path";
 import os from "node:os";
@@ -487,6 +488,69 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       // 날짜 꼴인 두 행이 먼저(최근 순), 나머지는 그 뒤에 문자열 내림차순으로 온다
       const result = sqlite.queryCompatibleSoftware({ filters: { category: "Shape Check" } });
       expect(versionsOf(result.rows)).toEqual(["Shape plain", "Shape suffix", "Shape short", "Shape dots"]);
+    });
+  });
+
+  describe("확인일자가 같은 행의 순서 (id 순)", () => {
+    // SAME_DAY 는 확인일자가 같은 네 행이고, 적재 순서(id 순)는 A, B, C, D 다.
+    // 호환 레벨이 적재 순서와 엇갈려 있어(2, 1, 2, 1), minLevel 필터를 주면 SQLite 가 호환 레벨 인덱스를 따라
+    // B, D, A, C 순으로 행을 읽는다. 정렬의 마지막 기준(id)이 없으면 읽은 순서가 그대로 결과가 된다.
+    const BY_ID = ["Tied A 1.0", "Tied B 1.0", "Tied C 1.0", "Tied D 1.0"];
+
+    beforeEach(() => {
+      sqlite.addCompatibilitySoftwareBatch(SAME_DAY);
+    });
+
+    it("필터 조회는 확인일자가 같은 행을 id 순으로 돌려준다", () => {
+      const filters = { minLevel: 1 as const, category: "Tie Check" };
+      const result = sqlite.queryCompatibleSoftware({ filters });
+      expect(new Set(result.rows.map((row) => row.verified_date))).toEqual(new Set(["2024-07-07"]));
+      expect(versionsOf(result.rows)).toEqual(BY_ID);
+      // 한 건씩 페이지를 넘겨도 같은 순서다
+      const paged = [0, 1, 2, 3].flatMap(
+        (offset) => sqlite.queryCompatibleSoftware({ filters, limit: 1, offset }).rows,
+      );
+      expect(versionsOf(paged)).toEqual(BY_ID);
+      // 배열을 돌려주는 메서드도 같다
+      expect(versionsOf(sqlite.searchCompatibleSoftware(filters))).toEqual(BY_ID);
+    });
+
+    it("접두 일치 검색은 검색 순위와 확인일자가 같은 행을 id 순으로 돌려준다", () => {
+      const result = sqlite.queryCompatibleSoftware({ query: "Tied", filters: { minLevel: 1 } });
+      expect(result.matchMode).toBe("all-terms");
+      expect(versionsOf(result.rows)).toEqual(BY_ID);
+      const paged = [0, 1, 2, 3].flatMap(
+        (offset) => sqlite.queryCompatibleSoftware({ query: "Tied", filters: { minLevel: 1 }, limit: 1, offset }).rows,
+      );
+      expect(versionsOf(paged)).toEqual(BY_ID);
+      expect(versionsOf(sqlite.fullTextSearchCompatibility("Tied"))).toEqual(BY_ID);
+    });
+
+    it("부분 일치 대체 검색은 일치한 검색어 수와 확인일자가 같은 행을 id 순으로 돌려준다", () => {
+      const result = sqlite.queryCompatibleSoftware({ query: "ied", filters: { minLevel: 1 } });
+      expect(result.matchMode).toBe("any-term");
+      expect(versionsOf(result.rows)).toEqual(BY_ID);
+      const paged = [0, 1, 2, 3].flatMap(
+        (offset) => sqlite.queryCompatibleSoftware({ query: "ied", filters: { minLevel: 1 }, limit: 1, offset }).rows,
+      );
+      expect(versionsOf(paged)).toEqual(BY_ID);
+    });
+
+    it("행을 돌려주는 조회 문은 세 경로 모두 정렬의 마지막 기준으로 id 를 둔다", () => {
+      // 지금의 SQLite 는 정렬 기준이 모두 같은 행을 읽은 순서대로 내고, 접두 일치 검색에서는 FTS5 가 행을
+      // rowid(= id) 순으로 읽는다. 그래서 그 경로는 id 기준을 빼도 결과가 달라지지 않아, 위 테스트처럼 결과만
+      // 봐서는 빠진 것을 알 수 없다. SQL 은 정렬 기준이 같은 행의 순서를 보장하지 않으므로, 실행한 문에
+      // id 기준이 있는지를 직접 확인한다.
+      const paths: Array<[string, () => unknown]> = [
+        ["필터 조회", () => sqlite.queryCompatibleSoftware({ filters: { category: "Tie Check" } })],
+        ["접두 일치 검색", () => sqlite.queryCompatibleSoftware({ query: "Tied" })],
+        ["부분 일치 대체 검색", () => sqlite.queryCompatibleSoftware({ query: "ied" })],
+      ];
+      for (const [name, run] of paths) {
+        const clauses = orderByClausesOf(sqlite, run);
+        expect(clauses, name).toHaveLength(1);
+        expect(clauses[0], name).toMatch(/, cs\.id(?: ASC)? LIMIT \? OFFSET \?$/);
+      }
     });
   });
 

@@ -127,6 +127,13 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
       }
     });
 
+    it("카테고리 이름, 컴포넌트 이름 순으로 돌려준다 (적재 순서가 아니다)", () => {
+      // 적재 순서는 uia, sec, bbs, tpl, ram, drm, bst, cmm 이다
+      const BY_NAME = ["bbs", "tpl", "cmm", "sec", "uia", "ram", "drm", "bst"];
+      expect(idsOf(listCommonComponents().components)).toEqual(BY_NAME);
+      expect(idsOf(listCommonComponents({ version: "4.3.1" }, 3).components)).toEqual(["bbs", "tpl", "sec"]);
+    });
+
     it("limit 을 주면 그만큼만 돌려주고 total 로 전체 건수를 알린다", () => {
       const listed = listCommonComponents({ version: "4.3.1" }, 2);
       expect(listed.components).toHaveLength(2);

@@ -8,6 +8,9 @@
  * - 카테고리 '역할/권한관리' 는 ID('역할-권한관리')와 이름이 다르다.
  * - 영문명 'Authority Management' 는 두 컴포넌트(ram, drm)가 함께 쓴다.
  * - cmm 의 설명에는 줄바꿈과 '|' 가 들어 있다.
+ * - 적재 순서(uia, sec, bbs, tpl, ram, drm, bst, cmm)는 목록의 정렬(카테고리 이름 → 컴포넌트 이름)과 다르다.
+ *   카테고리 이름 순은 게시판 < 공통 < 로그인 < 역할/권한관리 < 통계 이고, 로그인 안에서는 이름 순
+ *   ('인증서로그인' < '일반로그인')이 적재 순서(uia, sec)와 반대다.
  */
 import type { SQLiteManager } from "../../src/database/sqliteManager.js";
 

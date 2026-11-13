@@ -110,6 +110,27 @@ export const DATED: SoftwareSeed[] = [
   dated("Url", "https://vendor.example"),
 ];
 
+/**
+ * 확인일자가 같은 행. CATALOGUE 에 넣지 않고, 필요한 테스트가 따로 적재한다.
+ *
+ * - 네 행의 확인일자가 같고 컬럼마다 낱말 수도 같아, "Tied" 로 찾으면 검색 순위(rank)까지 같다.
+ * - 호환 레벨이 적재 순서(A, B, C, D)와 엇갈린다 (2, 1, 2, 1). minLevel 필터를 주면 SQLite 가 호환 레벨
+ *   인덱스 순서(레벨 1 → 2)로 행을 읽으므로, 정렬에 id 기준이 없으면 B, D, A, C 순으로 나온다.
+ * - "ied" 는 'Tied' 의 중간이라 접두 일치로는 찾을 수 없고, 이 네 행에만 들어 있다.
+ */
+export const SAME_DAY: SoftwareSeed[] = ["A", "B", "C", "D"].map(
+  (suffix, index): SoftwareSeed => ({
+    product_name: `Tied ${suffix}`,
+    product_version: `Tied ${suffix} 1.0`,
+    framework_version: "4.1",
+    category: "Tie Check",
+    compatibility_level: index % 2 === 0 ? 2 : 1,
+    vendor: "동률벤더",
+    verified_date: "2024-07-07",
+    description: "확인일자 동률용",
+  }),
+);
+
 /** 행을 구분하기 쉬운 값(product_version)만 뽑는다. */
 export const versionsOf = (rows: Array<{ product_version: string }>): string[] =>
   rows.map((row) => row.product_version);

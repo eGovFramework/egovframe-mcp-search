@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { SQLiteManager } from "../../src/database/sqliteManager.js";
 import { COMPONENTS, idsOf, seedComponents } from "./_componentFixture.js";
+import { orderByClausesOf } from "./_sqlStatements.js";
 import fs from "fs-extra";
 import path from "node:path";
 import os from "node:os";
@@ -386,6 +387,94 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
       expect(idsOf(result.rows).sort()).toEqual(["drm", "ram"]);
       expect(idsOf(sqlite.searchComponents("관리", 20, { categoryId: "bbs" }))).toEqual(["tpl"]);
       expect(idsOf(sqlite.getCommonComponents({ categoryId: "Login" })).sort()).toEqual(["sec", "uia"]);
+    });
+  });
+
+  describe("필터 목록의 정렬 (카테고리 이름 → 컴포넌트 이름 → id)", () => {
+    // 적재 순서(id 순)는 uia, sec, bbs, tpl, ram, drm, bst, cmm 이다.
+    // 카테고리 이름 순은 게시판 < 공통 < 로그인 < 역할/권한관리 < 통계 이고,
+    // 로그인 안에서는 이름 순('인증서로그인' < '일반로그인')이 적재 순서(uia, sec)와 반대다.
+    const BY_NAME = ["bbs", "tpl", "cmm", "sec", "uia", "ram", "drm", "bst"];
+
+    it("카테고리 이름, 컴포넌트 이름 순으로 돌려준다 (적재 순서가 아니다)", () => {
+      expect(idsOf(COMPONENTS)).toEqual(["uia", "sec", "bbs", "tpl", "ram", "drm", "bst", "cmm"]);
+      expect(idsOf(sqlite.queryComponents().rows)).toEqual(BY_NAME);
+      expect(idsOf(sqlite.getCommonComponents())).toEqual(BY_NAME);
+    });
+
+    it("필터나 limit 을 줘도 같은 순서에서 고른다", () => {
+      expect(idsOf(sqlite.queryComponents({ filters: { version: "4.3.1" } }).rows)).toEqual([
+        "bbs",
+        "tpl",
+        "sec",
+        "uia",
+        "ram",
+        "drm",
+      ]);
+      expect(idsOf(sqlite.queryComponents({ filters: { categoryId: "로그인" } }).rows)).toEqual(["sec", "uia"]);
+      expect(idsOf(sqlite.queryComponents({ filters: { keyword: "로그인" } }).rows)).toEqual(["sec", "uia"]);
+      expect(idsOf(sqlite.queryComponents({ filters: { hasWeb: true }, limit: 4 }).rows)).toEqual([
+        "bbs",
+        "tpl",
+        "sec",
+        "uia",
+      ]);
+      // 적재 순서는 bst, cmm 이다
+      expect(idsOf(sqlite.getCommonComponents({ version: "5.0.0" }))).toEqual(["cmm", "bst"]);
+    });
+
+    it("카테고리는 ID 가 아니라 이름으로 정렬한다", () => {
+      // ID('가-기타')로는 맨 앞이지만 이름('기타')으로는 공통과 로그인 사이인 카테고리
+      sqlite.addComponentCategoriesBatch([
+        { category_id: "가-기타", name: "기타", name_en: "Etc", description: undefined, description_en: undefined },
+      ]);
+      sqlite.addCommonComponentsBatch([
+        {
+          ...COMPONENTS[7],
+          component_id: "etc",
+          name: "기타 도구",
+          category_id: "가-기타",
+          package_name: "egovframework.com.etc",
+        },
+      ]);
+      expect(idsOf(sqlite.queryComponents().rows)).toEqual([
+        "bbs",
+        "tpl",
+        "cmm",
+        "etc",
+        "sec",
+        "uia",
+        "ram",
+        "drm",
+        "bst",
+      ]);
+    });
+
+    it("카테고리와 이름이 모두 같은 컴포넌트는 id(적재) 순으로 돌려준다", () => {
+      // 이름이 '게시판' 인 컴포넌트를 두 개 더, 컴포넌트 ID 의 역순으로 적재한다
+      sqlite.addCommonComponentsBatch([
+        { ...COMPONENTS[2], component_id: "bbs-z", package_name: "egovframework.com.cop.bbs.z" },
+        { ...COMPONENTS[2], component_id: "bbs-a", package_name: "egovframework.com.cop.bbs.a" },
+      ]);
+      const result = sqlite.queryComponents({ filters: { categoryId: "게시판" } });
+      expect(result.rows.map((row) => row.name)).toEqual(["게시판", "게시판", "게시판", "게시판 템플릿"]);
+      expect(idsOf(result.rows)).toEqual(["bbs", "bbs-z", "bbs-a", "tpl"]);
+    });
+
+    it("행을 돌려주는 조회 문은 세 경로 모두 정렬의 마지막 기준으로 id 를 둔다", () => {
+      // 지금의 SQLite 는 정렬 기준이 모두 같은 행을 읽은 순서대로 내고, 컴포넌트 표는 id 순으로 읽힌다.
+      // 그래서 id 기준을 빼도 결과가 달라지지 않아, 위 테스트처럼 결과만 봐서는 빠진 것을 알 수 없다.
+      // SQL 은 정렬 기준이 같은 행의 순서를 보장하지 않으므로, 실행한 문에 id 기준이 있는지를 직접 확인한다.
+      const paths: Array<[string, () => unknown]> = [
+        ["필터 목록", () => sqlite.queryComponents({ filters: { categoryId: "게시판" } })],
+        ["접두 일치 검색", () => sqlite.queryComponents({ query: "게시판" })],
+        ["부분 일치 대체 검색", () => sqlite.queryComponents({ query: "시판" })],
+      ];
+      for (const [name, run] of paths) {
+        const clauses = orderByClausesOf(sqlite, run);
+        expect(clauses, name).toHaveLength(1);
+        expect(clauses[0], name).toMatch(/, c\.id(?: ASC)? LIMIT \? OFFSET \?$/);
+      }
     });
   });
 
