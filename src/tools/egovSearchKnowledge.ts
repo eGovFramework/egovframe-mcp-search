@@ -879,9 +879,9 @@ function formatComponentListLookup(
 
   if (query) {
     const limit = resolveLimit(args, "components", options);
-    const { results, total, matchMode } = searchComponents(query, limit.value, listFilters);
+    const { results, total, matchMode, ignoredTerms } = searchComponents(query, limit.value, listFilters);
     return withNotes(
-      formatComponentList(results, false, { total, matchMode }),
+      formatComponentList(results, false, { total, matchMode, ignoredTerms }),
       limit.note,
       ...(total === 0 ? unknownComponentFilterNotes(listFilters) : []),
       ignoredFiltersNote(filters, COMPONENT_LIST_FILTER_KEYS, options),

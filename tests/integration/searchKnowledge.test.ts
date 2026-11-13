@@ -756,12 +756,22 @@ describe("integration — egov_search_knowledge 공통컴포넌트 조회", () =
     expect(res.text).toMatch(/공통컴포넌트 목록 \(\d+개 중 2개 표시\)/);
   });
 
-  it("낱말 접두 일치로 찾지 못해 부분 일치로 찾은 결과는 그 사실을 알린다", async () => {
-    // '증서' 로 시작하는 낱말은 없고 '인증서로그인' 의 가운데에만 있다
+  it("낱말의 가운데에 든 검색어로도 찾는다", async () => {
+    // '증서' 는 '인증서로그인' 의 가운데에만 있다. 모든 검색어가 일치했으므로 대체 검색 안내는 붙지 않는다
     const res = await search({ scope: "components", query: "증서" });
     expect(res.isError).toBe(false);
     expect(res.text).toContain("`sec`");
-    expect(res.text).toContain("일부 검색어만 일치");
+    expect(res.text).not.toContain("모든 검색어가 들어 있는 항목이 없어");
+  });
+
+  it("모든 검색어가 든 컴포넌트가 없으면 대체 검색으로 찾았다는 것과 쓰지 않은 낱말을 알린다", async () => {
+    const res = await search({ scope: "components", query: "게시판 템플릿 없는낱말" });
+    expect(res.isError).toBe(false);
+    expect(res.text).toContain("`tpl`");
+    expect(res.text).toContain("모든 검색어가 들어 있는 항목이 없어");
+    const ignored = res.text.split("\n").find((line) => line.includes("검색에 쓰지 않은 낱말")) ?? "";
+    expect(ignored).toContain("없는낱말");
+    expect(ignored).not.toContain("게시판");
   });
 
   it("검색어를 추출할 수 없는 query 는 없는 것으로 보고 필터 목록을 돌려준다", async () => {
