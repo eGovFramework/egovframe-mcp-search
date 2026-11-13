@@ -129,9 +129,11 @@ export interface ComponentSummary {
 
 // 의존성 해결 결과
 export interface DependencyResolution {
-  requested: string[];        // 요청한 컴포넌트들
+  requested: string[];        // 요청한 컴포넌트들 (해석된 컴포넌트 ID, 중복 없음)
   resolved: string[];         // 의존성 포함 전체 목록
-  added: string[];            // 자동 추가된 의존성들
+  added: string[];            // 자동 추가된 의존성들 (요청한 컴포넌트는 들어가지 않는다)
   packages: string[];         // 패키지명 목록
+  notFound: string[];         // 컴포넌트 ID 나 패키지명으로 해석하지 못한 입력
+  unresolvedPackages: string[]; // 의존 대상이지만 컴포넌트 행이 없는 패키지
 }
 

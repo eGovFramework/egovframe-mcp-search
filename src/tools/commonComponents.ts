@@ -321,31 +321,58 @@ export function formatComponentInfo(
   return output;
 }
 
+/** 항목을 한 줄에 하나씩 나열한다. 비어 있으면 '없음' 을 적는다. */
+function formatBulletList(items: string[]): string {
+  return items.length > 0 ? items.map(item => `- ${item}`).join('\n') : '없음';
+}
+
 /**
  * 결과 포맷팅 - 의존성 해결 결과
+ *
+ * 해석하지 못한 입력(notFound)과 컴포넌트 정보가 없는 의존 패키지(unresolvedPackages)는
+ * 있을 때만 출력한다.
  */
 export function formatDependencyResolution(resolution: DependencyResolution): string {
   let output = '## 의존성 해결 결과\n\n';
-  
+
   output += `### 요청한 컴포넌트 (${resolution.requested.length}개)\n\n`;
-  output += resolution.requested.map(id => `- ${id}`).join('\n');
+  output += formatBulletList(resolution.requested);
   output += '\n\n';
-  
-  if (resolution.added.length > 0) {
-    output += `### 자동 추가된 의존성 (${resolution.added.length}개)\n\n`;
-    output += resolution.added.map(id => `- ${id}`).join('\n');
+
+  if (resolution.notFound.length > 0) {
+    output += `### 찾을 수 없는 입력 (${resolution.notFound.length}개)\n\n`;
+    output += '컴포넌트 ID 나 패키지명과 일치하지 않아 결과에 넣지 않았습니다.\n\n';
+    output += formatBulletList(resolution.notFound.map(input => input.replace(/\s+/g, ' ')));
     output += '\n\n';
   }
-  
+
+  if (resolution.added.length > 0) {
+    output += `### 자동 추가된 의존성 (${resolution.added.length}개)\n\n`;
+    output += formatBulletList(resolution.added);
+    output += '\n\n';
+  }
+
   output += `### 전체 필요 컴포넌트 (${resolution.resolved.length}개)\n\n`;
-  output += resolution.resolved.map(id => `- ${id}`).join('\n');
+  output += formatBulletList(resolution.resolved);
   output += '\n\n';
-  
+
   output += `### 필요 패키지 목록 (${resolution.packages.length}개)\n\n`;
-  output += '```\n';
-  output += resolution.packages.join('\n');
-  output += '\n```\n';
-  
+  if (resolution.packages.length > 0) {
+    output += '```\n';
+    output += resolution.packages.join('\n');
+    output += '\n```\n';
+  } else {
+    output += '없음\n';
+  }
+
+  if (resolution.unresolvedPackages.length > 0) {
+    output += `\n### 컴포넌트 정보가 없는 의존 패키지 (${resolution.unresolvedPackages.length}개)\n\n`;
+    output += '의존 대상으로 적혀 있지만 컴포넌트 목록에 없어, 위 목록에 넣지 못한 패키지입니다.\n\n';
+    output += '```\n';
+    output += resolution.unresolvedPackages.join('\n');
+    output += '\n```\n';
+  }
+
   return output;
 }
 

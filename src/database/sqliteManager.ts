@@ -934,58 +934,67 @@ export class SQLiteManager {
 
   /**
    * 의존성 해결 (선택한 컴포넌트들의 모든 의존성 포함)
+   *
+   * 입력은 컴포넌트 ID 또는 패키지명이다. 앞뒤 공백을 떼고 중복을 없앤 뒤 먼저 컴포넌트 ID 로
+   * 해석한다. 해석하지 못한 입력은 notFound 로, 의존 대상으로 적혀 있지만 컴포넌트 행이 없는
+   * 패키지는 unresolvedPackages 로 돌려준다.
    */
   resolveDependencies(componentIds: string[]): DependencyResolution {
-    const resolved = new Set<string>();
-    const packages = new Set<string>();
-    const queue = [...componentIds];
-
-    while (queue.length > 0) {
-      const compId = queue.shift()!;
-      if (resolved.has(compId)) continue;
-
-      const component = this.getComponentById(compId);
-      if (!component) {
-        // 패키지명으로도 시도
-        const byPkg = this.getComponentByPackage(compId);
-        if (byPkg) {
-          resolved.add(byPkg.component_id);
-          packages.add(byPkg.package_name);
-          const deps = this.getComponentDependencies(byPkg.component_id);
-          for (const dep of deps) {
-            if (!packages.has(dep)) {
-              const depComp = this.getComponentByPackage(dep);
-              if (depComp && !resolved.has(depComp.component_id)) {
-                queue.push(depComp.component_id);
-              }
-            }
-          }
-        }
+    // 1) 입력을 컴포넌트 ID 로 해석한다
+    const requested: string[] = [];
+    const notFound: string[] = [];
+    for (const input of new Set(componentIds.map((value) => trimFilter(value)))) {
+      if (!input) {
         continue;
       }
+      const component = this.getComponentById(input) ?? this.getComponentByPackage(input);
+      if (!component) {
+        notFound.push(input);
+      } else if (!requested.includes(component.component_id)) {
+        requested.push(component.component_id);
+      }
+    }
 
-      resolved.add(compId);
-      packages.add(component.package_name);
+    // 2) 요청한 컴포넌트에서 출발해 의존 패키지를 따라간다
+    const resolved = new Set<string>();
+    const packages = new Set<string>();
+    const unresolvedPackages = new Set<string>();
+    const queue = [...requested];
 
-      // 의존성 추가
-      const deps = this.getComponentDependencies(compId);
-      for (const dep of deps) {
-        if (!packages.has(dep)) {
-          const depComp = this.getComponentByPackage(dep);
-          if (depComp && !resolved.has(depComp.component_id)) {
-            queue.push(depComp.component_id);
-          }
+    while (queue.length > 0) {
+      const componentId = queue.shift()!;
+      if (resolved.has(componentId)) continue;
+
+      const component = this.getComponentById(componentId);
+      if (!component) continue;
+
+      resolved.add(component.component_id);
+      if (component.package_name) {
+        packages.add(component.package_name);
+      }
+
+      for (const dependency of this.getComponentDependencies(component.component_id)) {
+        if (packages.has(dependency)) continue;
+
+        const dependencyComponent = this.getComponentByPackage(dependency);
+        if (!dependencyComponent) {
+          unresolvedPackages.add(dependency);
+        } else if (!resolved.has(dependencyComponent.component_id)) {
+          queue.push(dependencyComponent.component_id);
         }
       }
     }
 
-    const added = [...resolved].filter(id => !componentIds.includes(id));
+    // 자동 추가분은 호출자가 넘긴 문자열이 아니라 해석된 요청 ID 를 기준으로 가린다
+    const added = [...resolved].filter((id) => !requested.includes(id));
 
     return {
-      requested: componentIds,
+      requested,
       resolved: [...resolved],
       added,
       packages: [...packages],
+      notFound,
+      unresolvedPackages: [...unresolvedPackages],
     };
   }
 

@@ -215,6 +215,70 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     });
   });
 
+  describe("resolveDependencies", () => {
+    it("요청한 컴포넌트와 그 의존 컴포넌트를 모두 모은다", () => {
+      const resolution = sqlite.resolveDependencies(["uia"]);
+      expect(resolution.requested).toEqual(["uia"]);
+      expect(resolution.resolved).toEqual(["uia", "cmm", "ram", "drm"]);
+      expect(resolution.added).toEqual(["cmm", "ram", "drm"]);
+      expect(resolution.packages).toEqual([
+        "egovframework.com.uat.uia",
+        "egovframework.com.cmm",
+        "egovframework.com.sec.ram",
+        "egovframework.com.sec.drm",
+      ]);
+      expect(resolution.notFound).toEqual([]);
+      expect(resolution.unresolvedPackages).toEqual([]);
+    });
+
+    it("패키지명으로 요청한 컴포넌트를 자동 추가된 의존성으로 세지 않는다", () => {
+      const resolution = sqlite.resolveDependencies(["egovframework.com.uat.uia"]);
+      expect(resolution.requested).toEqual(["uia"]);
+      expect(resolution.added).toEqual(["cmm", "ram", "drm"]);
+    });
+
+    it("입력의 앞뒤 공백을 떼고, 같은 컴포넌트를 가리키는 입력은 한 번만 센다", () => {
+      const resolution = sqlite.resolveDependencies(["uia", " uia", "UIA", "egovframework.com.uat.uia", "", "  "]);
+      expect(resolution.requested).toEqual(["uia"]);
+      expect(resolution.resolved).toEqual(["uia", "cmm", "ram", "drm"]);
+      expect(resolution.notFound).toEqual([]);
+    });
+
+    it("해석하지 못한 입력은 notFound 로 돌려준다", () => {
+      const mixed = sqlite.resolveDependencies(["nonexistent", "uia", " nonexistent ", "게시판"]);
+      expect(mixed.requested).toEqual(["uia"]);
+      // 이름으로는 해석하지 않는다 (ID 또는 패키지명만)
+      expect(mixed.notFound).toEqual(["nonexistent", "게시판"]);
+
+      const none = sqlite.resolveDependencies(["nonexistent"]);
+      expect(none).toEqual({
+        requested: [],
+        resolved: [],
+        added: [],
+        packages: [],
+        notFound: ["nonexistent"],
+        unresolvedPackages: [],
+      });
+    });
+
+    it("요청한 컴포넌트끼리 의존하면 자동 추가된 의존성에 넣지 않는다", () => {
+      const resolution = sqlite.resolveDependencies(["uia", "ram"]);
+      expect(resolution.requested).toEqual(["uia", "ram"]);
+      expect(resolution.added.sort()).toEqual(["cmm", "drm"]);
+    });
+
+    it("의존 패키지 가운데 컴포넌트 행이 없는 것은 unresolvedPackages 로 돌려준다", () => {
+      const resolution = sqlite.resolveDependencies(["bbs"]);
+      expect(resolution.resolved).toEqual(["bbs", "cmm", "tpl"]);
+      expect(resolution.packages).toEqual([
+        "egovframework.com.cop.bbs",
+        "egovframework.com.cmm",
+        "egovframework.com.cop.tpl",
+      ]);
+      expect(resolution.unresolvedPackages).toEqual(["egovframework.com.missing.pkg"]);
+    });
+  });
+
   describe("categoryId 필터", () => {
     const inCategory = (categoryId: string) => idsOf(sqlite.queryComponents({ filters: { categoryId } }).rows).sort();
 

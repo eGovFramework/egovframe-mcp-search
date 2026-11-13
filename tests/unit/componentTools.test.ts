@@ -31,8 +31,10 @@ vi.mock("../../src/utils/dataPaths.js", async (importOriginal) => {
 import {
   formatCategoryList,
   formatComponentList,
+  formatDependencyResolution,
   getComponentInfo,
   listCommonComponents,
+  resolveDependencies,
   searchComponents,
 } from "../../src/tools/commonComponents.js";
 
@@ -99,6 +101,16 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
       const none = getComponentInfo("zzz-없는-컴포넌트");
       expect(none.component).toBeNull();
       expect(none.suggestions).toEqual([]);
+    });
+  });
+
+  describe("resolveDependencies", () => {
+    it("ID·패키지명을 가리지 않고 해석하고, 해석하지 못한 입력과 컴포넌트 없는 패키지를 알린다", () => {
+      const resolution = resolveDependencies(["BBS", "nonexistent"]);
+      expect(resolution.requested).toEqual(["bbs"]);
+      expect(resolution.added).toEqual(["cmm", "tpl"]);
+      expect(resolution.notFound).toEqual(["nonexistent"]);
+      expect(resolution.unresolvedPackages).toEqual(["egovframework.com.missing.pkg"]);
     });
   });
 
@@ -201,6 +213,65 @@ describe("공통컴포넌트 도구 — 결과 포맷", () => {
       const columns = tableLines.map((line) => line.split("|").length);
       expect(tableLines).toHaveLength(CATEGORIES.length + 2);
       expect(new Set(columns).size).toBe(1);
+    });
+  });
+
+  describe("formatDependencyResolution", () => {
+    const resolution = {
+      requested: ["bbs"],
+      resolved: ["bbs", "cmm", "tpl"],
+      added: ["cmm", "tpl"],
+      packages: ["egovframework.com.cop.bbs", "egovframework.com.cmm", "egovframework.com.cop.tpl"],
+      notFound: [] as string[],
+      unresolvedPackages: [] as string[],
+    };
+
+    it("제목과 기존 섹션을 유지한다", () => {
+      const text = formatDependencyResolution(resolution);
+      expect(text).toContain("## 의존성 해결 결과");
+      expect(text).toContain("### 요청한 컴포넌트 (1개)\n\n- bbs\n");
+      expect(text).toContain("### 자동 추가된 의존성 (2개)\n\n- cmm\n- tpl\n");
+      expect(text).toContain("### 전체 필요 컴포넌트 (3개)\n\n- bbs\n- cmm\n- tpl\n");
+      expect(text).toContain("### 필요 패키지 목록 (3개)");
+      expect(text).toContain("egovframework.com.cop.bbs\negovframework.com.cmm\negovframework.com.cop.tpl");
+    });
+
+    it("두 목록이 비어 있으면 해당 섹션을 출력하지 않는다", () => {
+      const text = formatDependencyResolution(resolution);
+      expect(text).not.toContain("찾을 수 없는");
+      expect(text).not.toContain("컴포넌트 정보가 없는");
+    });
+
+    it("해석하지 못한 입력(notFound)이 있으면 출력한다", () => {
+      const text = formatDependencyResolution({ ...resolution, notFound: ["nonexistent", "게시판"] });
+      expect(text).toContain("찾을 수 없는 입력 (2개)");
+      expect(text).toContain("- nonexistent\n- 게시판\n");
+    });
+
+    it("컴포넌트 행이 없는 의존 패키지(unresolvedPackages)가 있으면 출력한다", () => {
+      const text = formatDependencyResolution({
+        ...resolution,
+        unresolvedPackages: ["egovframework.com.missing.pkg"],
+      });
+      expect(text).toContain("컴포넌트 정보가 없는 의존 패키지 (1개)");
+      expect(text).toContain("egovframework.com.missing.pkg");
+    });
+
+    it("하나도 해석하지 못했으면 빈 목록 대신 '없음' 을 적는다", () => {
+      const text = formatDependencyResolution({
+        requested: [],
+        resolved: [],
+        added: [],
+        packages: [],
+        notFound: ["nonexistent"],
+        unresolvedPackages: [],
+      });
+      expect(text).toContain("## 의존성 해결 결과");
+      expect(text).toContain("### 요청한 컴포넌트 (0개)\n\n없음\n");
+      expect(text).toContain("### 전체 필요 컴포넌트 (0개)\n\n없음\n");
+      expect(text).toContain("### 필요 패키지 목록 (0개)\n\n없음\n");
+      expect(text).toContain("- nonexistent");
+      expect(text).not.toContain("```\n\n```");
     });
   });
 
