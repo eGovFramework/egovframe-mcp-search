@@ -44,7 +44,7 @@ export interface KnowledgeSearchResult {
   context?: string;
   tags: string[];
   importance: number;
-  score: number;  // 유사도 점수 (거리)
+  score: number;  // 코사인 거리 (낮을수록 유사, 1 - score 가 코사인 유사도)
   createdAt: string;
   metadata: Record<string, any>;
 }

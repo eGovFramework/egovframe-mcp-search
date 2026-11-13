@@ -10,6 +10,14 @@ import {
 } from '../types/knowledge.js';
 
 /**
+ * 검색 결과의 score(코사인 거리)를 코사인 유사도로 바꾼다.
+ * 소수 셋째 자리로 반올림한 숫자를 돌려준다 (문자열이 아니다).
+ */
+function toSimilarity(score: number): number {
+  return Math.round((1 - score) * 1000) / 1000;
+}
+
+/**
  * 지식 검색 (통합)
  * - query + scope="knowledge" → 시맨틱 검색 (기본)
  * - query + sort="recent" → 최근 추가 순 조회
@@ -105,7 +113,7 @@ export async function searchKnowledge(args: {
       context: r.context,
       tags: r.tags,
       importance: r.importance,
-      similarity: (1 - r.score).toFixed(3),
+      similarity: toSimilarity(r.score),
       createdAt: r.createdAt,
     })),
   };
@@ -191,7 +199,7 @@ export async function smartSearch(args: {
       content: k.content.substring(0, 200) + (k.content.length > 200 ? '...' : ''),
       tags: k.tags,
       importance: k.importance,
-      similarity: (1 - k.score).toFixed(3),
+      similarity: toSimilarity(k.score),
     })),
   };
 }

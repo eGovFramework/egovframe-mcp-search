@@ -321,9 +321,12 @@ export class DeveloperKnowledgeManager {
     // 동봉 테이블의 IVF_PQ 인덱스는 기본 설정으로 일부 파티션만 훑어, 필터(where)에 맞는 행이
     // 있어도 0건이나 limit 미만을 돌려주고 가장 가까운 행을 놓친다. 약 1.8만 행 규모에서는
     // 전수 검색이 인덱스 검색과 지연 시간이 같다. where 는 사전 필터라 조건에 맞는 행 안에서 limit 건을 채운다.
+    // 거리는 코사인 거리로 계산한다 (기본값 l2 는 제곱 유클리드 거리라 1 - 거리가 유사도가 되지 않는다).
+    // distanceType 은 전수 검색일 때만 유효하다 — 인덱스(l2 로 학습됨)를 타면 무시된다.
     let searchQuery = this.table
       .vectorSearch(Array.from(queryVector))
       .bypassVectorIndex()
+      .distanceType('cosine')
       .limit(limit * 2); // 태그 필터링을 위해 더 많이 가져옴
     
     if (filters.length > 0) {
@@ -349,7 +352,7 @@ export class DeveloperKnowledgeManager {
       context: r.context,
       tags: this.toArraySafe(r.tags),
       importance: r.importance,
-      score: r._distance,  // 거리 점수 (낮을수록 유사)
+      score: r._distance,  // 코사인 거리 (낮을수록 유사, 1 - score 가 코사인 유사도)
       createdAt: r.createdAt,
       metadata: r.metadata || {},
     }));
