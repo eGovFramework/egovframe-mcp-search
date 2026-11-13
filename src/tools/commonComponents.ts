@@ -16,6 +16,8 @@ import {
   ComponentSearchFilter,
   ComponentSummary,
   DependencyResolution,
+  ComponentQueryResult,
+  KeywordMatchMode,
 } from '../types/database.js';
 
 const currentFile = fileURLToPath(import.meta.url);
@@ -119,31 +121,36 @@ export function getComponentInfo(componentId: string): {
 }
 
 /**
- * 컴포넌트 검색 (전체 텍스트 검색)
+ * 컴포넌트 검색 (키워드 검색)
+ *
+ * 모든 검색어가 일치하는 컴포넌트를 먼저 찾고, 없으면 일부 검색어만 일치하는 컴포넌트를 찾는다.
+ * - total: 일치하는 전체 건수 (results 는 그 가운데 앞에서부터 limit 건)
+ * - matchMode: 결과를 찾은 방식 (all-terms: 모든 검색어 일치, any-term: 일부 검색어만 일치).
+ *   검색어가 하나도 추출되지 않으면 없다.
  */
 export function searchComponents(query: string, limit: number = 20): {
   results: CommonComponent[];
   query: string;
   total: number;
+  matchMode?: KeywordMatchMode;
 } {
   const db = getDB();
-  
+
   // FTS 검색 시도, 실패하면 일반 검색
-  let results: CommonComponent[];
+  let found: ComponentQueryResult;
   try {
-    results = db.searchComponents(query, limit);
+    found = db.queryComponents({ query, limit });
   } catch {
     // FTS 오류 시 일반 검색으로 대체
-    results = db.getCommonComponents({ keyword: query });
-    if (results.length > limit) {
-      results = results.slice(0, limit);
-    }
+    const matched = db.getCommonComponents({ keyword: query });
+    found = { rows: matched.slice(0, limit), total: matched.length };
   }
-  
+
   return {
-    results,
+    results: found.rows,
     query,
-    total: results.length,
+    total: found.total,
+    ...(found.matchMode ? { matchMode: found.matchMode } : {}),
   };
 }
 
@@ -184,17 +191,24 @@ export function formatCategoryList(
 
 /**
  * 결과 포맷팅 - 컴포넌트 목록
+ *
+ * options.matchMode 가 'any-term' 이면 일부 검색어만 일치한 결과임을 제목 아래에 적는다.
  */
 export function formatComponentList(
   components: CommonComponent[],
-  groupByCategory: boolean = true
+  groupByCategory: boolean = true,
+  options: { matchMode?: KeywordMatchMode } = {}
 ): string {
   if (components.length === 0) {
     return '검색 결과가 없습니다.';
   }
-  
+
   let output = `## 공통컴포넌트 목록 (${components.length}개)\n\n`;
-  
+
+  if (options.matchMode === 'any-term') {
+    output += '> 모든 검색어가 일치하는 컴포넌트가 없어, 일부 검색어만 일치하는 컴포넌트를 표시합니다.\n\n';
+  }
+
   if (groupByCategory) {
     // 카테고리별 그룹핑
     const byCategory = new Map<string, CommonComponent[]>();

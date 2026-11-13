@@ -105,6 +105,19 @@ export interface ComponentSearchFilter {
   version?: string;
 }
 
+// 공통컴포넌트 조회 옵션
+export interface ComponentQueryOptions {
+  query?: string;  // 키워드 질의
+  limit?: number;  // 최대 행 수 (생략하면 제한 없음)
+}
+
+// 공통컴포넌트 조회 결과
+export interface ComponentQueryResult {
+  rows: CommonComponent[];  // 앞에서부터 limit 건
+  total: number;  // 조건에 맞는 전체 건수 (limit 적용 전)
+  matchMode?: KeywordMatchMode;  // 키워드 검색을 수행했을 때만 채워진다
+}
+
 // 컴포넌트 요약 통계
 export interface ComponentSummary {
   totalCategories: number;

@@ -24,6 +24,8 @@ import {
   CompatibilityQueryOptions,
   CompatibilityQueryResult,
   CompatibilitySoftwareInfo,
+  ComponentQueryOptions,
+  ComponentQueryResult,
   KeywordMatchMode,
 } from '../types/database.js';
 
@@ -419,6 +421,7 @@ export class SQLiteManager {
     if (match) {
       const from = `FROM ${target.ftsTable} fts
              JOIN ${target.table} ON ${target.rowid} = fts.rowid
+             ${target.joins ?? ''}
              WHERE ${target.ftsTable} MATCH ?${filter.sql}`;
       try {
         const total = (
@@ -497,7 +500,7 @@ export class SQLiteManager {
 
     const matchedTerms = patterns.map(() => `(CASE WHEN ${termMatches} THEN 1 ELSE 0 END)`).join(' + ');
     const matchedTermsParams = patterns.flatMap(bindPattern);
-    const from = `FROM ${target.table} WHERE (${matchedTerms}) >= ?${filter.sql}`;
+    const from = `FROM ${target.table} ${target.joins ?? ''} WHERE (${matchedTerms}) >= ?${filter.sql}`;
     const fromParams = [...matchedTermsParams, required, ...filter.params];
 
     const total = (this.db.prepare(`SELECT COUNT(*) AS count ${from}`).get(...fromParams) as { count: number })
@@ -837,57 +840,29 @@ export class SQLiteManager {
   }
 
   /**
-   * 컴포넌트 전체 텍스트 검색
+   * 컴포넌트 전체 텍스트 검색 — 키워드로 찾은 컴포넌트를 배열로 돌려준다.
+   * 검색 규칙은 queryComponents 와 같다.
    */
   searchComponents(query: string, limit: number = 20): CommonComponent[] {
-    const terms = extractSearchTerms(query);
-    const match = buildFts5MatchQuery(terms);
-    if (!match) {
-      return [];
-    }
-
-    try {
-      return this.db.prepare(`
-      SELECT c.*, cat.name as category_name
-      FROM components_fts fts
-      JOIN common_components c ON c.id = fts.rowid
-      LEFT JOIN component_categories cat ON c.category_id = cat.category_id
-      WHERE components_fts MATCH ?
-      ORDER BY rank
-      LIMIT ?
-    `).all(match, limit) as CommonComponent[];
-    } catch {
-      return this.fallbackComponentKeywordSearch(terms, limit);
-    }
+    return this.queryComponents({ query, limit }).rows;
   }
 
-  private fallbackComponentKeywordSearch(terms: string[], limit: number): CommonComponent[] {
-    const tokens = terms.filter((t) => t.length >= 2).slice(0, 8);
-    if (tokens.length === 0) {
-      return [];
+  /**
+   * 공통컴포넌트 키워드 조회.
+   *
+   * 모든 검색어가 접두 일치하는 컴포넌트를 먼저 찾고(all-terms), 그런 컴포넌트가 없으면
+   * 일부 검색어가 이름·영문명·설명·패키지명에 부분 문자열로 들어 있는 컴포넌트를 찾는다(any-term).
+   * 검색어가 하나도 추출되지 않으면 빈 결과를 돌려준다.
+   *
+   * total 은 일치하는 전체 건수이고, rows 는 그 가운데 앞에서부터 limit 건이다.
+   */
+  queryComponents(options: ComponentQueryOptions = {}): ComponentQueryResult {
+    const terms = extractSearchTerms(options.query ?? '');
+    if (terms.length === 0) {
+      return { rows: [], total: 0 };
     }
-
-    const clause = tokens
-      .map(() => "(c.name LIKE ? ESCAPE '\\' OR c.name_en LIKE ? ESCAPE '\\' OR c.description LIKE ? ESCAPE '\\' OR c.package_name LIKE ? ESCAPE '\\')")
-      .join(' OR ');
-    const params: string[] = [];
-    for (const t of tokens) {
-      const p = `%${escapeLikePattern(t)}%`;
-      params.push(p, p, p, p);
-    }
-
-    return this.db
-      .prepare(
-        `
-        SELECT c.*, cat.name as category_name
-        FROM common_components c
-        LEFT JOIN component_categories cat ON c.category_id = cat.category_id
-        WHERE ${clause}
-        ORDER BY c.component_id
-        LIMIT ?
-      `,
-      )
-      .all(...params, limit) as CommonComponent[];
+    const page: SqlPage = { limit: toSqlLimit(options.limit), offset: 0 };
+    return this.keywordSearch<CommonComponent>(COMPONENT_SEARCH, terms, NO_CONDITION, page);
   }
 
   /**
@@ -1020,12 +995,17 @@ interface SqlCondition {
   params: unknown[];
 }
 
+/** 덧붙일 조건이 없음 */
+const NO_CONDITION: SqlCondition = { sql: '', params: [] };
+
 /** 키워드 검색 대상 하나를 기술하는 SQL 조각. */
 interface KeywordSearchTarget {
   /** 조회할 컬럼 목록 */
   columns: string;
   /** 본 테이블과 별칭. 전체 행 수와 검색어별 일치 행 수도 이 테이블에서 센다 */
   table: string;
+  /** 조회할 컬럼을 채우는 데 필요한 JOIN (행 수를 바꾸지 않는 것만) */
+  joins?: string;
   /** FTS5 테이블 이름 */
   ftsTable: string;
   /** FTS rowid 와 짝이 되는 본 테이블의 키. 정렬의 마지막 기준(동률 해소)으로도 쓴다 */
@@ -1058,6 +1038,16 @@ const COMPATIBILITY_SEARCH: KeywordSearchTarget = {
 
 /** 배열을 돌려주는 기존 메서드용: id 로 행을 구분하는 호출부가 있어 모든 컬럼을 조회한다. */
 const COMPATIBILITY_SEARCH_ALL_COLUMNS: KeywordSearchTarget = { ...COMPATIBILITY_SEARCH, columns: 'cs.*' };
+
+const COMPONENT_SEARCH: KeywordSearchTarget = {
+  columns: 'c.*, cat.name as category_name',
+  table: 'common_components c',
+  joins: 'LEFT JOIN component_categories cat ON c.category_id = cat.category_id',
+  ftsTable: 'components_fts',
+  rowid: 'c.id',
+  likeColumns: ['c.name', 'c.name_en', 'c.description', 'c.package_name'],
+  defaultOrder: 'c.component_id',
+};
 
 /** SQLite 가 허용하는 LIKE 패턴의 최대 길이 (SQLITE_MAX_LIKE_PATTERN_LENGTH 기본값, 바이트). */
 const MAX_LIKE_PATTERN_BYTES = 50000;
