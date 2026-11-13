@@ -159,16 +159,20 @@ export function parseFrontMatter(content: string): { frontmatter: FrontMatter; b
 /**
  * 마크다운 파일을 ## 헤더 기준으로 섹션 분할
  * 긴 섹션(>2000자)은 ### 헤더로 추가 분할
+ *
+ * relativePath 는 가이드 디렉토리 기준 상대 경로다. 구분자를 POSIX(/)로 맞춘 뒤 layer 와
+ * category 를 구하므로, Windows 의 역슬래시 경로가 와도 색인 내용(source, layer, category)이 같다.
  */
 export function chunkMarkdown(
   body: string,
   frontmatter: FrontMatter,
-  filePath: string,  // 상대 경로
+  relativePath: string,
 ): Omit<GuideChunk, 'id' | 'vector'>[] {
+  const filePath = relativePath.replace(/\\/g, '/');
   const pathParts = filePath.split('/');
   const layer = pathParts[0] || 'unknown';
   const category = pathParts.length > 2 ? pathParts[1] : '';
-  const docTitle = frontmatter.title || path.basename(filePath, '.md');
+  const docTitle = frontmatter.title || path.posix.basename(filePath, '.md');
   const url = frontmatter.url || '';
 
   const chunks: Omit<GuideChunk, 'id' | 'vector'>[] = [];

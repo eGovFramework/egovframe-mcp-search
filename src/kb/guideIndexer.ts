@@ -45,6 +45,22 @@ export async function collectMarkdownFiles(dir: string): Promise<string[]> {
 }
 
 /**
+ * 가이드 디렉토리 기준 상대 경로를 POSIX 구분자(/)로 돌려준다.
+ *
+ * 이 경로에서 layer / category 를 구하고 source 로 저장하므로, 플랫폼의 구분자를 그대로 쓰면
+ * Windows 에서 색인한 인덱스는 경로 전체가 layer 가 되어 필터가 아무것도 고르지 못한다.
+ *
+ * @param pathModule 경로 구현 (기본값: 현재 플랫폼) — 다른 플랫폼의 동작을 검증할 때 바꾼다
+ */
+export function relativeGuidePath(
+  guideDir: string,
+  filePath: string,
+  pathModule: Pick<typeof path, 'relative' | 'sep'> = path,
+): string {
+  return pathModule.relative(guideDir, filePath).split(pathModule.sep).join('/');
+}
+
+/**
  * guideDir 하위 md 전체를 (이미 초기화된) 매니저의 테이블로 전량 인덱싱한다.
  * 호출 전에 테이블을 비워 두는 것은 호출자 책임 (clearAll 또는 새 디렉토리).
  */
@@ -64,7 +80,7 @@ export async function indexGuideDirectory(
   let skippedFiles = 0;
 
   for (const filePath of mdFiles) {
-    const relativePath = path.relative(guideDir, filePath);
+    const relativePath = relativeGuidePath(guideDir, filePath);
     const content = await fs.readFile(filePath, 'utf-8');
 
     // 프론트매터 파싱
