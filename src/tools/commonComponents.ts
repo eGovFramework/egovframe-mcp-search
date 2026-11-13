@@ -492,7 +492,8 @@ export function collectComponentSourceFiles(
     ? pkgParts.slice(egovIdx + 1).join('/') 
     : pkgParts.join('/');
   const fullPkgPath = pkgParts.join('/');
-  
+  const schedulingConfigName = getSchedulingConfigName(pkgParts);
+
   // 각 카테고리별 디렉토리에서 파일 탐색
   const java = listFilesRecursive(
     path.join(srcRoot, 'src/main/java', fullPkgPath),
@@ -529,11 +530,9 @@ export function collectComponentSourceFiles(
     ['.xml'],
     srcRoot
   ).filter(f => {
-    // scheduling 파일 중 해당 컴포넌트 관련만 필터
-    const basename = path.basename(f).toLowerCase();
-    const lastPkg = pkgParts[pkgParts.length - 1];
-    const secondLastPkg = pkgParts.length >= 2 ? pkgParts[pkgParts.length - 2] : '';
-    return basename.includes(lastPkg) || basename.includes(`${secondLastPkg}-${lastPkg}`);
+    // 이 컴포넌트의 스케줄링 설정만 포함한다. 파일 이름이 정확히 일치해야 한다
+    // (패키지 마디는 세 글자 코드라 부분 문자열로 고르면 무관한 파일이 섞인다)
+    return path.basename(f) === schedulingConfigName;
   });
   
   const message = listFilesRecursive(
@@ -560,6 +559,18 @@ export function collectComponentSourceFiles(
   };
   
   return result;
+}
+
+/**
+ * 컴포넌트의 스케줄링 설정 파일 이름.
+ * 'context-scheduling-' + (egovframework.com 뒤의 패키지 마디를 '-' 로 이은 값) + '.xml'
+ * 예: egovframework.com.sym.log.wlg → context-scheduling-sym-log-wlg.xml
+ * egovframework.com 아래의 패키지가 아니면 null.
+ */
+function getSchedulingConfigName(pkgParts: string[]): string | null {
+  const egovIdx = pkgParts.indexOf('egovframework');
+  const subParts = egovIdx >= 0 && pkgParts[egovIdx + 1] === 'com' ? pkgParts.slice(egovIdx + 2) : [];
+  return subParts.length > 0 ? `context-scheduling-${subParts.join('-')}.xml` : null;
 }
 
 /** 대상이 없다고 볼 fs 오류: 없는 경로, 경로 중간이 파일, 디렉토리를 파일로 읽음, 링크 순환 */
