@@ -525,16 +525,24 @@ export function collectComponentSourceFiles(
     srcRoot
   );
   
-  const config = listFilesRecursive(
-    path.join(srcRoot, 'src/main/resources/egovframework/spring/com'),
-    ['.xml'],
-    srcRoot
-  ).filter(f => {
-    // 이 컴포넌트의 스케줄링 설정만 포함한다. 파일 이름이 정확히 일치해야 한다
-    // (패키지 마디는 세 글자 코드라 부분 문자열로 고르면 무관한 파일이 섞인다)
-    return path.basename(f) === schedulingConfigName;
-  });
-  
+  const springDir = path.join(srcRoot, 'src/main/resources/egovframework/spring/com');
+  const springXml = listFilesRecursive(springDir, ['.xml'], srcRoot);
+
+  // 이 컴포넌트의 스케줄링 설정만 포함한다. 파일 이름이 정확히 일치해야 한다
+  // (패키지 마디는 세 글자 코드라 부분 문자열로 고르면 무관한 파일이 섞인다)
+  const schedulingConfig = springXml.filter(f => path.basename(f) === schedulingConfigName);
+
+  // ID 생성기 설정(idgn/)은 엔티티 이름을 따서 파일 이름으로는 귀속시킬 수 없다.
+  // 컴포넌트가 그 파일이 정의한 빈을 실제로 참조할 때만 포함한다
+  const idgnConfig = selectReferencedIdgnConfigs(
+    srcRoot,
+    springXml.filter(f => path.relative(springDir, f).split(path.sep)[0] === 'idgn'),
+    java,
+    schedulingConfig
+  );
+
+  const config = springXml.filter(f => schedulingConfig.includes(f) || idgnConfig.has(f));
+
   const message = listFilesRecursive(
     path.join(srcRoot, 'src/main/resources/egovframework/message', subPath),
     ['.properties'],
@@ -571,6 +579,61 @@ function getSchedulingConfigName(pkgParts: string[]): string | null {
   const egovIdx = pkgParts.indexOf('egovframework');
   const subParts = egovIdx >= 0 && pkgParts[egovIdx + 1] === 'com' ? pkgParts.slice(egovIdx + 2) : [];
   return subParts.length > 0 ? `context-scheduling-${subParts.join('-')}.xml` : null;
+}
+
+/** Java 소스가 @Resource(name = "...") 로 주입받는 빈 이름 */
+const RESOURCE_NAME_PATTERN = /@Resource\s*\(\s*name\s*=\s*"([^"]+)"/g;
+
+/** Spring 설정 XML 이 ref="..." 로 참조하는 빈 이름 */
+const BEAN_REF_PATTERN = /\bref\s*=\s*"([^"]+)"/g;
+
+/** Spring 설정 XML 이 정의하는 빈 이름 (<bean name="..."> 또는 <bean id="...">) */
+const BEAN_DEFINITION_PATTERN = /<bean\b[^>]*?\b(?:name|id)\s*=\s*"([^"]+)"/g;
+
+/** 소스 트리 안의 파일에서 패턴의 첫 번째 캡처 그룹을 모은다 (파일이 없으면 아무것도 모으지 않는다) */
+function collectFromSourceFile(srcRoot: string, filePath: string, pattern: RegExp, into: Set<string>): void {
+  const text = readFromSourceTree(path.relative(srcRoot, filePath), 'file', () =>
+    fs.readFileSync(filePath, 'utf-8')
+  );
+  if (text === null) return;
+  for (const match of text.matchAll(pattern)) {
+    into.add(match[1]);
+  }
+}
+
+/**
+ * ID 생성기 설정 가운데 컴포넌트가 실제로 쓰는 파일을 고른다.
+ *
+ * 파일이 정의한 빈을 컴포넌트의 Java 소스가 @Resource(name = "...") 로 주입받거나
+ * 컴포넌트의 스케줄링 설정이 ref="..." 로 참조할 때만 고른다. 파일 이름으로 추측하지 않는다.
+ */
+function selectReferencedIdgnConfigs(
+  srcRoot: string,
+  idgnFiles: string[],
+  javaFiles: string[],
+  schedulingFiles: string[]
+): Set<string> {
+  const selected = new Set<string>();
+  if (idgnFiles.length === 0) return selected;
+
+  const referenced = new Set<string>();
+  for (const file of javaFiles) {
+    collectFromSourceFile(srcRoot, file, RESOURCE_NAME_PATTERN, referenced);
+  }
+  for (const file of schedulingFiles) {
+    collectFromSourceFile(srcRoot, file, BEAN_REF_PATTERN, referenced);
+  }
+  if (referenced.size === 0) return selected;
+
+  for (const file of idgnFiles) {
+    const defined = new Set<string>();
+    collectFromSourceFile(srcRoot, file, BEAN_DEFINITION_PATTERN, defined);
+    if ([...defined].some(name => referenced.has(name))) {
+      selected.add(file);
+    }
+  }
+
+  return selected;
 }
 
 /** 대상이 없다고 볼 fs 오류: 없는 경로, 경로 중간이 파일, 디렉토리를 파일로 읽음, 링크 순환 */

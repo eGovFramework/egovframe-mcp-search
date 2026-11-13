@@ -92,6 +92,98 @@ describe('collectComponentSourceFiles — Spring 설정 귀속 (임시 소스 �
   });
 });
 
+describe('collectComponentSourceFiles — ID 생성기 설정 귀속 (임시 소스 트리)', () => {
+  let root: string;
+
+  /** ID 생성기 빈 하나와 그 전략 빈을 정의하는 설정 XML */
+  const idgnXml = (beanName: string, strategy: string) =>
+    [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<beans xmlns="http://www.springframework.org/schema/beans">',
+      `    <bean name="${beanName}" class="org.egovframe.rte.fdl.idgnr.impl.EgovTableIdGnrServiceImpl" destroy-method="destroy">`,
+      '        <property name="dataSource" ref="egov.dataSource" />',
+      `        <property name="strategy"   ref="${strategy}" />`,
+      '    </bean>',
+      `    <bean name="${strategy}" class="org.egovframe.rte.fdl.idgnr.impl.strategy.EgovIdGnrStrategyImpl"/>`,
+      '</beans>',
+      '',
+    ].join('\n');
+
+  beforeAll(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'egov-src-idgn-'));
+    const write = (relPath: string, content: string) => {
+      const target = path.join(root, relPath);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, content);
+    };
+    const javaDir = path.join('src', 'main', 'java', 'egovframework', 'com');
+
+    write('pom.xml', '<project/>\n');
+
+    // 게시판 템플릿(tpl): Java 가 egovTmplatIdGnrService 를 주입받는다
+    write(
+      path.join(javaDir, 'cop', 'tpl', 'service', 'impl', 'TemplateServiceImpl.java'),
+      [
+        'public class TemplateServiceImpl {',
+        '    @Resource(name = "egovTmplatIdGnrService")',
+        '    private EgovIdGnrService idgen;',
+        '    @Resource(name="egovMessageSource")',
+        '    private Object messages;',
+        '}',
+        '',
+      ].join('\n'),
+    );
+    // 배치(sym.bat): Java 는 참조하지 않고 스케줄링 설정이 ID 생성기를 참조한다
+    write(path.join(javaDir, 'sym', 'bat', 'service', 'BatchScheduler.java'), 'public class BatchScheduler {}\n');
+    // 참조가 전혀 없는 컴포넌트
+    write(path.join(javaDir, 'cop', 'smt', 'Plain.java'), 'public class Plain {}\n');
+
+    write(path.join(SPRING_DIR, 'idgn', 'context-idgn-Tmplat.xml'), idgnXml('egovTmplatIdGnrService', 'tmplatStrategy'));
+    // 파일 이름에 "tpl" 이 들어 있을 뿐인 약관 관리의 ID 생성기
+    write(path.join(SPRING_DIR, 'idgn', 'context-idgn-StplatManage.xml'), idgnXml('egovStplatManageIdGnrService', 'stplatStrategy'));
+    write(path.join(SPRING_DIR, 'idgn', 'context-idgn-BatchResult.xml'), idgnXml('egovBatchResultIdGnrService', 'batchResultStrategy'));
+    write(
+      path.join(SPRING_DIR, 'scheduling', 'context-scheduling-sym-bat.xml'),
+      [
+        '<beans xmlns="http://www.springframework.org/schema/beans">',
+        '    <bean id="batchScheduler" class="egovframework.com.sym.bat.service.BatchScheduler">',
+        '        <property name="idgenService" ref="egovBatchResultIdGnrService"/>',
+        '    </bean>',
+        '</beans>',
+        '',
+      ].join('\n'),
+    );
+    // 전역 설정: tpl 의 Java 가 참조하는 빈을 정의하지만 ID 생성기 설정이 아니다
+    write(
+      path.join(SPRING_DIR, 'context-common.xml'),
+      '<beans><bean id="egovMessageSource" class="egovframework.com.cmm.EgovMessageSource"/></beans>\n',
+    );
+  });
+
+  afterAll(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('Java 소스가 @Resource 로 주입받는 빈을 정의한 ID 생성기 설정만 포함한다', () => {
+    expect(configNames(root, 'egovframework.com.cop.tpl')).toEqual(['context-idgn-Tmplat.xml']);
+  });
+
+  it('컴포넌트의 스케줄링 설정이 ref 로 참조하는 ID 생성기 설정도 포함한다', () => {
+    expect(configNames(root, 'egovframework.com.sym.bat')).toEqual([
+      'context-idgn-BatchResult.xml',
+      'context-scheduling-sym-bat.xml',
+    ]);
+  });
+
+  it('참조하지 않는 컴포넌트에는 ID 생성기 설정을 붙이지 않는다', () => {
+    expect(configNames(root, 'egovframework.com.cop.smt')).toEqual([]);
+  });
+
+  it('참조하는 빈을 정의했더라도 ID 생성기 디렉토리 밖의 전역 설정은 붙이지 않는다', () => {
+    expect(configNames(root, 'egovframework.com.cop.tpl')).not.toContain('context-common.xml');
+  });
+});
+
 describe.skipIf(!hasComponentSources)('collectComponentSourceFiles — Spring 설정 귀속 (동봉 소스 트리)', () => {
   /** 컴포넌트 메타데이터 (DB 를 열지 않도록 원본 JSON 을 읽는다) */
   const packages: string[] = hasComponentSources
@@ -140,5 +232,49 @@ describe.skipIf(!hasComponentSources)('collectComponentSourceFiles — Spring �
     expect(schedulingFiles).toHaveLength(18);
     expect([...owners.keys()].sort()).toEqual(schedulingFiles);
     expect([...owners.values()].filter((list) => list.length !== 1)).toEqual([]);
+  });
+
+  it('컴포넌트가 실제로 쓰는 ID 생성기 설정을 포함한다', () => {
+    // 게시판(bbs): 이름이 우연히 맞던 파일, 게시판 템플릿(tpl): 이름으로는 찾지 못하던 파일
+    expect(configNames(SRC_ROOT, 'egovframework.com.cop.bbs')).toEqual(['context-idgn-bbs.xml']);
+    expect(configNames(SRC_ROOT, 'egovframework.com.cop.tpl')).toEqual(['context-idgn-Tmplat.xml']);
+    // 배치(sym.bat): 스케줄링 설정이 참조하는 ID 생성기
+    expect(configNames(SRC_ROOT, 'egovframework.com.sym.bat')).toEqual(
+      expect.arrayContaining(['context-idgn-BatchResult.xml', 'context-scheduling-sym-bat.xml']),
+    );
+  });
+
+  it('포함한 ID 생성기 설정은 모두 그 컴포넌트의 소스가 참조하는 빈을 정의한다', () => {
+    const idgnDir = path.join(SRC_ROOT, SPRING_DIR, 'idgn');
+    /** 설정 파일이 정의하는 빈 이름 (검증용으로 따로 읽는다) */
+    const beansOf = (fileName: string) =>
+      [...fs.readFileSync(path.join(idgnDir, fileName), 'utf-8').matchAll(/<bean\s+(?:name|id)="([^"]+)"/g)].map(
+        (match) => match[1],
+      );
+
+    const unjustified: string[] = [];
+    const attributedFiles = new Set<string>();
+    for (const packageName of new Set(packages)) {
+      const files = collectComponentSourceFiles(SRC_ROOT, component(packageName));
+      const idgnFiles = files.config.filter((file) => path.basename(file).startsWith('context-idgn-'));
+      if (idgnFiles.length === 0) continue;
+
+      // 컴포넌트의 Java 소스와 스케줄링 설정을 통째로 이어 붙인 텍스트
+      const referencing = [...files.java, ...files.config.filter((file) => !idgnFiles.includes(file))]
+        .map((file) => fs.readFileSync(path.join(SRC_ROOT, file), 'utf-8'))
+        .join('\n');
+      for (const file of idgnFiles) {
+        const name = path.basename(file);
+        attributedFiles.add(name);
+        if (!beansOf(name).some((bean) => referencing.includes(`"${bean}"`))) {
+          unjustified.push(`${packageName}: ${name}`);
+        }
+      }
+    }
+
+    expect(unjustified).toEqual([]);
+    // ID 생성기 설정 95개 가운데 어디서도 참조하지 않는 2개를 뺀 나머지가 귀속된다
+    expect(fs.readdirSync(idgnDir)).toHaveLength(95);
+    expect(attributedFiles.size).toBe(93);
   });
 });
