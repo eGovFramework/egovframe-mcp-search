@@ -325,8 +325,10 @@ describe('readSourceFileInRoot — 바이너리 판정과 큰 파일 나눠 읽�
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it('한 번에 돌려주는 상한은 60,000자다', () => {
-    expect(SOURCE_READ_MAX_CHARS).toBe(60_000);
+  it('한 번에 돌려주는 상한은 30,000자다', () => {
+    // 응답 하나가 MCP 클라이언트의 출력 상한(Claude Code 의 기본값은 25,000 토큰)을 넘지 않게 하는 크기다.
+    // SQL 스크립트나 압축된 스크립트는 문자 수에 비해 토큰이 많고, 구간의 크기는 호출자가 줄일 수 없다.
+    expect(SOURCE_READ_MAX_CHARS).toBe(30_000);
     expect(bigText.length).toBe(154_999);
   });
 
@@ -416,7 +418,7 @@ describe('readSourceFileInRoot — 바이너리 판정과 큰 파일 나눠 읽�
     expect(result?.size).toBe(12);
   });
 
-  it('큰 텍스트는 60,000자까지만 돌려주고 이어 읽을 위치를 알려 준다', () => {
+  it('큰 텍스트는 상한까지만 돌려주고 이어 읽을 위치를 알려 준다', () => {
     const first = readSourceFileInRoot(root, 'big.sql');
 
     expect(first).not.toBeNull();
@@ -444,14 +446,14 @@ describe('readSourceFileInRoot — 바이너리 판정과 큰 파일 나눠 읽�
       expect(calls).toBeLessThan(10);
     }
 
-    expect(calls).toBe(3);
+    expect(calls).toBe(6);
     expect(chunks.join('')).toBe(bigText);
   });
 
   it('마지막 구간에서는 truncated 가 false 이고 nextOffset 이 null 이다', () => {
-    const last = readSourceFileInRoot(root, 'big.sql', { offset: 120_000 });
+    const last = readSourceFileInRoot(root, 'big.sql', { offset: 150_000 });
 
-    expect(last?.content).toBe(bigText.slice(120_000));
+    expect(last?.content).toBe(bigText.slice(150_000));
     expect(last?.truncated).toBe(false);
     expect(last?.nextOffset).toBeNull();
   });
@@ -550,7 +552,7 @@ describe('readSourceFileInRoot — EUC-KR 텍스트', () => {
     });
   });
 
-  it('큰 EUC-KR 텍스트도 60,000자씩 나눠 읽어 전체를 빠짐없이 얻는다', () => {
+  it('큰 EUC-KR 텍스트도 상한만큼씩 나눠 읽어 전체를 빠짐없이 얻는다', () => {
     const first = readSourceFileInRoot(root, 'big.java');
 
     expect(first).toMatchObject({
@@ -579,7 +581,7 @@ describe('readSourceFileInRoot — EUC-KR 텍스트', () => {
       expect(calls).toBeLessThan(10);
     }
 
-    expect(calls).toBe(3);
+    expect(calls).toBe(5);
     expect(chunks.join('')).toBe(bigText);
   });
 
@@ -638,7 +640,7 @@ describe.skipIf(!hasComponentSources)('readSourceFileInRoot — 동봉 소스 �
     expect(result?.content.length).toBeLessThan(200);
   });
 
-  it.skipIf(missing(BIG_SCRIPT))('큰 스크립트는 60,000자에서 끊고 이어 읽을 위치를 준다', () => {
+  it.skipIf(missing(BIG_SCRIPT))('큰 스크립트는 상한에서 끊고 이어 읽을 위치를 준다', () => {
     const result = readSourceFileInRoot(SRC_ROOT, BIG_SCRIPT);
 
     expect(result?.content.length).toBe(SOURCE_READ_MAX_CHARS);

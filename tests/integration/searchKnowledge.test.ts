@@ -823,17 +823,17 @@ describe("integration — egov_search_knowledge 공통컴포넌트 조회", () =
       const filePath = "script/dml/mysql/com_DML_mysql.sql";
       const first = await search({ scope: "components", action: "readSource", filters: { filePath } });
       expect(first.isError).toBe(false);
-      expect(first.text).toMatch(/전체 [\d,]+자 중 1~60,000자/);
-      expect(first.text).toContain("filters.offset: 60000");
+      expect(first.text).toMatch(/전체 [\d,]+자 중 1~30,000자/);
+      expect(first.text).toContain("filters.offset: 30000");
 
       const second = await search({
         scope: "components",
         action: "readSource",
-        filters: { filePath, offset: 60000 },
+        filters: { filePath, offset: 30000 },
       });
       expect(second.isError).toBe(false);
-      expect(second.text).toMatch(/전체 [\d,]+자 중 60,001~120,000자/);
-      expect(second.text).toContain("filters.offset: 120000");
+      expect(second.text).toMatch(/전체 [\d,]+자 중 30,001~60,000자/);
+      expect(second.text).toContain("filters.offset: 60000");
       // 두 구간의 본문은 서로 다르다
       expect(second.text.slice(200, 600)).not.toBe(first.text.slice(200, 600));
     },

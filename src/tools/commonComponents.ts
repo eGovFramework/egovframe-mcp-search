@@ -815,8 +815,14 @@ function listFilesRecursive(dirPath: string, extensions: string[], srcRoot: stri
   return results.sort();
 }
 
-/** readSource 가 한 번에 돌려주는 최대 문자 수 */
-export const SOURCE_READ_MAX_CHARS = 60_000;
+/**
+ * readSource 가 한 번에 돌려주는 최대 문자 수.
+ *
+ * 응답 하나가 MCP 클라이언트의 출력 상한(Claude Code 의 기본값은 25,000 토큰)을 넘지 않게 하는 크기다.
+ * 구간의 크기는 호출자가 줄일 수 없으므로 토큰이 많은 내용을 기준으로 잡는다: SQL 스크립트의 대문자 식별자나
+ * 압축된 스크립트는 두 글자가 한 토큰쯤 된다. Java, 매퍼 XML, JSP 는 거의 모두 이 크기 안에 들어가 한 번에 읽힌다.
+ */
+export const SOURCE_READ_MAX_CHARS = 30_000;
 
 /** readComponentSource 의 조회 옵션 */
 export interface ReadComponentSourceOptions {
@@ -834,7 +840,7 @@ export type SourceTextEncoding = 'utf-8' | 'euc-kr';
 export interface ComponentSourceContent {
   /** 소스 루트 기준 상대 경로 */
   filePath: string;
-  /** 이번 호출이 돌려주는 텍스트 (최대 60,000자). 바이너리 파일은 내용 대신 안내 문구 */
+  /** 이번 호출이 돌려주는 텍스트 (최대 SOURCE_READ_MAX_CHARS 자). 바이너리 파일은 내용 대신 안내 문구 */
   content: string;
   /** 코드 블록 언어. 바이너리 파일은 'binary' */
   language: string;
@@ -856,7 +862,7 @@ export interface ComponentSourceContent {
  * 컴포넌트 소스 파일 내용 읽기
  * 보안: common-components-src 디렉토리 내부만 허용하고, 그 안의 저장소 메타데이터(.git)는 읽지 않는다
  *
- * 텍스트는 한 번에 60,000자까지 돌려주고, options.offset 으로 이어 읽는다.
+ * 텍스트는 한 번에 SOURCE_READ_MAX_CHARS 자까지 돌려주고, options.offset 으로 이어 읽는다.
  * UTF-8 로 읽고, UTF-8 이 아니면 EUC-KR 로 읽는다 (어느 쪽으로 읽었는지는 encoding).
  * 바이너리 파일은 내용 없이 메타데이터만 돌려준다.
  */
