@@ -8,6 +8,7 @@ import {
   KnowledgeSearchOptions,
   KnowledgeType,
 } from '../types/knowledge.js';
+import { UserFacingError } from '../utils/errors.js';
 
 /**
  * 검색 결과의 score(코사인 거리)를 코사인 유사도로 바꾼다.
@@ -18,15 +19,25 @@ function toSimilarity(score: number): number {
 }
 
 /**
+ * 검색에 쓸 질의를 확인한다. 없거나 공백뿐이면 호출자가 고칠 수 있게 알린다.
+ */
+function requireQuery(query: string | undefined): string {
+  if (typeof query !== 'string' || query.trim() === '') {
+    throw new UserFacingError('query is required for knowledge search');
+  }
+  return query;
+}
+
+/**
  * 지식 검색 (통합)
  * - query + scope="knowledge" → 시맨틱 검색 (기본)
- * - query + sort="recent" → 최근 추가 순 조회
+ * - sort="recent" → 최근 추가 순 조회 (질의를 쓰지 않으므로 query 없이 호출할 수 있다)
  * - query + scope="all" → 통합 검색 (지식 + 호환성)
- * 
+ *
  * See: docs/TODO_TOOL_OPTIMIZATION.md Phase 3-C
  */
 export async function searchKnowledge(args: {
-  query: string;
+  query?: string;
   scope?: 'knowledge' | 'all';
   sort?: 'relevance' | 'recent';
   limit?: number;
@@ -35,6 +46,9 @@ export async function searchKnowledge(args: {
   minImportance?: 1 | 2 | 3 | 4 | 5;
   verifiedOnly?: boolean;
 }) {
+  // 최근 목록 말고는 질의가 있어야 한다 — 저장소와 임베딩 모델을 불러오기 전에 확인한다
+  const query = args.sort === 'recent' ? '' : requireQuery(args.query);
+
   const manager = await getInitializedHybridManager();
   const knowledge = manager.getKnowledge();
 
@@ -60,7 +74,7 @@ export async function searchKnowledge(args: {
   // scope="all" → 통합 검색 (smart_search 기능)
   if (args.scope === 'all') {
     const results = await manager.smartSearch({
-      query: args.query,
+      query,
       includeCompatibility: true,
       includeKnowledge: true,
       limit: args.limit || 5,
@@ -69,7 +83,7 @@ export async function searchKnowledge(args: {
     return {
       success: true,
       scope: 'all',
-      query: args.query,
+      query,
       totalResults: results.totalResults,
       compatibility: results.compatibility.map((s: any) => ({
         product: `${s.product_name} ${s.product_version}`,
@@ -98,11 +112,11 @@ export async function searchKnowledge(args: {
     verifiedOnly: args.verifiedOnly,
   };
 
-  const results = await knowledge.searchKnowledge(args.query, options);
+  const results = await knowledge.searchKnowledge(query, options);
 
   return {
     success: true,
-    query: args.query,
+    query,
     options,
     resultCount: results.length,
     results: results.map(r => ({

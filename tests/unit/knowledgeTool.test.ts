@@ -8,7 +8,9 @@
  */
 import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { DeveloperKnowledgeManager } from "../../src/rag/knowledgeManager.js";
+import { getEmbedder } from "../../src/rag/embedder.js";
 import { searchKnowledge } from "../../src/tools/knowledge.js";
+import { UserFacingError } from "../../src/utils/errors.js";
 import {
   BUNDLED_KB,
   HAS_BUNDLED_TABLES,
@@ -67,5 +69,54 @@ describe.skipIf(!HAS_BUNDLED_TABLES)("searchKnowledge 도구 — 의미 검색 �
     expect(results[0].similarity).toBe(1);
     // 그다음 결과는 1 보다 작은 코사인 유사도 (제곱 L2 를 쓰면 2·cos - 1 이 되어 값이 달라진다)
     expect(results[1].similarity).toBeLessThan(1);
+  });
+});
+
+describe.skipIf(!HAS_BUNDLED_TABLES)("searchKnowledge 도구 — query 필수 여부", () => {
+  let knowledge: DeveloperKnowledgeManager;
+
+  beforeAll(async () => {
+    knowledge = new DeveloperKnowledgeManager(BUNDLED_KB);
+    await knowledge.initialize();
+    hybrid.current = { getKnowledge: () => knowledge };
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("sort=recent 는 query 없이도 최근 목록을 돌려준다", async () => {
+    const output = (await searchKnowledge({ sort: "recent", limit: 3 })) as {
+      sort?: string;
+      count?: number;
+      results?: Array<Record<string, unknown>>;
+    };
+    expect(output.sort).toBe("recent");
+    expect(output.count).toBe(3);
+    expect(output.results).toHaveLength(3);
+  });
+
+  it("sort=recent 의 결과는 query 가 있든 없든 같다 (질의를 쓰지 않는다)", async () => {
+    const withoutQuery = await searchKnowledge({ sort: "recent", limit: 3 });
+    const withQuery = await searchKnowledge({ query: "아무 질의", sort: "recent", limit: 3 });
+    expect(withQuery).toEqual(withoutQuery);
+  });
+
+  it("의미 검색은 query 가 없거나 공백뿐이면 임베딩 전에 거부한다", async () => {
+    const embed = vi.spyOn(getEmbedder(), "embed");
+    for (const args of [{}, { query: "" }, { query: "   \n\t" }, { limit: 3, sort: "relevance" as const }]) {
+      const error = await searchKnowledge(args).catch((e: unknown) => e);
+      expect(error, JSON.stringify(args)).toBeInstanceOf(UserFacingError);
+      expect((error as Error).message).toBe("query is required for knowledge search");
+    }
+    expect(embed).not.toHaveBeenCalled();
+  });
+
+  it("통합 검색(scope=all)도 query 가 없으면 거부한다", async () => {
+    const smartSearch = vi.fn();
+    hybrid.current = { getKnowledge: () => knowledge, smartSearch };
+    await expect(searchKnowledge({ scope: "all" })).rejects.toBeInstanceOf(UserFacingError);
+    expect(smartSearch).not.toHaveBeenCalled();
+    hybrid.current = { getKnowledge: () => knowledge };
   });
 });
