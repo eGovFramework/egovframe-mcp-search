@@ -23,7 +23,7 @@ import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import { resolveDeveloperKnowledgeDbDir } from '../utils/dataPaths.js';
 import { UserFacingError } from '../utils/errors.js';
-import { lanceEquals, quoteFilterValue } from '../utils/lanceFilter.js';
+import { lanceArrayHasAny, lanceEquals, quoteFilterValue } from '../utils/lanceFilter.js';
 
 /**
  * type 필터 값을 검증한다.
@@ -45,7 +45,7 @@ function requireKnowledgeType(type: unknown): KnowledgeType {
  * UserFacingError 로 거부한다.
  */
 export function buildKnowledgeFilter(options: KnowledgeSearchOptions): string | undefined {
-  const { type, minImportance = 1, verifiedOnly = false } = options;
+  const { type, tags, minImportance = 1, verifiedOnly = false } = options;
   const filters: string[] = [];
 
   if (type) {
@@ -60,6 +60,12 @@ export function buildKnowledgeFilter(options: KnowledgeSearchOptions): string | 
 
   if (verifiedOnly) {
     filters.push(`verified = true`);
+  }
+
+  // 태그는 하나라도 가진 행을 고른다. 검색 뒤에 거르면 가까운 limit 건 안에 든 행만 남아
+  // faq·pdf 같은 소수 태그가 거의 항상 0건이 되므로, 다른 필터처럼 사전 필터로 건다.
+  if (tags && tags.length > 0) {
+    filters.push(lanceArrayHasAny('tags', tags));
   }
 
   return filters.length > 0 ? filters.join(' AND ') : undefined;
@@ -334,9 +340,9 @@ export class DeveloperKnowledgeManager {
     query: string,
     options: KnowledgeSearchOptions = {}
   ): Promise<KnowledgeSearchResult[]> {
-    const { limit = 5, tags } = options;
+    const { limit = 5 } = options;
 
-    // 필터 조건 생성 — 입력 오류는 임베딩 모델을 불러오기 전에 알린다
+    // 필터 조건 생성 (type·minImportance·verifiedOnly·tags) — 입력 오류는 임베딩 모델을 불러오기 전에 알린다
     const filter = buildKnowledgeFilter(options);
 
     const embedder = getEmbedder();
@@ -352,24 +358,16 @@ export class DeveloperKnowledgeManager {
       .vectorSearch(Array.from(queryVector))
       .bypassVectorIndex()
       .distanceType('cosine')
-      .limit(limit * 2); // 태그 필터링을 위해 더 많이 가져옴
-    
+      .limit(limit);
+
     if (filter) {
       searchQuery = searchQuery.where(filter);
     }
 
-    let results = await searchQuery.toArray();
-    
-    // 태그 필터링 (복잡한 조건이라 결과에서 처리)
-    if (tags && tags.length > 0) {
-      results = results.filter((r: any) => {
-        const resultTags = this.toArraySafe(r.tags);
-        return tags.some(tag => resultTags.includes(tag));
-      });
-    }
-    
+    const results = await searchQuery.toArray();
+
     // 결과 포맷팅
-    return results.slice(0, limit).map((r: any) => ({
+    return results.map((r: any) => ({
       id: r.id,
       type: r.type,
       title: r.title,

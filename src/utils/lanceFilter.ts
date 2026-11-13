@@ -21,6 +21,14 @@ export function lanceEquals(column: string, value: string): string {
 }
 
 /**
+ * 배열 컬럼이 values 가운데 하나라도 포함하면 참인 조건: `array_has_any(column, ['a', 'b'])`.
+ * 값은 정확히 일치해야 한다 (대소문자 구분).
+ */
+export function lanceArrayHasAny(column: string, values: readonly string[]): string {
+  return `array_has_any(${column}, [${values.map(lanceString).join(', ')}])`;
+}
+
+/**
  * 거부한 필터 값을 오류 문구에 넣을 수 있는 표기로 바꾼다.
  * 큰따옴표로 감싸고 제어 문자를 이스케이프하며, 긴 값은 앞부분만 보여 준다.
  */

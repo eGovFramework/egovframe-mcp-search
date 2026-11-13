@@ -9,7 +9,7 @@ import fs from "fs-extra";
 import os from "node:os";
 import path from "node:path";
 import * as lancedb from "@lancedb/lancedb";
-import { lanceEquals, lanceString, quoteFilterValue } from "../../src/utils/lanceFilter.js";
+import { lanceArrayHasAny, lanceEquals, lanceString, quoteFilterValue } from "../../src/utils/lanceFilter.js";
 import { GUIDE_TABLE, HAS_BUNDLED_TABLES, openBundledTable } from "./_lanceFixtures.js";
 
 /** 조건을 바꾸거나 질의를 깨뜨리려는 값들 */
@@ -53,6 +53,13 @@ describe("lanceEquals", () => {
   });
 });
 
+describe("lanceArrayHasAny", () => {
+  it("배열 컬럼의 포함 조건을 만들고 값마다 이스케이프한다", () => {
+    expect(lanceArrayHasAny("tags", ["faq"])).toBe("array_has_any(tags, ['faq'])");
+    expect(lanceArrayHasAny("tags", ["faq", "it's"])).toBe("array_has_any(tags, ['faq', 'it''s'])");
+  });
+});
+
 describe("quoteFilterValue", () => {
   it("오류 문구에 넣을 수 있게 값을 따옴표로 감싸고 제어 문자를 이스케이프한다", () => {
     expect(quoteFilterValue("runtime")).toBe('"runtime"');
@@ -79,10 +86,10 @@ describe("where 절 리터럴 — 실제 LanceDB 질의", () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "egov-lance-filter-"));
     const db = await lancedb.connect(tmpDir);
     table = await db.createTable("t", [
-      { id: "1", name: "plain" },
-      { id: "2", name: "o'brien" },
-      { id: "3", name: "x' OR '1'='1" },
-      { id: "4", name: "back\\slash" },
+      { id: "1", name: "plain", tags: ["a", "b"] },
+      { id: "2", name: "o'brien", tags: ["b", "o'brien"] },
+      { id: "3", name: "x' OR '1'='1", tags: ["c"] },
+      { id: "4", name: "back\\slash", tags: ["d"] },
     ]);
   });
 
@@ -101,6 +108,17 @@ describe("where 절 리터럴 — 실제 LanceDB 질의", () => {
     for (const value of HOSTILE_VALUES) {
       const expected = value === "x' OR '1'='1" ? 1 : 0;
       expect(await table.countRows(lanceEquals("name", value)), JSON.stringify(value)).toBe(expected);
+    }
+  });
+
+  it("배열 컬럼은 값 가운데 하나라도 가진 행을 고른다", async () => {
+    expect(await table.countRows(lanceArrayHasAny("tags", ["a"]))).toBe(1);
+    expect(await table.countRows(lanceArrayHasAny("tags", ["b"]))).toBe(2);
+    expect(await table.countRows(lanceArrayHasAny("tags", ["a", "c", "없는 값"]))).toBe(2);
+    expect(await table.countRows(lanceArrayHasAny("tags", ["o'brien"]))).toBe(1);
+    expect(await table.countRows(lanceArrayHasAny("tags", ["A"]))).toBe(0);
+    for (const value of HOSTILE_VALUES) {
+      expect(await table.countRows(lanceArrayHasAny("tags", [value])), JSON.stringify(value)).toBe(0);
     }
   });
 

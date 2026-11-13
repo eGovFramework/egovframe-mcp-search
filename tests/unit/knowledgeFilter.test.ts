@@ -10,12 +10,14 @@ import { DeveloperKnowledgeManager, buildKnowledgeFilter } from "../../src/rag/k
 import { getEmbedder } from "../../src/rag/embedder.js";
 import { KNOWLEDGE_TYPES, type KnowledgeType } from "../../src/types/knowledge.js";
 import { UserFacingError } from "../../src/utils/errors.js";
+import { hasEmbeddingModel } from "../integration/_helper.js";
 import {
   BUNDLED_KB,
   HAS_BUNDLED_TABLES,
   KNOWLEDGE_TABLE,
   loadVectorRows,
   openBundledTable,
+  spread,
   useQueryVector,
   type VectorRow,
 } from "./_lanceFixtures.js";
@@ -126,4 +128,121 @@ describe.skipIf(!HAS_BUNDLED_TABLES)("개발자 지식 검색 — type 필터 �
       rows.filter((row) => row.type === "tip").length,
     );
   });
+});
+
+describe("buildKnowledgeFilter — tags", () => {
+  it("tags 는 배열 포함 조건으로 where 절에 넣는다 (하나라도 포함하면 일치)", () => {
+    expect(buildKnowledgeFilter({ tags: ["faq"] })).toBe("array_has_any(tags, ['faq'])");
+    expect(buildKnowledgeFilter({ tags: ["faq", "pdf"] })).toBe("array_has_any(tags, ['faq', 'pdf'])");
+  });
+
+  it("빈 tags 는 조건을 만들지 않는다", () => {
+    expect(buildKnowledgeFilter({ tags: [] })).toBeUndefined();
+  });
+
+  it("tags 값의 작은따옴표를 이스케이프한다", () => {
+    expect(buildKnowledgeFilter({ tags: ["it's", "x') OR 1=1 --"] })).toBe(
+      "array_has_any(tags, ['it''s', 'x'') OR 1=1 --'])",
+    );
+  });
+
+  it("다른 필터와 AND 로 결합한다", () => {
+    expect(buildKnowledgeFilter({ type: "solution", minImportance: 4, tags: ["faq"] })).toBe(
+      "type = 'solution' AND importance >= 4 AND array_has_any(tags, ['faq'])",
+    );
+  });
+});
+
+describe.skipIf(!HAS_BUNDLED_TABLES)("개발자 지식 검색 — tags 필터", () => {
+  let manager: DeveloperKnowledgeManager;
+  let table: Table;
+  let rows: Array<VectorRow & { tagList: string[] }>;
+
+  /** 주어진 태그 가운데 하나라도 가진 행 수 (테이블 전체를 자바스크립트로 센 기대값) */
+  const countWithAnyTag = (tags: string[]) =>
+    rows.filter((row) => tags.some((tag) => row.tagList.includes(tag))).length;
+
+  beforeAll(async () => {
+    manager = new DeveloperKnowledgeManager(BUNDLED_KB);
+    await manager.initialize();
+    table = await openBundledTable(KNOWLEDGE_TABLE);
+    rows = (await loadVectorRows(table, ["tags"])).map((row) => ({
+      ...row,
+      tagList: Array.from(row.tags as Iterable<string>),
+    }));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("조건은 LanceDB 에서 태그를 가진 행 전체를 고른다", async () => {
+    const faq = countWithAnyTag(["faq"]);
+    expect(faq).toBeGreaterThan(0);
+    expect(await table.countRows(buildKnowledgeFilter({ tags: ["faq"] }))).toBe(faq);
+    expect(await table.countRows(buildKnowledgeFilter({ tags: ["faq", "pdf"] }))).toBe(
+      countWithAnyTag(["faq", "pdf"]),
+    );
+    // 정확히 일치하는 값만 고른다 (대소문자 구분)
+    expect(await table.countRows(buildKnowledgeFilter({ tags: ["FAQ"] }))).toBe(0);
+  });
+
+  it("조건을 바꾸려는 태그 값은 어떤 행과도 일치하지 않고 오류도 내지 않는다", async () => {
+    for (const tag of ["it's", "x') OR 1=1 --", "']) OR array_has_any(tags, ['qa", "\\"]) {
+      expect(await table.countRows(buildKnowledgeFilter({ tags: [tag] })), tag).toBe(0);
+    }
+  });
+
+  it("소수 태그도 질의와 무관하게 limit 건을 채운다", async () => {
+    const offTopic = rows.filter((row) => !row.tagList.includes("faq") && !row.tagList.includes("pdf"));
+    for (const tag of ["faq", "pdf", "guide"]) {
+      expect(countWithAnyTag([tag])).toBeGreaterThanOrEqual(5);
+      for (const { vector } of spread(offTopic, 10)) {
+        useQueryVector(vector);
+        const results = await manager.searchKnowledge("(저장된 벡터로 대체)", { limit: 5, tags: [tag] });
+        expect(results, tag).toHaveLength(5);
+        expect(results.every((r) => r.tags.includes(tag))).toBe(true);
+      }
+    }
+  });
+
+  it("여러 태그는 하나라도 가진 행을 돌려준다", async () => {
+    useQueryVector(rows[0].vector);
+    const total = countWithAnyTag(["faq", "pdf"]);
+    const results = await manager.searchKnowledge("(저장된 벡터로 대체)", {
+      limit: total + 50,
+      tags: ["faq", "pdf"],
+    });
+    expect(results).toHaveLength(total);
+    expect(results.every((r) => r.tags.includes("faq") || r.tags.includes("pdf"))).toBe(true);
+    expect(results.some((r) => r.tags.includes("faq"))).toBe(true);
+    expect(results.some((r) => r.tags.includes("pdf"))).toBe(true);
+  });
+
+  it("일치하는 태그가 없으면 빈 결과다", async () => {
+    useQueryVector(rows[0].vector);
+    expect(await manager.searchKnowledge("(저장된 벡터로 대체)", { limit: 5, tags: ["FAQ"] })).toEqual([]);
+    expect(await manager.searchKnowledge("(저장된 벡터로 대체)", { limit: 5, tags: ["it's"] })).toEqual([]);
+  });
+
+  it("tags 와 type 을 함께 주면 둘 다 만족하는 행만 돌려준다", async () => {
+    useQueryVector(rows[0].vector);
+    const results = await manager.searchKnowledge("(저장된 벡터로 대체)", {
+      limit: 5,
+      type: "solution",
+      tags: ["faq"],
+    });
+    expect(results).toHaveLength(5);
+    expect(results.every((r) => r.type === "solution" && r.tags.includes("faq"))).toBe(true);
+  });
+
+  it.skipIf(!hasEmbeddingModel())(
+    "실제 임베딩: '로그인이 안됩니다' + tags faq 는 FAQ 5건을 돌려준다",
+    async () => {
+      const results = await manager.searchKnowledge("로그인이 안됩니다", { limit: 5, tags: ["faq"] });
+      expect(results).toHaveLength(5);
+      expect(results.every((r) => r.tags.includes("faq"))).toBe(true);
+    },
+    60_000,
+  );
 });
