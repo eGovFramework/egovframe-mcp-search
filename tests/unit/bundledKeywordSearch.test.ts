@@ -740,6 +740,20 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       expect(full.rows.slice(0, 3).every((row) => row.product_name === "MC@CMS eGov")).toBe(true);
     });
 
+    it('모든 검색어 일치만 하는 조회도 "eGov CMS" 에서 제품명에 eGov 가 든 행을 맨 앞에 둔다', () => {
+      // 통합 검색(scope all)의 호환 소프트웨어 구역이 쓰는 조회다. 'eGov' 를 빼기만 하고 정렬에 쓰지 않던 때에는
+      // 앞의 다섯 행이 모두 확인일자가 최근인 CMS 제품이었고, 제품명에 eGov 가 든 행은 그 안에 하나도 없었다
+      const named = compatible("eGov");
+      expect(named.total).toBeGreaterThan(1);
+      const limit = named.total + 1;
+      const { rows, total } = sqlite.queryCompatibleSoftwareAllTerms("eGov CMS", limit);
+      expect(total).toBe(compatible("CMS").total);
+      expect(rows).toHaveLength(limit);
+      expect(rows.map((row) => /egov/i.test(row.product_name))).toEqual([...named.rows.map(() => true), false]);
+      // 조회(queryCompatibleSoftware)가 돌려주는 앞의 행들과 같은 행, 같은 순서다
+      expect(rows.map(keyOf)).toEqual(rowKeys(compatible("eGov CMS")).slice(0, limit));
+    });
+
     it('"eGov OR JEUS" 는 JEUS 행과 제품명에 eGov 가 든 행을 모두 돌려준다', () => {
       // OR 가 있어도 'eGov' 를 빼던 때에는 JEUS 세 행만 나왔다
       const either = compatible("eGov OR JEUS");

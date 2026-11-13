@@ -14,13 +14,11 @@ import {
   MAX_KEYWORD_QUERY_LENGTH,
   MAX_PARSED_TERMS,
   MAX_SEARCH_TERMS,
-  dropGenericTerms,
   extractSearchTerms,
   flexibleForm,
   hasOrOperator,
   isEnglishFunctionWord,
   isEnglishTerm,
-  isGenericTerm,
   joinedTermKeys,
   listedTargetWord,
   parseKeywordQuery,
@@ -219,7 +217,9 @@ describe("parseKeywordQuery", () => {
   });
 });
 
-describe("가려 주지 못하는 낱말 (dropGenericTerms, isGenericTerm)", () => {
+describe("가려 주지 못하는 낱말의 목록", () => {
+  // 이 낱말들을 언제 검색어에서 빼는지는 키워드 검색이 정한다 (compatibilityQuery, componentQuery 테스트 참조)
+
   /** 프레임워크 자체를 가리키는 낱말 */
   const FRAMEWORK = ["egovframe", "egovframework", "egov", "전자정부", "표준프레임워크", "전자정부프레임워크", "전자정부표준프레임워크"];
   /** 공통컴포넌트 목록의 모든 항목에 해당하는 낱말 */
@@ -237,10 +237,9 @@ describe("가려 주지 못하는 낱말 (dropGenericTerms, isGenericTerm)", () 
 
   it("was 는 영어 기능어 목록에 넣지 않는다 (호환 소프트웨어의 분류 WAS 와 같은 낱말이다)", () => {
     expect(ENGLISH_FUNCTION_WORDS.has("was")).toBe(false);
-    for (const terms of [["국산", "WAS"], ["was", "추천"], ["which", "WAS", "is", "compatible"]]) {
-      expect(dropGenericTerms(terms, COMPATIBILITY_GENERIC_WORDS), terms.join(" ")).toContain(terms.find((t) => /was/i.test(t)));
+    for (const term of ["was", "WAS", "Was"]) {
+      expect(isEnglishFunctionWord(term), term).toBe(false);
     }
-    expect(dropGenericTerms(["which", "WAS", "is", "compatible"], COMPATIBILITY_GENERIC_WORDS)).toEqual(["WAS", "compatible"]);
   });
 
   it("대상의 모든 항목에 해당하는 낱말은 대상마다 다르다", () => {
@@ -249,98 +248,34 @@ describe("가려 주지 못하는 낱말 (dropGenericTerms, isGenericTerm)", () 
     expect([...COMPONENT_GENERIC_WORDS].sort()).toEqual([...FRAMEWORK, ...COMPONENT].sort());
   });
 
-  it("영어 기능어는 어느 대상에서나 뺀다 (대소문자를 가리지 않는다)", () => {
-    for (const words of [COMPATIBILITY_GENERIC_WORDS, COMPONENT_GENERIC_WORDS]) {
-      expect(dropGenericTerms(["Is", "Tibero", "compatible", "WITH", "4.3"], words)).toEqual(["Tibero", "compatible", "4.3"]);
-      expect(dropGenericTerms(["how", "to", "implement", "login"], words)).toEqual(["implement", "login"]);
-    }
-  });
-
-  it("프레임워크 자체를 가리키는 낱말은 두 대상 모두에서 뺀다", () => {
+  it("프레임워크 자체를 가리키는 낱말은 두 대상 모두의 낱말이다 (대소문자를 가리지 않는다)", () => {
     for (const words of [COMPATIBILITY_GENERIC_WORDS, COMPONENT_GENERIC_WORDS]) {
       for (const word of [...FRAMEWORK, "eGovFrame", "EGOVFRAMEWORK", "eGov"]) {
-        expect(dropGenericTerms([word, "4.3", "CMS"], words), `word=${word}`).toEqual(["4.3", "CMS"]);
+        expect(listedTargetWord(word, words), `word=${word}`).toBe(word);
       }
     }
   });
 
-  it("컴포넌트를 가리키는 낱말은 공통컴포넌트에서만 뺀다", () => {
+  it("컴포넌트를 가리키는 낱말은 공통컴포넌트의 낱말일 뿐이다", () => {
     for (const word of [...COMPONENT, "Component", "COMPONENTS"]) {
-      expect(dropGenericTerms(["게시판", word], COMPONENT_GENERIC_WORDS), `word=${word}`).toEqual(["게시판"]);
-      expect(dropGenericTerms(["게시판", word], COMPATIBILITY_GENERIC_WORDS), `word=${word}`).toEqual(["게시판", word]);
+      expect(listedTargetWord(word, COMPONENT_GENERIC_WORDS), `word=${word}`).toBe(word);
+      expect(listedTargetWord(word, COMPATIBILITY_GENERIC_WORDS), `word=${word}`).toBeNull();
     }
   });
 
-  it("목록에 없는 낱말은 뜻이 비슷해도 빼지 않는다", () => {
+  it("목록에 없는 낱말은 뜻이 비슷해도 가려 주지 못하는 낱말이 아니다", () => {
     // 'Framework Solution' 은 호환 소프트웨어의 분류 이름이다
-    const terms = ["framework", "프레임워크", "solution", "솔루션", "JEUS"];
-    expect(dropGenericTerms(terms, COMPATIBILITY_GENERIC_WORDS)).toEqual(terms);
-    expect(dropGenericTerms(terms, COMPONENT_GENERIC_WORDS)).toEqual(terms);
+    for (const term of ["framework", "프레임워크", "solution", "솔루션", "JEUS"]) {
+      expect(isEnglishFunctionWord(term), term).toBe(false);
+      expect(listedTargetWord(term, COMPONENT_GENERIC_WORDS), term).toBeNull();
+    }
   });
 
-  it("목록의 낱말이 다른 낱말의 일부일 뿐이면 빼지 않는다", () => {
-    const terms = ["within", "forum", "information", "eGovFrameWeb", "egov-cms", "subcomponent", "전자정부포털"];
-    expect(dropGenericTerms(terms, COMPONENT_GENERIC_WORDS)).toEqual(terms);
-  });
-
-  it("뺀 뒤에 남는 검색어가 없으면 빼지 않고 그대로 돌려준다", () => {
-    // 제품명에 eGovframe 이 든 제품을 그 낱말만으로 찾을 수 있어야 한다
-    expect(dropGenericTerms(["eGovframe"], COMPATIBILITY_GENERIC_WORDS)).toEqual(["eGovframe"]);
-    expect(dropGenericTerms(["컴포넌트"], COMPONENT_GENERIC_WORDS)).toEqual(["컴포넌트"]);
-    expect(dropGenericTerms(["is", "the", "eGovFrame"], COMPATIBILITY_GENERIC_WORDS)).toEqual(["is", "the", "eGovFrame"]);
-    expect(dropGenericTerms([], COMPATIBILITY_GENERIC_WORDS)).toEqual([]);
-  });
-
-  it("남는 검색어가 한 글자뿐이어도 다른 검색어가 남은 것이다", () => {
-    expect(dropGenericTerms(["eGovFrame", "8"], COMPATIBILITY_GENERIC_WORDS)).toEqual(["8"]);
-  });
-
-  it("대상의 모든 항목에 해당하는 낱말은 조사가 붙어 있어도 뺀다", () => {
-    expect(dropGenericTerms(["eGovFrame에서", "쓰는", "CMS"], COMPATIBILITY_GENERIC_WORDS)).toEqual(["쓰는", "CMS"]);
-    expect(dropGenericTerms(["전자정부의", "표준프레임워크로", "JEUS"], COMPATIBILITY_GENERIC_WORDS)).toEqual(["JEUS"]);
-    expect(dropGenericTerms(["게시판", "컴포넌트를"], COMPONENT_GENERIC_WORDS)).toEqual(["게시판"]);
-    expect(dropGenericTerms(["components는", "게시판"], COMPONENT_GENERIC_WORDS)).toEqual(["게시판"]);
-  });
-
-  it("영어 기능어는 한글이 붙어 있으면 빼지 않는다", () => {
-    // 'IT서비스', 'AS센터' 는 영어 기능어 it, as 로 시작하지만 다른 낱말이다
-    const terms = ["IT서비스", "AS센터", "IT는", "관리"];
-    expect(dropGenericTerms(terms, COMPATIBILITY_GENERIC_WORDS)).toEqual(terms);
-    expect(dropGenericTerms(["IT", "관리"], COMPATIBILITY_GENERIC_WORDS)).toEqual(["관리"]);
-  });
-
-  it("isGenericTerm 은 낱말 하나가 목록의 낱말인지 알려 준다", () => {
-    expect(isGenericTerm("with", COMPATIBILITY_GENERIC_WORDS)).toBe(true);
-    expect(isGenericTerm("eGovFrame", COMPATIBILITY_GENERIC_WORDS)).toBe(true);
-    expect(isGenericTerm("eGovFrame에서", COMPATIBILITY_GENERIC_WORDS)).toBe(true);
-    expect(isGenericTerm("컴포넌트", COMPONENT_GENERIC_WORDS)).toBe(true);
-    expect(isGenericTerm("컴포넌트", COMPATIBILITY_GENERIC_WORDS)).toBe(false);
-    expect(isGenericTerm("JEUS", COMPATIBILITY_GENERIC_WORDS)).toBe(false);
-    expect(isGenericTerm("", COMPATIBILITY_GENERIC_WORDS)).toBe(false);
-  });
-
-  it("다른 낱말과 기호로 이어 적힌 영어 기능어는 빼지 않는다", () => {
-    // 'Q&A' 의 'A' 는 관사가 아니고, 'on/off' 의 'on' 은 전치사가 아니다. 이어 적힌 낱말은 joinedTermKeys 가 알려 준다
-    expect(dropGenericTerms(["Q", "A", "관리"], COMPONENT_GENERIC_WORDS, new Set(["q", "a"]))).toEqual(["Q", "A", "관리"]);
-    expect(dropGenericTerms(["on", "off", "스위치"], COMPONENT_GENERIC_WORDS, new Set(["on", "off"]))).toEqual([
-      "on",
-      "off",
-      "스위치",
-    ]);
-    // 따로 적힌 것은 뺀다
-    expect(dropGenericTerms(["Q", "A", "관리"], COMPONENT_GENERIC_WORDS, new Set())).toEqual(["Q", "관리"]);
-    expect(isGenericTerm("A", COMPONENT_GENERIC_WORDS, new Set(["a"]))).toBe(false);
-    expect(isGenericTerm("A", COMPONENT_GENERIC_WORDS)).toBe(true);
-  });
-
-  it("대상의 모든 항목에 해당하는 낱말은 이어 적혀 있어도 뺀다", () => {
-    // '전자정부(표준프레임워크)' 처럼 적어도 두 낱말은 프레임워크 자체를 가리킨다
-    const joined = new Set(["전자정부", "표준프레임워크", "egovframe", "spring"]);
-    expect(dropGenericTerms(["전자정부", "표준프레임워크", "4.3", "CMS"], COMPATIBILITY_GENERIC_WORDS, joined)).toEqual([
-      "4.3",
-      "CMS",
-    ]);
-    expect(dropGenericTerms(["eGovFrame", "Spring"], COMPATIBILITY_GENERIC_WORDS, joined)).toEqual(["Spring"]);
+  it("목록의 낱말이 다른 낱말의 일부일 뿐이면 가려 주지 못하는 낱말이 아니다", () => {
+    for (const term of ["within", "forum", "information", "eGovFrameWeb", "egov-cms", "subcomponent", "전자정부포털"]) {
+      expect(isEnglishFunctionWord(term), term).toBe(false);
+      expect(listedTargetWord(term, COMPONENT_GENERIC_WORDS), term).toBeNull();
+    }
   });
 });
 

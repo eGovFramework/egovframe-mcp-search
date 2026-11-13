@@ -13,12 +13,10 @@ import {
   COMPONENT_GENERIC_WORDS,
   MAX_SEARCH_TERMS,
   codePointLength,
-  dropGenericTerms,
   extractSearchTerms,
   flexibleForm,
   isEnglishFunctionWord,
   isEnglishTerm,
-  joinedTermKeys,
   listedTargetWord,
   parseKeywordQuery,
   particleStrippedForms,
@@ -332,7 +330,10 @@ export class SQLiteManager {
 
   /**
    * 키워드 검색 — 모든 검색어가 일치하는 행(rows, 앞에서부터 limit 건)과 그 전체 건수(total)를 돌려준다.
-   * 행에는 id 와 created_at 도 들어 있다. 일치 규칙과 정렬은 queryCompatibleSoftware 의 1단계(all-terms)와 같다.
+   * 행에는 id 와 created_at 도 들어 있다.
+   *
+   * queryCompatibleSoftware 의 0단계와 1단계(all-terms)를 그대로 쓴다 (matchAllTerms). 가려 주지 못하는 낱말을 빼는
+   * 규칙, 검색어 수 상한, 일치 규칙, 정렬이 그 조회가 모든 검색어 일치로 찾은 결과와 같다.
    *
    * queryCompatibleSoftware 와 달리 대체 검색(any-term)으로 넘어가지 않는다. 이 메서드의 결과는 통합 검색이
    * 결과를 찾은 방식(matchMode)의 표시 없이 싣기 때문에, 대체 검색 결과를 돌려주면 일부 검색어만 일치한 행이
@@ -343,16 +344,16 @@ export class SQLiteManager {
     query: string,
     limit: number = 20,
   ): { rows: CompatibilitySoftware[]; total: number } {
-    const target = COMPATIBILITY_SEARCH_ALL_COLUMNS;
-    // 가려 주지 못하는 낱말은 다른 검색어가 남으면 뺀다 (검색어를 상한까지 추출한 뒤에 뺀다).
-    // 검색어가 하나도 추출되지 않으면 빈 배열 그대로다
-    const terms = dropGenericTerms(extractSearchTerms(query), target.genericTerms, joinedTermKeys(query));
-    if (terms.length === 0) {
-      return { rows: [], total: 0 };
-    }
     const page: SqlPage = { limit: toSqlLimit(limit), offset: 0 };
-    const found = this.allTermsStage<CompatibilitySoftware>(target, terms, NO_FILTER, page, []);
-    return found ? { rows: found.rows, total: found.total } : { rows: [], total: 0 };
+    // OR 가 없는 query 로 다룬다 (OR 가 있을 때만 적용하는 규칙도 따르지 않는다)
+    const parsed: KeywordQuery = { ...parseKeywordQuery(query), orQuery: false };
+    const { allTerms } = this.matchAllTerms<CompatibilitySoftware>(
+      COMPATIBILITY_SEARCH_ALL_COLUMNS,
+      parsed,
+      NO_FILTER,
+      page,
+    );
+    return allTerms ? { rows: allTerms.rows, total: allTerms.total } : { rows: [], total: 0 };
   }
 
   /**
@@ -498,9 +499,7 @@ export class SQLiteManager {
     page: SqlPage,
   ): { rows: Row[]; total: number; matchMode: KeywordMatchMode; terms: KeywordTermUsage } {
     const { orQuery } = query;
-    // 검색어의 쓸 꼴은 0단계와 대체 검색이 함께 쓴다. 검색어마다 한 번만 구한다
-    const formOf = this.formResolver(target, filter);
-    const selected = this.selectSearchTerms(target, query, filter, formOf);
+    const { selected, formOf, allTerms } = this.matchAllTerms<Row>(target, query, filter, page);
     /**
      * 검색에서 뺀 검색어: 가려 주지 못해 뺀 낱말과, 고른 검색어 가운데 검색에 넘긴 검색어(searched)에 들지 못한
      * 한 글자 검색어. query 에 적힌 순서다
@@ -510,10 +509,6 @@ export class SQLiteManager {
         (term) => selected.dropped.includes(term) || (selected.terms.includes(term) && !searched.includes(term)),
       );
 
-    // OR 가 있으면 모든 검색어가 일치하는 행을 먼저 찾지 않는다
-    const allTerms = orQuery
-      ? null
-      : this.allTermsStage<Row>(target, selected.terms, filter, page, selected.droppedInName);
     if (allTerms) {
       const { used, rows, total } = allTerms;
       const usage: KeywordTermUsage = { used, ignored: [], dropped: droppedFrom(used), required: used.length };
@@ -536,6 +531,36 @@ export class SQLiteManager {
         ...(orQuery ? { orQuery: true } : {}),
       },
     };
+  }
+
+  /**
+   * 키워드 검색의 0단계와 1단계: 검색에 쓸 검색어를 고르고(selectSearchTerms), 모든 검색어가 일치하는 행을 찾는다
+   * (allTermsStage).
+   *
+   * 조회(keywordSearch)와 모든 검색어 일치만 하는 조회(queryCompatibleSoftwareAllTerms)가 함께 쓴다. 가려 주지
+   * 못하는 낱말을 빼는 규칙, 검색어 수 상한, 정렬 기준을 두 조회가 한 곳에서 따르게 하려는 것이다.
+   *
+   * query.orQuery 가 true 이면 1단계를 건너뛴다 (allTerms 는 null. 모든 검색어가 일치하는 행이 없을 때도 null 이다).
+   * selected 는 0단계의 결과이고, formOf 는 0단계가 쓴 "검색어의 쓸 꼴" 이다. 이어지는 대체 검색이 다시 쓴다
+   * (검색어마다 한 번만 조회한다).
+   */
+  private matchAllTerms<Row>(
+    target: KeywordSearchTarget,
+    query: KeywordQuery,
+    filter: SqlCondition,
+    page: SqlPage,
+  ): {
+    selected: { terms: string[]; dropped: string[]; droppedInName: SqlExpression[] };
+    formOf: FormResolver;
+    allTerms: { rows: Row[]; total: number; used: string[] } | null;
+  } {
+    const formOf = this.formResolver(target, filter);
+    const selected = this.selectSearchTerms(target, query, filter, formOf);
+    // OR 가 있으면 모든 검색어가 일치하는 행을 먼저 찾지 않는다
+    const allTerms = query.orQuery
+      ? null
+      : this.allTermsStage<Row>(target, selected.terms, filter, page, selected.droppedInName);
+    return { selected, formOf, allTerms };
   }
 
   /**

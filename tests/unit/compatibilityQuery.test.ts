@@ -380,6 +380,9 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
         ["egov JEUS", ["egov"]],
         ["전자정부 표준프레임워크 JEUS", ["전자정부", "표준프레임워크"]],
         ["전자정부표준프레임워크 전자정부프레임워크 JEUS", ["전자정부표준프레임워크", "전자정부프레임워크"]],
+        // 다른 낱말과 이어 적혀 있어도 같은 것을 가리킨다 (영어 기능어와 달리 이어 적힌 낱말을 따로 가리지 않는다)
+        ["전자정부/표준프레임워크 JEUS", ["전자정부", "표준프레임워크"]],
+        ["eGovFrame+JEUS", ["eGovFrame"]],
       ];
       for (const [query, dropped] of cases) {
         expect(termsOf(query), `query=${query}`).toEqual({ used: ["JEUS"], ignored: [], dropped, required: 1 });
@@ -681,6 +684,36 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       const result = search("the CMS");
       expect(result.terms?.dropped).toEqual(["the"]);
       expect(versionsOf(result.rows)).toEqual(["SampleCMS 1.0", "OtherCMS 2.0", "DL-WCMS for eGovframe v1.0"]);
+    });
+
+    it("모든 검색어 일치만 하는 조회(queryCompatibleSoftwareAllTerms)도 같은 규칙으로 낱말을 빼고 정렬한다", () => {
+      const versions = (query: string, limit?: number) =>
+        versionsOf(sqlite.queryCompatibleSoftwareAllTerms(query, limit).rows);
+
+      // 뺀 대상 낱말이 이름 컬럼에 든 행이 맨 앞이다 (전체 건수는 limit 과 무관하다)
+      expect(versions("eGovframe CMS")).toEqual(["DL-WCMS for eGovframe v1.0", "SampleCMS 1.0", "OtherCMS 2.0"]);
+      expect(sqlite.queryCompatibleSoftwareAllTerms("eGovframe CMS", 1)).toMatchObject({ total: 3 });
+      expect(versions("eGovframe CMS", 1)).toEqual(["DL-WCMS for eGovframe v1.0"]);
+      // 대상 낱말은 쓸 수 있는 다른 검색어가 있을 때만 뺀다. '8' 은 한 글자이고 '없는말' 은 어느 행에도 없다
+      expect(versions("eGovframe 8")).toEqual(["DL-WCMS for eGovframe v1.0"]);
+      expect(versions("eGovframe 없는말")).toEqual([]);
+      // 영어 기능어는 영어 기능어가 아닌 두 글자 이상의 낱말이 있을 때만 뺀다
+      expect(versions("on T").sort()).toEqual(["DL-WCMS for eGovframe v1.0", "OtherCMS 2.0", "SampleCMS 1.0"]);
+      expect(versions("the eGovframe")).toEqual(["DL-WCMS for eGovframe v1.0"]);
+      // 검색어 수 상한은 뺀 뒤에 적용한다
+      const functionWords = "is the a of to in on at by as it this that what which how";
+      expect(versions(`${functionWords} JEUS`)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      // OR 는 따르지 않는다: OR 가 있어도 이름 컬럼에 든 행이 있는 대상 낱말을 빼고, 모든 검색어가 일치하는 행만 찾는다
+      expect(versions("eGovframe OR JEUS")).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(versions("JEUS OR Tibero")).toEqual([]);
+
+      // 조회(queryCompatibleSoftware)가 모든 검색어 일치로 찾은 결과와 행도 순서도 같다
+      for (const query of ["eGovframe CMS", "the CMS", "on T", "eGovframe 8", "Solution CMS", "ECM Solution"]) {
+        const result = search(query);
+        expect(result.matchMode, `query=${query}`).toBe("all-terms");
+        expect(versions(query), `query=${query}`).toEqual(versionsOf(result.rows));
+        expect(sqlite.queryCompatibleSoftwareAllTerms(query).total, `query=${query}`).toBe(result.total);
+      }
     });
 
     it("뺀 대상 낱말이 없으면 정렬에 그 기준을 두지 않는다", () => {

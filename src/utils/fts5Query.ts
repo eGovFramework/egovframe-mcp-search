@@ -7,7 +7,7 @@
  *
  * - 검색어 추출: extractSearchTerms, joinedTermKeys, hasOrOperator, parseKeywordQuery
  * - 행을 가려 주지 못하는 낱말의 목록과 판정: ENGLISH_FUNCTION_WORDS, COMPATIBILITY_GENERIC_WORDS,
- *   COMPONENT_GENERIC_WORDS, isEnglishFunctionWord, listedTargetWord, isGenericTerm, dropGenericTerms
+ *   COMPONENT_GENERIC_WORDS, isEnglishFunctionWord, listedTargetWord
  *   (그 낱말을 언제 검색어에서 빼는지는 키워드 검색이 정한다: database/sqliteManager 의 selectSearchTerms)
  * - 조사가 붙은 검색어를 조사 없는 꼴로 바꿔 보는 후보: particleStrippedForms
  * - 기호로 이은 검색어를 저장된 표기와 구분 기호가 달라도 견주는 패턴 (유연한 꼴): flexibleForm
@@ -210,7 +210,7 @@ export const COMPATIBILITY_GENERIC_WORDS: ReadonlySet<string> = new Set(FRAMEWOR
 /** 공통컴포넌트 검색에서, 목록의 모든 항목에 해당해 행을 가려 주지 못하는 낱말 */
 export const COMPONENT_GENERIC_WORDS: ReadonlySet<string> = new Set([...FRAMEWORK_WORDS, ...COMPONENT_WORDS]);
 
-/** 이어 적힌 낱말이 없는 경우 (isEnglishFunctionWord, isGenericTerm, dropGenericTerms 의 기본값) */
+/** 이어 적힌 낱말이 없는 경우 (isEnglishFunctionWord 의 기본값) */
 const NO_JOINED_TERMS: ReadonlySet<string> = new Set();
 
 /**
@@ -241,35 +241,6 @@ export function listedTargetWord(term: string, targetWords: ReadonlySet<string>)
     return term;
   }
   return particleStrippedForms(term).find((form) => targetWords.has(form.toLowerCase())) ?? null;
-}
-
-/**
- * 낱말이 행을 가려 주지 못하는 낱말인지: 영어 기능어(isEnglishFunctionWord)이거나, 검색 대상의 모든 항목에
- * 해당하는 낱말(listedTargetWord)이다.
- */
-export function isGenericTerm(
-  term: string,
-  targetWords: ReadonlySet<string>,
-  joinedTerms: ReadonlySet<string> = NO_JOINED_TERMS,
-): boolean {
-  return isEnglishFunctionWord(term, joinedTerms) || listedTargetWord(term, targetWords) !== null;
-}
-
-/**
- * 검색어에서 행을 가려 주지 못하는 낱말(isGenericTerm)을 뺀다.
- *
- * 다른 검색어가 남을 때만 뺀다. 빼고 나서 남는 검색어가 없으면 받은 검색어를 그대로 돌려준다:
- * 제품명에 'eGovframe' 이 든 제품을 그 낱말만으로 찾을 수 있어야 한다.
- * joinedTerms 는 query 에서 다른 낱말과 기호로 이어 적힌 낱말이다 (joinedTermKeys). 주지 않으면 모든 검색어를
- * 따로 적힌 낱말로 본다.
- */
-export function dropGenericTerms(
-  terms: string[],
-  targetWords: ReadonlySet<string>,
-  joinedTerms: ReadonlySet<string> = NO_JOINED_TERMS,
-): string[] {
-  const kept = terms.filter((term) => !isGenericTerm(term, targetWords, joinedTerms));
-  return kept.length > 0 ? kept : terms;
 }
 
 /** 전각 ASCII(U+FF01~U+FF5E)와 그에 대응하는 반각 문자(U+0021~U+007E)의 코드 차이 */
