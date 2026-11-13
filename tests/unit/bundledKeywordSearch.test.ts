@@ -7,6 +7,7 @@
  * - 영문 접속사, 조사가 붙은 제품명, 전각 영숫자로 물으면 0건이었다.
  * - 제품 버전 표기가 검색 대상이 아니었다 ("JEUS 8").
  * - 프레임워크 버전과 확인일자가 검색 대상이 아니었다 (설명에 버전이 적히지 않은 행, "2025", "2024-11").
+ * - 제품명을 여럿 나열하거나 영어 문장으로 물으면 0건이었다 ("JEUS Tibero WebLogic").
  *
  * DB 는 읽기 전용으로 열고, 조회가 파일을 바꾸지 않았는지 마지막에 확인한다.
  * 동봉 데이터는 갱신될 수 있으므로 건수를 숫자로 고정하지 않고, 같은 뜻의 두 조회가 같은 결과를 내는지와
@@ -90,6 +91,27 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       expect(names.has("Tibero")).toBe(true);
     });
 
+    it('제품명 셋을 나열한 "JEUS Tibero WebLogic" 은 세 제품의 행을 모두 돌려준다', () => {
+      // 한 행에 두 제품명이 함께 들 수 없다. 검색어의 절반 이상이 일치하는 행만 찾던 때에는 0건이었다
+      const result = compatible("JEUS Tibero WebLogic");
+      expect(result.matchMode).toBe("any-term");
+      expect(result.terms).toEqual({ used: ["JEUS", "Tibero", "WebLogic"], ignored: [], required: 1 });
+      // 제품명 하나씩으로 찾은 행을 합친 것과 같다
+      const each = ["JEUS", "Tibero", "WebLogic"].map((name) => rowKeys(compatible(name)));
+      expect(each.every((keys) => keys.length > 0)).toBe(true);
+      expect(rowSet(result)).toEqual([...new Set(each.flat())].sort());
+    });
+
+    it('영어 문장으로 물은 "Is JEUS compatible with eGovFrame 4.3?" 도 0건이 되지 않는다', () => {
+      // 다섯 검색어(Is, JEUS, with, eGovFrame, 4.3) 가운데 셋 이상이 든 행이 없어 0건이었다
+      const result = compatible("Is JEUS compatible with eGovFrame 4.3?");
+      expect(result.matchMode).toBe("any-term");
+      expect(result.total).toBeGreaterThan(0);
+      expect(result.terms?.used).toEqual(expect.arrayContaining(["JEUS", "4.3"]));
+      // 일치한 검색어가 가장 많은 행이 맨 앞이다: 프레임워크 4.3 의 JEUS
+      expect(result.rows[0]).toMatchObject({ product_name: "JEUS", framework_version: "4.3" });
+    });
+
     it('"CMS 추천" 은 any-term 으로 CMS 행을 돌려준다', () => {
       const cms = compatible("CMS");
       const result = compatible("CMS 추천");
@@ -116,7 +138,7 @@ describe("동봉 지식베이스의 키워드 검색", () => {
         const result = compatible(withParticle);
         expect(expected.total, `query=${bare}`).toBeGreaterThan(0);
         expect(rowSet(result), `query=${withParticle}`).toEqual(rowSet(expected));
-        expect(result.terms, `query=${withParticle}`).toEqual({ used: [bare], ignored: [] });
+        expect(result.terms, `query=${withParticle}`).toEqual({ used: [bare], ignored: [], required: 1 });
       }
     });
 

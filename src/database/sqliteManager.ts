@@ -427,13 +427,14 @@ export class SQLiteManager {
    * 한 글자 검색어는 두 글자 이상인 검색어가 있으면 쓰지 않는다 (dropSingleCharacterTerms).
    * 1) 모든 검색어가 일치하는 행을 찾는다 (allTermsSearch).
    * 2) 필터까지 적용한 결과가 0건이면 대체 검색(anyTermSearch)으로 넘어간다: 일치하는 행이 있는 검색어만
-   *    남기고, 그 절반 이상이 일치하는 행을 찾는다.
+   *    남기고, 그 절반 이상이 일치하는 행을 찾는다. 그런 행이 없으면 일치 기준을 낮춰 가며 찾는다.
    *    0건인지는 페이지가 아니라 전체 건수로 판단한다 (offset 이 끝을 넘었다고 검색 방식을 바꾸지 않는다).
    *
    * 두 단계 모두 일치한 검색어가 많은 행, 이름 컬럼(nameColumns)에 일치한 검색어가 많은 행, 대상의 기본 정렬,
    * rowid 순으로 돌려준다 (selectByMatchedTerms).
    *
-   * 결과의 terms 는 실제로 쓴 검색어(used)와 일치하는 행이 없어 쓰지 않은 검색어(ignored)다.
+   * 결과의 terms 는 실제로 쓴 검색어(used), 일치하는 행이 없어 쓰지 않은 검색어(ignored), 결과의 행마다
+   * 일치한 검색어의 최소 수(required)다.
    */
   private keywordSearch<Row>(
     target: KeywordSearchTarget,
@@ -445,7 +446,8 @@ export class SQLiteManager {
 
     const allTerms = this.allTermsSearch<Row>(target, searchable, filter, page);
     if (allTerms) {
-      return { ...allTerms, matchMode: 'all-terms', terms: { used: searchable, ignored: [] } };
+      const terms: KeywordTermUsage = { used: searchable, ignored: [], required: searchable.length };
+      return { ...allTerms, matchMode: 'all-terms', terms };
     }
     return { ...this.anyTermSearch<Row>(target, searchable, filter, page), matchMode: 'any-term' };
   }
@@ -526,10 +528,14 @@ export class SQLiteManager {
    * 결과를 0건으로 만들지 않게 하고, 조사가 붙은 제품명('JEUS는', '티맥스는')으로도 찾게 한다.
    * 많은 행과 일치하는 검색어는 버리지 않는다. 그런 검색어만 일치한 행은 정렬에서 뒤로 갈 뿐이다.
    *
-   * 남은 검색어가 k 개일 때 ceil(k/2) 개 이상 일치한 행만 돌려준다 (k 가 0 이면 빈 결과).
+   * 남은 검색어가 k 개일 때 ceil(k/2) 개 이상 일치한 행을 돌려준다 (k 가 0 이면 빈 결과).
+   * 그 기준을 채운 행이 없으면 기준을 1씩 낮춰 행이 나올 때까지 찾는다. 제품명 셋을 나열한 query 처럼
+   * 한 행에 두 검색어가 함께 들 수 없는 경우에 0건을 돌려주면, 호출자는 그 제품들이 목록에 없다고 읽는다.
+   * 남은 검색어는 저마다 대상 안에 일치하는 행이 있으므로, k 가 1 이상이면 결과가 0건이 되지 않는다.
    * 정렬과 필터 적용은 selectByMatchedTerms 를 따른다.
    *
-   * 결과의 terms.used 는 남은 검색어(조사를 떼어 쓴 것은 뗀 꼴)이고, terms.ignored 는 쓰지 않은 검색어다.
+   * 결과의 terms.used 는 남은 검색어(조사를 떼어 쓴 것은 뗀 꼴), terms.ignored 는 쓰지 않은 검색어,
+   * terms.required 는 실제로 적용한 일치 기준이다 (k 가 0 이면 0).
    */
   private anyTermSearch<Row>(
     target: KeywordSearchTarget,
@@ -550,7 +556,8 @@ export class SQLiteManager {
     };
 
     // 쓰기로 한 검색어(used)와 그 검색어를 견주는 조건. 두 배열의 길이가 k 다.
-    const usage: KeywordTermUsage = { used: [], ignored: [] };
+    const used: string[] = [];
+    const ignored: string[] = [];
     const matchers: TermMatcher[] = [];
     // 조사를 뗀 꼴이 다른 검색어와 같으면 한 번만 센다 (LIKE 처럼 영문자의 대소문자는 가리지 않는다)
     const usedKeys = new Set<string>();
@@ -558,19 +565,27 @@ export class SQLiteManager {
       // 검색어 그대로 일치하는 행이 있으면 그대로 쓰고, 없을 때만 조사를 뗀 꼴을 차례로 견준다
       const match = firstMatching([term, ...particleStrippedForms(term)]);
       if (match === null) {
-        usage.ignored.push(term);
+        ignored.push(term);
       } else if (!usedKeys.has(match.form.toLowerCase())) {
         usedKeys.add(match.form.toLowerCase());
-        usage.used.push(match.form);
+        used.push(match.form);
         matchers.push(match.matcher);
       }
     }
 
     if (matchers.length === 0) {
-      return { rows: [], total: 0, terms: usage };
+      return { rows: [], total: 0, terms: { used, ignored, required: 0 } };
     }
-    const found = this.selectByMatchedTerms<Row>(target, matchers, Math.ceil(matchers.length / 2), filter, page);
-    return { ...found, terms: usage };
+
+    // 절반(올림)에서 시작해, 그 기준을 채운 행이 없으면 1 까지 낮춘다.
+    // 행이 있는지는 페이지가 아니라 전체 건수로 판단한다 (offset 이 끝을 넘었다고 기준을 낮추지 않는다)
+    let required = Math.ceil(matchers.length / 2);
+    let found = this.selectByMatchedTerms<Row>(target, matchers, required, filter, page);
+    while (found.total === 0 && required > 1) {
+      required -= 1;
+      found = this.selectByMatchedTerms<Row>(target, matchers, required, filter, page);
+    }
+    return { ...found, terms: { used, ignored, required } };
   }
 
   /** 조건(condition)을 채우는 행이 필터를 적용한 대상 안에 하나라도 있는지. */

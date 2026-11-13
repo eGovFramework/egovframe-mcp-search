@@ -37,7 +37,8 @@ export interface CompatibilitySearchFilter {
  * 꼴의 검색어로 시작할 때 일치한다.
  * - all-terms: 모든 검색어가 일치하는 행을 찾았다
  * - any-term: 모든 검색어가 일치하는 행이 없어 대체 검색으로 찾았다. 일치하는 행이 있는 검색어만 남기고
- *   (조사가 붙은 검색어는 조사를 떼어 본다), 그 절반 이상이 일치하는 행을 돌려준다. 0건일 수도 있다
+ *   (조사가 붙은 검색어는 조사를 떼어 본다), 그 절반 이상이 일치하는 행을 돌려준다. 그런 행이 없으면
+ *   일치 기준을 1씩 낮춰 행이 나올 때까지 찾는다. 남은 검색어가 하나도 없을 때만 0건이다
  */
 export type KeywordMatchMode = 'all-terms' | 'any-term';
 
@@ -51,6 +52,11 @@ export interface KeywordTermUsage {
   used: string[];
   /** 일치하는 행이 없어 쓰지 않은 검색어 (query 에 적힌 꼴 그대로) */
   ignored: string[];
+  /**
+   * 결과의 행마다 일치한 검색어(used)의 최소 수. all-terms 는 used 의 길이이고, any-term 은 실제로 적용한
+   * 일치 기준이다 (used 의 절반을 올림한 수에서 시작해, 행이 없으면 1 까지 낮춘다). used 가 비면 0 이다
+   */
+  required: number;
 }
 
 // 호환성 소프트웨어 조회 옵션

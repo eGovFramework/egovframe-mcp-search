@@ -255,10 +255,12 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       expect(byCategory).not.toHaveProperty("available");
     });
 
-    it("검색어를 모두 쓰고도 절반 이상 일치하는 행이 없어 0건일 때도 알린다", async () => {
-      // JEUS·Tibero·WebLogic 은 저마다 일치하는 행이 있지만, 둘 이상이 함께 든 행은 없다
+    it("검색어마다 일치하는 행이 있으면 0건이 되지 않으므로 싣지 않는다", async () => {
+      // JEUS·Tibero·WebLogic 은 둘 이상이 함께 든 행이 없다. 일치 기준을 낮춰 하나씩 일치하는 행을 돌려준다.
+      // 기준을 낮추지 않던 때에는 total 0 과 totalWithoutQuery 만 실려, 세 제품이 목록에 없는 것처럼 읽혔다
       const response = await searchCompatibleSoftware({ query: "JEUS Tibero WebLogic" });
-      expect(response).toMatchObject({ total: 0, matchMode: "any-term", totalWithoutQuery: CATALOGUE.length });
+      expect(response).toMatchObject({ total: 4, count: 4, matchMode: "any-term" });
+      expect(response).not.toHaveProperty("totalWithoutQuery");
       expect(response).not.toHaveProperty("ignoredTerms");
     });
 
