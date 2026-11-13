@@ -119,6 +119,8 @@ export async function searchKnowledge(args: {
     query,
     options,
     resultCount: results.length,
+    // createdAt 은 넣지 않는다: 모든 행이 색인한 시각이라 글이 쓰인 날짜로 오해된다
+    // (최근 목록에서는 정렬 기준이므로 유지한다)
     results: results.map(r => ({
       id: r.id,
       type: r.type,
@@ -128,7 +130,6 @@ export async function searchKnowledge(args: {
       tags: r.tags,
       importance: r.importance,
       similarity: toSimilarity(r.score),
-      createdAt: r.createdAt,
     })),
   };
 }

@@ -70,6 +70,30 @@ describe.skipIf(!HAS_BUNDLED_TABLES)("searchKnowledge 도구 — 의미 검색 �
     // 그다음 결과는 1 보다 작은 코사인 유사도 (제곱 L2 를 쓰면 2·cos - 1 이 되어 값이 달라진다)
     expect(results[1].similarity).toBeLessThan(1);
   });
+
+  it("의미 검색 결과에는 색인 시각(createdAt)을 넣지 않는다", async () => {
+    useQueryVector(rows[100].vector);
+    const results = semanticResults(await searchKnowledge({ query: "(저장된 벡터로 대체)", limit: 3 }));
+
+    expect(results).toHaveLength(3);
+    for (const result of results) {
+      // 모든 행의 createdAt 은 색인한 시각이라 게시 일자로 오해된다
+      expect(result).not.toHaveProperty("createdAt");
+      expect(Object.keys(result).sort()).toEqual(
+        ["content", "context", "id", "importance", "similarity", "tags", "title", "type"].sort(),
+      );
+    }
+  });
+
+  it("최근 목록 결과에는 정렬 기준인 createdAt 을 유지한다", async () => {
+    const output = (await searchKnowledge({ sort: "recent", limit: 5 })) as {
+      results: Array<{ createdAt: string }>;
+    };
+    expect(output.results).toHaveLength(5);
+    const times = output.results.map((result) => Date.parse(result.createdAt));
+    expect(times.every(Number.isFinite)).toBe(true);
+    expect(times).toEqual([...times].sort((a, b) => b - a));
+  });
 });
 
 describe.skipIf(!HAS_BUNDLED_TABLES)("searchKnowledge 도구 — query 필수 여부", () => {
