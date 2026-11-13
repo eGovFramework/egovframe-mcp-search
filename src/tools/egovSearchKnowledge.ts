@@ -8,7 +8,7 @@
 
 import { getInitializedGuideManager } from "../rag/guideManager.js";
 import { getHybridManager } from "../database/hybridManager.js";
-import { GUIDE_SITE_BASE_URL } from "../kb/sources.js";
+import { GUIDE_SITE_BASE_URL } from "../kb/guideSite.js";
 import { UserFacingError, toUserMessage } from "../utils/errors.js";
 import { extractSearchTerms } from "../utils/fts5Query.js";
 import { KNOWLEDGE_TYPES, type KnowledgeType } from "../types/knowledge.js";

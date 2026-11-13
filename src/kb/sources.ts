@@ -23,11 +23,8 @@ export interface RepoRef {
 /** eGovFrame 가이드 문서 (templateSources 의 클론 URL 과 동일 저장소) */
 export const DOCS_REPO: RepoRef = { owner: 'egovframework', repo: 'egovframe-docs' };
 
-/**
- * 공식 가이드가 게시되는 사이트(GitHub Pages)의 기준 주소.
- * 가이드 청크의 url(Hugo permalink, 예: /egovframe-runtime/...)을 이 뒤에 붙이면 문서 주소가 된다.
- */
-export const GUIDE_SITE_BASE_URL = 'https://egovframework.github.io/egovframe-docs';
+// 공식 가이드 사이트의 주소는 검색 서버도 쓰므로 의존성이 없는 kb/guideSite 에 있다.
+export { GUIDE_SITE_BASE_URL } from './guideSite.js';
 
 /** 공통컴포넌트 소스 */
 export const COMPONENTS_REPO: RepoRef = { owner: 'eGovFramework', repo: 'egovframe-common-components' };
