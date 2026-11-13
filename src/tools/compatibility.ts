@@ -239,11 +239,19 @@ export interface CompatibilitySearchResponse {
   filters: CompatibilitySearchFilter;
   /** 키워드 검색이 결과를 찾은 방식. 키워드 검색을 하지 않았으면 없다 */
   matchMode?: KeywordMatchMode;
+  /** matchMode 가 any-term 일 때: 대체 검색에 쓴 검색어. 조사를 떼어 쓴 검색어는 뗀 꼴이다 */
+  usedTerms?: string[];
+  /**
+   * matchMode 가 any-term 일 때: 결과의 행마다 일치한 검색어(usedTerms)의 최소 수.
+   * usedTerms 의 절반(올림)에서 시작해, 그 기준을 채운 행이 없으면 1 까지 낮춘 값이다.
+   * usedTerms 의 수보다 작으면 결과의 행은 검색어의 일부만 일치한 행이다. usedTerms 가 비면 0 이다
+   */
+  requiredMatches?: number;
   /** 일치하는 행이 없어 검색에 쓰지 않은 검색어 (query 에 적힌 꼴). 그런 검색어가 없으면 없다 */
   ignoredTerms?: string[];
   /**
    * 키워드 검색 결과가 0건인데 같은 필터만 적용하면 행이 있을 때: 필터만 적용한 건수.
-   * 0건의 원인이 필터가 아니라 query 임을 알 수 있다
+   * 0건의 원인이 필터가 아니라 query 임을 알 수 있다 (query 의 어느 검색어도 그 행들과 일치하지 않았다)
    */
   totalWithoutQuery?: number;
   /** 결과가 0건이고 frameworkVersion·category 가 데이터에 없는 값일 때: 쓸 수 있는 값 */
@@ -295,6 +303,7 @@ export async function searchCompatibleSoftware(args: {
   // 키워드와 필터를 한 번의 조회로 처리한다 (필터는 SQL 에서 LIMIT 보다 먼저 적용된다).
   // matchMode 는 키워드 검색이 결과를 찾은 방식이다 (all-terms: 모든 검색어가 일치하는 행,
   // any-term: 그런 행이 없어 대체 검색으로 찾은 행. 일부 검색어만 일치한다).
+  // 대체 검색은 쓸 검색어가 하나라도 있으면 결과가 0건이 되지 않는다 (일치 기준을 낮춰 가며 찾는다).
   const { rows: results, total, matchMode, terms } = sqlite.queryCompatibleSoftware({
     query: args.query?.trim(),
     filters,
@@ -317,6 +326,8 @@ export async function searchCompatibleSoftware(args: {
     offset,
     filters,
     ...(matchMode ? { matchMode } : {}),
+    // 대체 검색 결과는 일부 검색어만 일치한 행이다. 어떤 검색어 가운데 몇 개가 일치했는지 함께 알린다
+    ...(matchMode === 'any-term' && terms ? { usedTerms: terms.used, requiredMatches: terms.required } : {}),
     ...(terms && terms.ignored.length > 0 ? { ignoredTerms: terms.ignored } : {}),
     ...(totalWithoutQuery > 0 ? { totalWithoutQuery } : {}),
     ...(available ? { available } : {}),

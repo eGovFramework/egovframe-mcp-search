@@ -237,6 +237,61 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
     });
   });
 
+  describe("대체 검색에 쓴 검색어와 일치 기준 (usedTerms, requiredMatches)", () => {
+    useCatalogue(CATALOGUE);
+
+    it("대체 검색으로 찾았으면 쓴 검색어와 적용한 일치 기준을 알린다", async () => {
+      // JEUS·8.5·Tibero 가운데 둘 이상이 든 행은 JEUS 8.5 하나다 ('여부' 는 어느 행에도 없다)
+      const response = await searchCompatibleSoftware({ query: "JEUS 8.5 Tibero 여부" });
+      expect(versionsOf(response.software)).toEqual(["JEUS 8.5"]);
+      expect(response).toMatchObject({
+        matchMode: "any-term",
+        usedTerms: ["JEUS", "8.5", "Tibero"],
+        requiredMatches: 2,
+        ignoredTerms: ["여부"],
+      });
+    });
+
+    it("일치 기준을 낮춰 찾았으면 낮춘 기준을 알린다", async () => {
+      // 제품명 셋을 나열하면 둘 이상이 함께 든 행이 없다. 하나만 일치한 행이라는 것을 requiredMatches 로 알 수 있다
+      const response = await searchCompatibleSoftware({ query: "JEUS Tibero WebLogic" });
+      expect(versionsOf(response.software)).toEqual(["JEUS 21", "Tibero 7", "JEUS 8.5", "WebLogic 12c"]);
+      expect(response).toMatchObject({
+        total: 4,
+        matchMode: "any-term",
+        usedTerms: ["JEUS", "Tibero", "WebLogic"],
+        requiredMatches: 1,
+      });
+    });
+
+    it("조사를 떼어 쓴 검색어는 뗀 꼴로 싣는다", async () => {
+      const response = await searchCompatibleSoftware({ query: "JEUS는 지원되나요" });
+      expect(response).toMatchObject({ usedTerms: ["JEUS"], requiredMatches: 1, ignoredTerms: ["지원되나요"] });
+    });
+
+    it("쓸 검색어가 하나도 없어 0건이면 빈 목록과 0 을 싣는다", async () => {
+      const response = await searchCompatibleSoftware({ query: "없는제품이름 추천" });
+      expect(response).toMatchObject({ total: 0, matchMode: "any-term", usedTerms: [], requiredMatches: 0 });
+    });
+
+    it("모든 검색어가 일치하는 행을 찾았으면 싣지 않는다", async () => {
+      const response = await searchCompatibleSoftware({ query: "티맥스 JEUS" });
+      expect(response.matchMode).toBe("all-terms");
+      expect(response).not.toHaveProperty("usedTerms");
+      expect(response).not.toHaveProperty("requiredMatches");
+    });
+
+    it("키워드 검색을 하지 않았으면 싣지 않는다", async () => {
+      for (const response of [
+        await searchCompatibleSoftware({ frameworkVersion: "4.3" }),
+        await searchCompatibleSoftware({ query: "*" }),
+      ]) {
+        expect(response).not.toHaveProperty("usedTerms");
+        expect(response).not.toHaveProperty("requiredMatches");
+      }
+    });
+  });
+
   describe("query 때문에 0건일 때의 안내 (totalWithoutQuery)", () => {
     useCatalogue(CATALOGUE);
 
