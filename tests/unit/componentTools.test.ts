@@ -52,7 +52,9 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
   });
 
   afterAll(async () => {
-    await fs.remove(tmpDir);
+    // 도구 모듈이 연 DB 연결은 닫을 방법이 없다. 열린 파일을 지울 수 없는 플랫폼(Windows)에서는
+    // 정리 실패를 무시한다 (OS 임시 디렉토리라 남아도 무방하다).
+    await fs.remove(tmpDir).catch(() => {});
   });
 
   afterEach(() => {
