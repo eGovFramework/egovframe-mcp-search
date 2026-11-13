@@ -57,7 +57,7 @@
 |-------|---------------|-----------|--------------|---------|
 | `guide` | 공식 가이드 (LanceDB) | 의미 검색, `chunkId` 로 청크 하나 읽기 | `layer`, `category`, `chunkId` | "트랜잭션 설정 방법" |
 | `knowledge` | 개발자 지식 (LanceDB) | 의미 검색, 최근 색인 순 목록 | `type`, `tags`, `minImportance`, `verifiedOnly`, `sort`, `knowledgeScope` | "페이징 처리가 안 될 때의 Q&A 사례" |
-| `components` | 공통컴포넌트 (SQLite + 소스 파일) | 키워드 검색, 목록, `action` 별 조회 | `componentId`, `componentIds`, `filePath`, `dbType`, `table`, `categoryId`, `keyword`, `hasWeb`, `version` | "게시판 컴포넌트의 의존성, DDL, 소스 파일" |
+| `components` | 공통컴포넌트 (SQLite + 소스 파일) | 키워드 검색, 목록, `action` 별 조회 | `componentId`(별칭 `component`, `id`), `componentIds`, `filePath`, `dbType`, `table`, `categoryId`, `keyword`, `hasWeb`, `version` | "게시판 컴포넌트의 의존성, DDL, 소스 파일" |
 | `compatibility` | 호환 소프트웨어 (SQLite) | 필터 조회, 키워드 검색 | `frameworkVersion`, `category`, `vendor`, `productName`, `minLevel`, `level`, `includeKnowledge` | "표준프레임워크 4.3 과 호환되는 CMS" |
 | `all` | 네 출처 전부 | 출처마다 검색한 결과를 한 응답에 모으는 통합 검색 | 각 필터는 그 필터를 쓰는 출처에만 적용 | "페이징 처리 관련 자료 전부" |
 | `auto` | 입력에서 추론 | 아래 규칙 참조 | - | scope 를 지정하지 않은 호출 |
@@ -66,11 +66,11 @@
 
 `scope` 를 생략하면(`auto`) 다음 순서로 출처를 정합니다.
 
-1. `action` 이 있거나 공통컴포넌트 필터(`componentId`, `componentIds`, `filePath`, `dbType`, `table`, `categoryId`, `hasWeb`)가 있으면 `components`
+1. `action` 이 있거나 공통컴포넌트 필터(`componentId` 와 그 별칭, `componentIds`, `filePath`, `dbType`, `table`, `categoryId`, `hasWeb`)가 있으면 `components`
 2. 호환 소프트웨어 필터(`frameworkVersion`, `vendor`, `productName`, `minLevel`, `level`, `includeKnowledge`)가 있거나 `category` 값이 호환 소프트웨어의 분류 이름이면 `compatibility`
 3. `layer` 나 `chunkId` 가 있거나 `category` 값이 공식 가이드의 category 이면 `guide`
 4. 개발자 지식 필터(`type`, `tags`, `minImportance`, `verifiedOnly`, `sort`)가 있으면 `knowledge`
-5. 그 밖에는 `query` 가 있으면 `all`, 없으면 `components` 의 카테고리 개요. 다만 `query` 없이 어느 출처의 분류도 아닌 `category` 만 주면 `compatibility` 로 처리하고, 쓸 수 있는 분류를 응답에 실음
+5. 그 밖에는 `query` 가 있으면 `all`, 없으면 `components`(목록 필터 `keyword`, `version` 이 있으면 목록, 없으면 카테고리 개요). 다만 `query` 없이 어느 출처의 분류도 아닌 `category` 를 주면 `compatibility` 로 처리하고, 쓸 수 있는 분류를 응답에 실음
 
 값이 기본값과 같은 필터(`includeKnowledge: false`, `verifiedOnly: false`, `sort: "relevance"`, `minImportance: 1`)는 출처를 정하는 데 쓰지 않습니다.
 
@@ -87,6 +87,7 @@
 | `dml` | `componentId`, `dbType`(선택), `table`(선택) | 초기 데이터 INSERT 문. 기본은 테이블마다 처음 20건이고, `table` 을 주면 그 테이블을 `limit`(최대 100)과 `filters.offset` 으로 나눠 조회 |
 
 - `componentId` 에는 컴포넌트 ID(`bbs`), 패키지명(`egovframework.com.cop.bbs`), 정확한 컴포넌트 이름(`게시판`)을 쓸 수 있습니다. 다만 `dependencies` 는 컴포넌트 ID 와 패키지명만 받습니다. 컴포넌트 ID 는 키워드 검색과 목록의 결과에 나옵니다.
+- `filters.component` 와 `filters.id` 는 `componentId` 의 별칭입니다. 셋 가운데 하나만 지정하며, 서로 다른 값을 함께 주면 오류로 응답합니다.
 - `action` 없이 `action` 전용 필터(`componentIds`, `filePath`, `dbType`, `table`)를 주면 목록이나 검색으로 답하지 않고, 그 필터에 필요한 `action` 을 알려 주는 오류로 응답합니다. `componentId` 가 함께 있으면 상세 정보를 돌려주고, 그 필터는 무시한 필터로 알립니다.
 - `filePath` 는 `sourceFiles` 가 출력한 경로(소스 루트 기준 상대 경로)를 그대로 씁니다.
 - `dbType` 은 `mysql`(기본), `maria`, `oracle`, `postgres`, `tibero`, `cubrid`, `altibase`, `goldilocks` 가운데 하나이고, 별칭 `mariadb`, `postgresql`, `pgsql` 도 받습니다. 그 밖의 값은 오류입니다.
@@ -317,7 +318,7 @@ User: "bbs (게시판) 공통컴포넌트가 어떤 다른 컴포넌트에 의�
 { "scope": "components", "action": "dependencies", "filters": { "componentId": "bbs" } }
 ```
 
-`## 의존성 해결 결과` 아래에 요청한 컴포넌트, 자동 추가된 의존성, 전체 필요 컴포넌트, 필요 패키지 목록이 나옵니다.
+`## 의존성 해결 결과` 아래에 요청한 컴포넌트, 자동 추가된 의존성, 전체 필요 컴포넌트, 필요 패키지 목록이 나옵니다. 의존 대상으로 적혀 있지만 컴포넌트 목록에 없는 패키지가 있으면 끝에 따로 알립니다.
 
 ### 예시 5. 공통컴포넌트 DDL 조회
 
@@ -441,7 +442,7 @@ egovframe-mcp-search/
 │   │   ├── frameworkVersion.ts, vendorName.ts, productMention.ts   # 호환 소프트웨어의 버전, 업체명, 제품명 비교
 │   │   ├── knowledgeExcerpt.ts, knowledgePresentation.ts   # 개발자 지식의 본문 발췌와 응답 표시
 │   │   ├── sensitiveText.ts, text.ts       # 주민등록번호 형식의 값 가림, 문자열 자르기
-│   │   └── download.ts, tarSafe.ts         # HTTPS 내려받기, tar.gz 해제 (update 와 build-index 가 사용)
+│   │   └── download.ts, tarSafe.ts         # HTTPS 내려받기 (update 와 build-index 가 사용), tar.gz 해제 (update 가 사용)
 │   └── scripts/
 │       ├── buildIndex.ts                   # 인덱스 구축 (npm run build-index)
 │       └── templateSources.ts              # templates/ 의 소스 저장소 확보와 태그 선택
