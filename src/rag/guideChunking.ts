@@ -1,16 +1,170 @@
 /**
  * 가이드 문서 청킹
  *
- * 마크다운 문서를 색인 단위(청크)로 나누고, 청크의 임베딩 입력을 만든다.
- * 이 모듈은 순수 함수만 둔다 (LanceDB 와 임베딩 모델을 불러오지 않는다).
+ * 임베딩 모델(multilingual-e5-small)은 입력의 앞 512 토큰만 읽는다. 색인 단위(청크)가 그보다 길면
+ * 뒷부분은 벡터에 반영되지 않아, 색인에 있는 내용인데도 의미 검색으로 찾을 수 없다. 그래서 청크의
+ * 임베딩 입력(제목과 분류를 붙인 문자열)이 입력 창에 들어가도록 긴 절을 나눈다.
+ *
+ * 나누는 순서:
+ *   1. 더 깊은 제목(###, #### …). 나뉜 소절은 제목 경로를 title 과 section 에 싣는다 ("문서: 절 > 소절").
+ *   2. 빈 줄로 구분된 문단
+ *   3. 줄 경계 (표의 행, 코드 블록의 줄, 목록의 항목)
+ *   4. 한 줄이 상한보다 길 때만 줄 안 (문장 끝 → 공백 → 임의 위치)
+ *
+ * 제목 없이 나뉜 조각은 title 과 section 끝에 " (k/n)" 을 붙인다. 조각은 스스로 읽히는 마크다운이어야
+ * 하므로, 코드 블록 중간에서 나누면 앞 조각의 펜스를 닫고 뒤 조각에서 같은 줄로 다시 열며, 표 중간에서
+ * 나누면 뒤 조각에 머리 행과 구분 행을 다시 넣는다. 코드 블록과 표는 되도록 그것을 소개하는 앞 문단과
+ * 같은 조각에 둔다. 조각끼리 내용을 겹치지 않는다.
+ *
+ * 이 모듈은 순수 함수만 둔다 (LanceDB 와 임베딩 모델을 불러오지 않는다). 토큰 수는 글자 종류별 가중치로
+ * 어림한다. 토크나이저(17MB)를 불러오지 않고도 색인 경로와 테스트가 같은 결과를 얻는다.
  */
 
 import path from 'path';
 import type { GuideChunk } from './guideManager.js';
 
+// ─── 상한 ────────────────────────────────────────────────
+
+/**
+ * 청크 하나의 임베딩 입력에 허용하는 추정 토큰 수.
+ *
+ * 모델의 입력 창은 512 토큰(특수 토큰 2개 포함)이다. 추정값은 실제 토큰 수와 어긋나므로 여유를 둔다
+ * (estimateTokens 참고: 실제 값은 대개 추정값의 1.27배 이하다).
+ * 가이드 원문(마크다운 663개)을 이 값으로 나누면 청크 4,420개의 임베딩 입력은 실제 토큰 수가 최대 492 이고
+ * 512 를 넘는 것이 없다. 420 이면 3개, 440 이면 14개, 480 이면 59개(1.5%)가 512 를 넘는다.
+ */
+export const GUIDE_CHUNK_TOKEN_BUDGET = 400;
+
+/** 나눈 조각이 이 글자 수보다 짧으면 이웃 조각과 합친다 */
+export const GUIDE_PIECE_MIN_CHARS = 200;
+
+/** 본문이 이 글자 수보다 짧은 절은 색인하지 않는다 */
+export const GUIDE_SECTION_MIN_CHARS = 50;
+
+/** 청킹 조건. 색인 경로는 기본값을 쓴다. 테스트와 측정에서 상한을 바꿔 볼 때만 준다 */
+export interface GuideChunkOptions {
+  /** 임베딩 입력의 추정 토큰 상한 (기본 GUIDE_CHUNK_TOKEN_BUDGET) */
+  tokenBudget?: number;
+  /** 짧은 조각으로 보는 글자 수 (기본 GUIDE_PIECE_MIN_CHARS) */
+  minPieceChars?: number;
+}
+
+// ─── 토큰 수 어림 ────────────────────────────────────────
+
+/**
+ * 글자 종류별 토큰 수 가중치.
+ *
+ * 가이드 원문을 약 900자씩 자른 표본 2,998개에서 모델의 토크나이저가 센 토큰 수에 최소제곱으로 맞춘 값을
+ * 반올림했다. 공백은 토큰이 되지 않고(들여쓰기, 표의 칸 맞춤), 숫자와 기호는 글자마다 토큰 하나에 가깝다.
+ * 그 표본의 99% 에서 실제 토큰 수는 어림값의 1.27배 이하다 (최대 1.50배, 중앙값 1.01배).
+ * 글자 수에 고정 비율을 곱해 어림하면 99% 가 1.39배 이하(최대 1.77배)이고, 공백이 많은 표나 코드는
+ * 실제의 2.5배로 어림되어 필요 이상으로 잘게 나뉜다.
+ */
+const TOKEN_WEIGHTS = {
+  /** 공백 뒤에서 새로 시작하는 낱말 하나 */
+  word: 0.55,
+  hangul: 0.45,
+  latin: 0.33,
+  digit: 1,
+  /** ASCII 기호 */
+  symbol: 0.5,
+  /** 그 밖의 글자 (한자, 선 그리기 문자, 이모지 등) */
+  other: 1,
+  /**
+   * 구분선에 쓰는 기호(- = _ .)가 5자 넘게 이어질 때 다섯째 글자부터의 한 글자.
+   * 토크나이저는 이런 구간을 16자에 토큰 하나꼴로 센다 (64자 → 5토큰, 128자 → 9토큰). 글자마다 세면 칸을 맞춘
+   * 표의 구분 행(| ------------ | ---- |)이 실제의 일곱 배쯤으로 어림되어, 표 머리를 다시 넣지 못하고 구분 행을 줄 안에서 자르게 된다.
+   */
+  ruleRun: 1 / 16,
+} as const;
+
+/** 구분선 기호가 이만큼 이어진 뒤부터 ruleRun 으로 센다 */
+const RULE_RUN_START = 4;
+
+/** 공백으로 치는 코드 단위: 제어 문자와 유니코드 공백 */
+function isSpaceCode(code: number): boolean {
+  return (
+    code <= 0x20 ||
+    code === 0xa0 ||
+    code === 0x1680 ||
+    (code >= 0x2000 && code <= 0x200a) ||
+    code === 0x2028 ||
+    code === 0x2029 ||
+    code === 0x202f ||
+    code === 0x205f ||
+    code === 0x3000 ||
+    code === 0xfeff
+  );
+}
+
+/** 구분선에 쓰는 기호: - = _ . */
+function isRuleCode(code: number): boolean {
+  return code === 0x2d || code === 0x3d || code === 0x5f || code === 0x2e;
+}
+
+/** 공백이 아닌 코드 단위 하나의 가중치 */
+function charWeight(code: number): number {
+  if (code >= 0xac00 && code <= 0xd7a3) return TOKEN_WEIGHTS.hangul;
+  if ((code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a)) return TOKEN_WEIGHTS.latin;
+  if (code >= 0x30 && code <= 0x39) return TOKEN_WEIGHTS.digit;
+  return code < 0x80 ? TOKEN_WEIGHTS.symbol : TOKEN_WEIGHTS.other;
+}
+
+/**
+ * text 의 추정 토큰 수를 돌려준다. sums 를 주면 앞 i 글자까지의 값을 sums[i] 에 채운다 (길이 text.length + 1).
+ */
+function accumulateTokens(text: string, sums?: Float64Array): number {
+  let total = 0;
+  let afterSpace = true;
+  let previous = -1;
+  let run = 0;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    run = code === previous ? run + 1 : 1;
+    previous = code;
+    if (isSpaceCode(code)) {
+      afterSpace = true;
+    } else {
+      if (afterSpace) {
+        total += TOKEN_WEIGHTS.word;
+        afterSpace = false;
+      }
+      total += run > RULE_RUN_START && isRuleCode(code) ? TOKEN_WEIGHTS.ruleRun : charWeight(code);
+    }
+    if (sums) {
+      sums[i + 1] = total;
+    }
+  }
+  return total;
+}
+
+/**
+ * 임베딩 모델의 토크나이저 없이 토큰 수를 어림한다.
+ *
+ * 공백의 양은 결과에 영향이 없고, 공백으로 이어 붙인 문자열의 값은 각 문자열 값의 합이다.
+ */
+export function estimateTokens(text: string): number {
+  return accumulateTokens(text);
+}
+
+/** text 의 앞 i 글자를 떼어 냈을 때의 어림값을 i 마다 돌려준다 (길이 text.length + 1). */
+function cumulativeTokens(text: string): Float64Array {
+  const sums = new Float64Array(text.length + 1);
+  accumulateTokens(text, sums);
+  return sums;
+}
+
+// ─── 임베딩 입력 ─────────────────────────────────────────
+
+/** 임베더가 색인 문서 앞에 붙이는 접두 (E5 모델의 passage 접두. rag/embedder 의 embed 참고) */
+const PASSAGE_PREFIX = 'passage: ';
+
+/** 조각 번호와 같은 제목의 절을 구별하는 순번이 title 에 더하는 길이의 여유분 */
+const NUMBERING_ALLOWANCE = ' [99] (999/999)';
+
 /**
  * 가이드 청크의 검색 텍스트 (임베딩용).
- * GuideSearchManager 가 색인할 때 이 문자열을 임베딩한다.
+ * GuideSearchManager 가 색인할 때 이 문자열을 임베딩하고, 청킹은 이 문자열의 길이로 상한을 잰다.
  */
 export function guideSearchText(title: string, content: string, layer: string, category: string): string {
   const parts = [`제목: ${title}`, `내용: ${content}`];
@@ -26,9 +180,634 @@ export function guideSearchText(title: string, content: string, layer: string, c
   return parts.join('\n');
 }
 
+/** 청크 하나의 임베딩 입력(접두와 제목, 분류 포함)의 추정 토큰 수 */
+export function estimateGuideChunkTokens(chunk: Pick<GuideChunk, 'title' | 'content' | 'layer' | 'category'>): number {
+  return estimateTokens(PASSAGE_PREFIX + guideSearchText(chunk.title, chunk.content, chunk.layer, chunk.category));
+}
+
+// ─── 줄 읽기 ─────────────────────────────────────────────
+
+/** 펜스 줄 (``` 또는 ~~~, 들여쓰기 허용) */
+const FENCE_PATTERN = /^\s*(`{3,}|~{3,})/;
+
+/** 제목 줄 (0열에서 시작하는 # 1~6개와 공백, 문구). 줄 끝의 CR 은 문구에 넣었다가 trim 으로 뗀다 */
+const HEADING_PATTERN = /^(#{1,6})\s+(\S[\s\S]*)$/;
+
+/** 표의 구분 행 (| --- | :---: |) */
+const TABLE_DELIMITER_PATTERN = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
+
+/** 줄의 종류: 펜스 밖의 줄, 여는 펜스, 코드 블록 안의 줄, 닫는 펜스 */
+type LineKind = 'text' | 'open' | 'code' | 'close';
+
+/** 줄 단위로 읽은 문서 본문 */
+interface ScannedBody {
+  body: string;
+  lines: string[];
+  /** 줄이 시작하는 위치 (body 기준) */
+  starts: number[];
+  kinds: LineKind[];
+  /** 코드 줄과 닫는 펜스 줄이 속한 코드 블록의 여는 펜스 줄 번호 (그 밖의 줄은 -1) */
+  openers: number[];
+  /** 펜스 밖 제목 줄의 수준 1~6 (제목이 아니면 0) */
+  levels: number[];
+  /** 제목 줄의 문구 */
+  headings: string[];
+}
+
 /**
- * 마크다운 파일을 ## 헤더 기준으로 섹션 분할
- * 긴 섹션(>2000자)은 ### 헤더로 추가 분할
+ * 본문을 줄 단위로 읽어 코드 블록과 제목을 가린다.
+ *
+ * 코드 블록 안의 # 으로 시작하는 줄(셸 주석 등)은 제목이 아니다. 펜스는 게이트웨이가 본문을 다듬을 때
+ * (tools/egovSearchKnowledge 의 formatGuideContent)와 같은 규칙으로 센다: 열린 펜스와 같은 문자이고
+ * 길이가 같거나 긴 펜스 줄이 닫는다. 규칙이 다르면 나눈 조각의 펜스를 응답에서 다르게 해석한다.
+ */
+function scanBody(body: string): ScannedBody {
+  const lines = body.split('\n');
+  const starts: number[] = [];
+  const kinds: LineKind[] = [];
+  const openers: number[] = [];
+  const levels: number[] = [];
+  const headings: string[] = [];
+
+  let offset = 0;
+  let fence: string | null = null;
+  let opener = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    starts.push(offset);
+    offset += line.length + 1;
+
+    let kind: LineKind = fence === null ? 'text' : 'code';
+    let level = 0;
+    let heading = '';
+    const fenceMatch = line.match(FENCE_PATTERN);
+    if (fenceMatch && fence === null) {
+      kind = 'open';
+      fence = fenceMatch[1];
+      opener = i;
+      openers.push(-1);
+    } else if (fenceMatch && fence !== null && fenceMatch[1][0] === fence[0] && fenceMatch[1].length >= fence.length) {
+      kind = 'close';
+      openers.push(opener);
+      fence = null;
+      opener = -1;
+    } else {
+      openers.push(kind === 'code' ? opener : -1);
+      const headingMatch = kind === 'text' ? line.match(HEADING_PATTERN) : null;
+      if (headingMatch) {
+        level = headingMatch[1].length;
+        heading = headingMatch[2].trim();
+      }
+    }
+    kinds.push(kind);
+    levels.push(level);
+    headings.push(heading);
+  }
+
+  return { body, lines, starts, kinds, openers, levels, headings };
+}
+
+/** lines[from..to) 의 글에서 앞뒤 공백을 뺀 구간 (body 기준 위치). 글이 없으면 start 와 end 가 같다 */
+function trimmedSpan(scanned: ScannedBody, from: number, to: number): { start: number; end: number } {
+  if (from >= to) {
+    const at = from < scanned.starts.length ? scanned.starts[from] : scanned.body.length;
+    return { start: at, end: at };
+  }
+  const start = scanned.starts[from];
+  const end = scanned.starts[to - 1] + scanned.lines[to - 1].length;
+  const raw = scanned.body.slice(start, end);
+  const trimmedStart = start + (raw.length - raw.trimStart().length);
+  const trimmedEnd = end - (raw.length - raw.trimEnd().length);
+  return trimmedEnd > trimmedStart ? { start: trimmedStart, end: trimmedEnd } : { start, end: start };
+}
+
+// ─── 제목 없는 글을 조각으로 나누기 ─────────────────────
+
+/** 절의 조각 하나 */
+export interface GuideSectionPiece {
+  /** 색인하는 본문: lead + (절 본문의 start~end 구간) + trail */
+  content: string;
+  /** 절 본문(GuideSection.body)에서 이 조각이 맡은 구간의 시작 */
+  start: number;
+  /** 구간의 끝 (포함하지 않음) */
+  end: number;
+  /** 조각 앞에 다시 넣은 줄: 다시 연 펜스 줄, 또는 표의 머리 행과 구분 행 (없으면 빈 문자열) */
+  lead: string;
+  /** 조각 뒤에 붙인 닫는 펜스 (없으면 빈 문자열) */
+  trail: string;
+}
+
+/**
+ * 뒤 조각에 다시 넣는 줄(표의 머리 행과 구분 행, 여는 펜스 줄)이 상한에서 차지할 수 있는 최대 비율.
+ * 넘으면 다시 넣지 않고 줄 경계에서만 끊는다 (조각마다 긴 줄을 되풀이하면 본문이 들어갈 자리가 없다).
+ */
+const MAX_REPEATED_LINES_SHARE = 1 / 3;
+
+/** 줄의 역할: 표의 머리 행, 구분 행, 본문 행을 가린 LineKind */
+type LineRole = LineKind | 'thead' | 'tdelim' | 'trow';
+
+/**
+ * 더 나누지 않는 단위: 줄 하나, 또는 상한보다 긴 줄을 줄 안에서 자른 토막.
+ * 조각은 이어진 원자들의 묶음이다.
+ */
+interface Atom {
+  /** body 기준 구간 */
+  start: number;
+  end: number;
+  /** 앞 원자와의 경계에서 조각을 끊을 수 있는지 */
+  cuttable: boolean;
+  /** 앞 원자와의 경계의 종류: 0 문단(빈 줄), 1 줄, 2 줄 안 */
+  boundary: 0 | 1 | 2;
+  /** 앞 원자가 보통 글이고 이 원자가 코드 블록이나 표의 첫 줄인지 (앞의 글이 이 블록을 소개하는 자리) */
+  introduced: boolean;
+  /** 이 원자에서 조각이 시작할 때 앞에 다시 넣는 줄 (펜스를 다시 열거나 표 머리를 다시 넣는다) */
+  lead: string;
+  /** lead 의 추정 토큰 */
+  leadTokens: number;
+  /** 이 원자 앞에서 끊을 때 앞 조각 끝에 붙이는 닫는 펜스 */
+  closeBefore: string;
+  /** closeBefore 의 추정 토큰 */
+  closeTokens: number;
+}
+
+/** 문장이 끝나는 자리: 마침표류와 닫는 따옴표·괄호 뒤의 공백 */
+const SENTENCE_END_PATTERN = /[.!?。]["'”’)\]]?(?=\s)/g;
+
+/** 낱말 사이의 공백이 시작하는 자리 */
+const WORD_GAP_PATTERN = /\S(?=\s)/g;
+
+/**
+ * 상한보다 긴 줄을 줄 안에서 나눈다. 토막의 크기를 고르게 맞추고, 자르는 자리는 문장 끝, 공백, 임의 위치 순으로 고른다.
+ * 공백에서 자르면 그 공백은 어느 토막에도 넣지 않는다.
+ *
+ * @param avail 토막 하나의 추정 토큰 상한
+ * @returns 토막의 구간 (text 기준 위치)
+ */
+function splitLongLine(text: string, avail: number): Array<{ start: number; end: number }> {
+  const segments: Array<{ start: number; end: number }> = [];
+  let offset = 0;
+
+  while (offset < text.length) {
+    const rest = text.slice(offset);
+    const sums = cumulativeTokens(rest);
+    const total = sums[rest.length];
+    if (total <= avail) {
+      segments.push({ start: offset, end: text.length });
+      break;
+    }
+
+    // 남은 줄을 같은 크기로 나눈다고 할 때 이번 토막이 끝날 자리(target)와, 상한 안에서 가장 먼 자리(max)
+    const target = total / Math.ceil(total / avail);
+    let maxIndex = 1;
+    while (maxIndex < rest.length && sums[maxIndex + 1] <= avail) maxIndex += 1;
+    let targetIndex = 1;
+    while (targetIndex < maxIndex && sums[targetIndex] < target) targetIndex += 1;
+    let minIndex = 1;
+    while (minIndex < targetIndex && sums[minIndex] < target / 2) minIndex += 1;
+
+    // minIndex 이상 maxIndex 이하에서 target 에 가장 가까운 자리를 고른다
+    const nearest = (pattern: RegExp): number => {
+      let best = -1;
+      pattern.lastIndex = 0;
+      for (let match = pattern.exec(rest); match !== null; match = pattern.exec(rest)) {
+        const at = match.index + match[0].length;
+        if (at > maxIndex) break;
+        if (at >= minIndex && (best < 0 || Math.abs(sums[at] - target) < Math.abs(sums[best] - target))) {
+          best = at;
+        }
+      }
+      return best;
+    };
+
+    let cut = nearest(SENTENCE_END_PATTERN);
+    if (cut < 0) cut = nearest(WORD_GAP_PATTERN);
+    if (cut < 0) {
+      cut = targetIndex;
+      // 서로게이트 쌍(이모지 등)의 가운데에서는 자르지 않는다
+      const lastKept = rest.charCodeAt(cut - 1);
+      if (lastKept >= 0xd800 && lastKept <= 0xdbff) {
+        cut = cut > 1 ? cut - 1 : cut + 1;
+      }
+    }
+
+    segments.push({ start: offset, end: offset + cut });
+    let next = cut;
+    while (next < rest.length && isSpaceCode(rest.charCodeAt(next))) next += 1;
+    offset += next;
+  }
+
+  return segments;
+}
+
+/** 조각 나누기의 비용: 앞의 항목부터 차례로 비교한다 */
+type SplitCost = [
+  inlineCuts: number,
+  shortPieces: number,
+  lineCuts: number,
+  introCuts: number,
+  pieces: number,
+  squares: number,
+];
+
+function costLess(a: SplitCost, b: SplitCost): boolean {
+  for (let k = 0; k < a.length; k++) {
+    if (a[k] !== b[k]) return a[k] < b[k];
+  }
+  return false;
+}
+
+/**
+ * 더 깊은 제목이 없는 글(lines[from..to))을 상한 이하의 조각으로 나눈다.
+ *
+ * 조각은 이어진 줄들의 묶음이고, 다음을 차례로 줄이는 나누기를 고른다 (동적 계획법).
+ *   1. 줄 안에서 끊은 횟수. 한 줄이 상한보다 길 때만 생긴다
+ *   2. 짧은 조각(minPieceChars 미만)의 수
+ *   3. 문단 안의 줄 경계에서 끊은 횟수. 문단 경계에서 끊을 수 있으면 문단을 쪼개지 않는다
+ *   4. 코드 블록이나 표와 그것을 소개하는 앞의 글 사이에서 끊은 횟수. 블록이 설명 없이 조각의 처음에 오지 않게 한다
+ *   5. 조각 수
+ *   6. 조각 크기의 제곱합. 조각 수가 같으면 크기를 고르게 맞춘다 (마지막 조각만 짧게 남기지 않는다)
+ *
+ * 끊지 않는 자리: 여는 펜스 바로 뒤와 닫는 펜스 바로 앞(빈 코드 블록이 생긴다), 표의 머리 행·구분 행·첫 행 사이.
+ * 이 자리를 지키면 상한 안에서 나눌 수 없을 때만 이 자리에서도 끊는다.
+ *
+ * @param budget 조각 본문의 추정 토큰 상한
+ * @returns 조각 목록. 구간(start, end)은 body 기준 위치다
+ */
+function splitIntoPieces(
+  scanned: ScannedBody,
+  from: number,
+  to: number,
+  budget: number,
+  minPieceChars: number,
+): GuideSectionPiece[] {
+  const { body, lines, starts, kinds, openers } = scanned;
+
+  // 1) 표를 찾아 줄의 역할을 정한다
+  const roles: LineRole[] = kinds.slice(from, to);
+  const tableHeads = new Map<number, string>(); // 표의 본문 행 → 다시 넣을 머리
+  const isTableRow = (index: number) => kinds[index] === 'text' && lines[index].includes('|') && lines[index].trim() !== '';
+  for (let i = from; i + 1 < to; i++) {
+    if (roles[i - from] !== 'text' || !isTableRow(i) || !isTableRow(i + 1)) continue;
+    if (!TABLE_DELIMITER_PATTERN.test(lines[i + 1])) continue;
+    const head = `${lines[i]}\n${lines[i + 1]}\n`;
+    // 머리가 조각의 큰 부분을 차지하면 표로 다루지 않는다 (줄 경계에서 끊되 머리를 다시 넣지 않는다)
+    if (estimateTokens(head) > budget * MAX_REPEATED_LINES_SHARE) continue;
+    roles[i - from] = 'thead';
+    roles[i + 1 - from] = 'tdelim';
+    let row = i + 2;
+    while (row < to && isTableRow(row)) {
+      roles[row - from] = 'trow';
+      tableHeads.set(row, head);
+      row += 1;
+    }
+    i = row - 1;
+  }
+
+  // 2) 줄을 원자로 만든다. 펜스 밖의 빈 줄은 원자가 아니라 문단 경계다
+  const atoms: Atom[] = [];
+  let previousRole: LineRole | null = null;
+  let blankBefore = false;
+  for (let i = from; i < to; i++) {
+    const line = lines[i];
+    const role = roles[i - from];
+    if (role !== 'code' && line.trim() === '') {
+      blankBefore = true;
+      continue;
+    }
+
+    // 이 줄에서 조각이 시작하거나 이 줄 앞에서 조각이 끝날 때 덧붙일 줄
+    let lead = '';
+    let close = '';
+    if (role === 'code') {
+      const openerLine = lines[openers[i]];
+      // 여는 펜스 줄이 아주 길면(긴 정보 문자열) 펜스를 닫고 다시 열지 않는다
+      if (estimateTokens(openerLine) <= budget * MAX_REPEATED_LINES_SHARE) {
+        const marker = (openerLine.match(FENCE_PATTERN) as RegExpMatchArray)[1];
+        const indent = openerLine.slice(0, openerLine.length - openerLine.trimStart().length);
+        lead = `${openerLine}\n`;
+        close = `\n${indent}${marker}`;
+      }
+    } else if (role === 'trow') {
+      lead = tableHeads.get(i) as string;
+    }
+
+    // 여는 펜스 바로 뒤, 닫는 펜스 바로 앞, 표의 머리 행·구분 행·첫 행 사이에서는 끊지 않는다
+    const cuttable =
+      previousRole !== 'open' && role !== 'close' && role !== 'tdelim' && !(previousRole === 'tdelim' && role === 'trow');
+    const continuesCode = role === 'code' && previousRole === 'code';
+
+    // 한 줄이 상한보다 길면 줄 안에서 토막을 낸다 (덧붙일 줄의 몫은 빼고 잰다)
+    const leadTokens = estimateTokens(lead);
+    const closeTokens = estimateTokens(close);
+    const avail = Math.max(budget - leadTokens - closeTokens, budget / 4);
+    const segments =
+      estimateTokens(line) > avail ? splitLongLine(line, avail) : [{ start: 0, end: line.length }];
+    segments.forEach((segment, index) => {
+      // 같은 코드 블록의 줄 사이, 그리고 줄 안에서 끊을 때만 앞 조각의 펜스를 닫는다
+      const closesFence = index > 0 || continuesCode;
+      atoms.push({
+        start: starts[i] + segment.start,
+        end: starts[i] + segment.end,
+        cuttable: index > 0 ? true : cuttable,
+        boundary: index > 0 ? 2 : blankBefore ? 0 : 1,
+        introduced: index === 0 && previousRole === 'text' && (role === 'open' || role === 'thead'),
+        lead,
+        leadTokens,
+        closeBefore: closesFence ? close : '',
+        closeTokens: closesFence ? closeTokens : 0,
+      });
+    });
+
+    previousRole = role;
+    blankBefore = false;
+  }
+
+  const count = atoms.length;
+  if (count === 0) {
+    return [];
+  }
+
+  // 3) 구간의 크기: 원자 사이의 글(줄바꿈, 빈 줄)은 공백이라 크기가 0 이다
+  const sizes = new Float64Array(count + 1); // sizes[k] = atoms[0..k) 의 추정 토큰 합
+  for (let k = 0; k < count; k++) {
+    sizes[k + 1] = sizes[k] + estimateTokens(body.slice(atoms[k].start, atoms[k].end));
+  }
+  // 절의 첫 조각에는 덧붙일 줄이 없고, 마지막 조각 뒤에는 닫을 펜스가 없다
+  const leadOf = (first: number) => (first === 0 ? '' : atoms[first].lead);
+  const trailOf = (last: number) => (last + 1 < count ? atoms[last + 1].closeBefore : '');
+  const pieceTokens = (first: number, last: number) =>
+    sizes[last + 1] -
+    sizes[first] +
+    (first === 0 ? 0 : atoms[first].leadTokens) +
+    (last + 1 < count ? atoms[last + 1].closeTokens : 0);
+  const pieceChars = (first: number, last: number) =>
+    atoms[last].end - atoms[first].start + leadOf(first).length + trailOf(last).length;
+
+  // 4) 동적 계획법. best[j] = atoms[0..j) 를 나누는 가장 좋은 방법의 비용, cutFrom[j] = 그때 마지막 조각이 시작하는 원자
+  const solve = (keepUncuttable: boolean): Array<[first: number, last: number]> | null => {
+    const best: Array<SplitCost | null> = new Array(count + 1).fill(null);
+    const cutFrom = new Int32Array(count + 1).fill(-1);
+    best[0] = [0, 0, 0, 0, 0, 0];
+    for (let j = 1; j <= count; j++) {
+      if (keepUncuttable && j < count && !atoms[j].cuttable) continue;
+      const cutKind = j < count ? atoms[j].boundary : -1;
+      for (let i = j - 1; i >= 0; i--) {
+        // 본문만으로 상한을 넘으면 더 앞에서 시작하는 조각도 넘는다
+        if (i < j - 1 && sizes[j] - sizes[i] > budget) break;
+        const before = best[i];
+        if (before === null) continue;
+        const tokens = pieceTokens(i, j - 1);
+        // 원자 하나가 상한을 넘는 경우(덧붙일 줄이 아주 긴 경우)에는 그 원자만으로 조각을 만든다
+        if (tokens > budget && i < j - 1) continue;
+        const candidate: SplitCost = [
+          before[0] + (cutKind === 2 ? 1 : 0),
+          before[1] + (pieceChars(i, j - 1) < minPieceChars ? 1 : 0),
+          before[2] + (cutKind === 1 ? 1 : 0),
+          before[3] + (j < count && atoms[j].introduced ? 1 : 0),
+          before[4] + 1,
+          before[5] + tokens * tokens,
+        ];
+        const current = best[j];
+        if (current === null || costLess(candidate, current)) {
+          best[j] = candidate;
+          cutFrom[j] = i;
+        }
+      }
+    }
+    if (best[count] === null) {
+      return null;
+    }
+    const found: Array<[first: number, last: number]> = [];
+    for (let j = count; j > 0; j = cutFrom[j]) {
+      found.unshift([cutFrom[j], j - 1]);
+    }
+    return found;
+  };
+
+  // 끊지 않기로 한 자리끼리 묶인 줄들이 상한을 넘으면 (여는 펜스 줄과 첫 코드 줄이 둘 다 아주 긴 문서 등) 나눌 방법이 없다.
+  // 그때는 그 자리에서도 끊게 해서 상한을 지킨다. 원자 하나로 된 조각은 언제나 만들 수 있으므로 두 번째는 반드시 풀린다
+  const ranges = solve(true) ?? (solve(false) as Array<[first: number, last: number]>);
+
+  return ranges.map(([first, last]) => {
+    const lead = leadOf(first);
+    const trail = trailOf(last);
+    // 덧붙인 줄이 없는 쪽은 절의 본문처럼 앞뒤 공백을 뺀다. 펜스를 다시 연 조각의 첫 줄은 들여쓰기를 지킨다
+    const raw = body.slice(atoms[first].start, atoms[last].end);
+    const start = atoms[first].start + (lead === '' ? raw.length - raw.trimStart().length : 0);
+    const end = atoms[last].end - (trail === '' ? raw.length - raw.trimEnd().length : 0);
+    return { content: lead + body.slice(start, end) + trail, start, end, lead, trail };
+  });
+}
+
+// ─── 문서를 절과 조각으로 나누기 ────────────────────────
+
+/** 가이드 문서의 절 하나: 제목 경로가 같은 색인 단위 */
+export interface GuideSection {
+  /** 조각 번호를 붙이기 전의 title ("문서: 절 > 소절", 개요는 문서 제목) */
+  title: string;
+  /** 조각 번호를 붙이기 전의 section (제목 경로 "절 > 소절", 개요는 "개요") */
+  section: string;
+  /** 절의 본문 (앞뒤 공백 제거). 조각들의 구간이 이 문자열을 처음부터 끝까지 덮는다 */
+  body: string;
+  /** 문서 본문에서 body 가 시작하는 위치 */
+  offset: number;
+  /** 색인하는 조각. 조각이 하나면 그 본문이 body 와 같다 */
+  pieces: GuideSectionPiece[];
+}
+
+/** 청킹이 문서에서 쓰는 값 */
+interface GuideDocumentInfo {
+  /** 가이드 디렉토리 기준 상대 경로 (POSIX 구분자) */
+  source: string;
+  layer: string;
+  category: string;
+  docTitle: string;
+  url: string;
+}
+
+/** 문서 제목과 경로에서 청크의 공통 필드를 구한다. 구분자를 POSIX(/)로 맞춰 Windows 의 역슬래시 경로에서도 값이 같다 */
+function describeDocument(frontmatter: { title: string; url?: string }, relativePath: string): GuideDocumentInfo {
+  const source = relativePath.replace(/\\/g, '/');
+  const pathParts = source.split('/');
+  return {
+    source,
+    layer: pathParts[0] || 'unknown',
+    category: pathParts.length > 2 ? pathParts[1] : '',
+    docTitle: frontmatter.title || path.posix.basename(source, '.md'),
+    url: frontmatter.url || '',
+  };
+}
+
+/** ## 앞의 내용(개요)의 section 이름 */
+const OVERVIEW_SECTION = '개요';
+
+/**
+ * 가이드 문서를 절로 나누고, 절마다 색인할 조각을 만든다.
+ *
+ * 절: ## 앞의 내용(개요)과 ## 제목마다의 내용. 본문이 50자 미만인 절은 색인하지 않는다.
+ * 임베딩 입력이 상한 안에 드는 절은 조각 하나다 (안에 있는 더 깊은 제목은 본문에 그대로 둔다).
+ * 상한을 넘는 절은 그 안의 가장 얕은 제목에서 나누어 도입부와 소절을 각각 절로 만들고, 제목이 없으면
+ * 문단, 줄, 줄 안의 순서로 조각을 낸다 (splitIntoPieces).
+ *
+ * 제목에서 나눌 때 짧은 것(minPieceChars 미만)은 이웃과 합친다: 짧은 소절은 제목 줄과 함께 앞의 것에 붙이고,
+ * 앞의 것이 짧으면 다음 소절을 끌어온다. 합친 것이 한 청크에 들어갈 때만 합치며, 이름은 앞의 것을 따른다.
+ *
+ * 돌려주는 절의 title 과 section 은 조각 번호를 붙이기 전의 값이다. 한 문서에서 제목 경로가 같은 절이 둘 이상
+ * 조각으로 나뉘면 둘째부터 " [2]", " [3]" … 을 붙여, 조각 번호가 붙은 절의 section 이 문서 안에서 겹치지 않게 한다
+ * (문서와 section, 조각 번호만으로 한 절의 이웃 조각을 가릴 수 있다).
+ */
+export function splitGuideSections(
+  body: string,
+  frontmatter: { title: string; url?: string },
+  relativePath: string,
+  options: GuideChunkOptions = {},
+): GuideSection[] {
+  const tokenBudget = options.tokenBudget ?? GUIDE_CHUNK_TOKEN_BUDGET;
+  const minPieceChars = options.minPieceChars ?? GUIDE_PIECE_MIN_CHARS;
+  const info = describeDocument(frontmatter, relativePath);
+  const scanned = scanBody(body);
+  const sections: GuideSection[] = [];
+
+  /** 제목 경로(headings)의 이름. 개요 아래의 소절은 section 에만 '개요' 를 싣는다 */
+  const nameOf = (overview: boolean, headings: string[]) => {
+    const trail = headings.join(' > ');
+    if (overview) {
+      return {
+        title: trail ? `${info.docTitle}: ${trail}` : info.docTitle,
+        section: trail ? `${OVERVIEW_SECTION} > ${trail}` : OVERVIEW_SECTION,
+      };
+    }
+    return { title: `${info.docTitle}: ${trail}`, section: trail };
+  };
+
+  /**
+   * 그 제목으로 색인할 때 본문에 쓸 수 있는 추정 토큰: 임베딩 입력의 상한에서 제목과 분류의 몫을 뺀 값.
+   * 조각으로 나눌 때(numbered)는 제목에 붙을 조각 번호의 몫도 뺀다. 제목이 아주 길어도 상한의 4분의 1 은 본문 몫으로 남긴다.
+   */
+  const contentBudget = (title: string, numbered = false) => {
+    const indexedTitle = numbered ? title + NUMBERING_ALLOWANCE : title;
+    const overhead = estimateTokens(PASSAGE_PREFIX + guideSearchText(indexedTitle, '', info.layer, info.category));
+    return Math.max(tokenBudget - overhead, tokenBudget / 4);
+  };
+
+  const textOf = (span: { start: number; end: number }) => body.slice(span.start, span.end);
+
+  /** lines[from..to) 를 제목 경로 headings 의 절로 색인한다. 길면 더 깊은 제목이나 조각으로 나눈다 */
+  const addSection = (overview: boolean, headings: string[], from: number, to: number): void => {
+    const span = trimmedSpan(scanned, from, to);
+    const text = textOf(span);
+    if (text.length < GUIDE_SECTION_MIN_CHARS) {
+      return;
+    }
+
+    const name = nameOf(overview, headings);
+    const toSection = (pieces: GuideSectionPiece[]): GuideSection => ({
+      ...name,
+      body: text,
+      offset: span.start,
+      pieces: pieces.map((piece) => ({ ...piece, start: piece.start - span.start, end: piece.end - span.start })),
+    });
+
+    if (estimateTokens(text) <= contentBudget(name.title)) {
+      sections.push(toSection([{ content: text, start: span.start, end: span.end, lead: '', trail: '' }]));
+      return;
+    }
+
+    // 이 절에 있는 가장 얕은 제목 수준 (###~######). # 과 ## 는 절 안의 제목이 아니다
+    let level = 0;
+    for (let i = from; i < to; i++) {
+      if (scanned.levels[i] >= 3 && (level === 0 || scanned.levels[i] < level)) level = scanned.levels[i];
+    }
+    if (level === 0) {
+      sections.push(toSection(splitIntoPieces(scanned, from, to, contentBudget(name.title, true), minPieceChars)));
+      return;
+    }
+
+    // 도입부(첫 제목 앞의 글)와 소절로 나누고, 짧은 것은 이웃과 묶는다
+    const heads: number[] = [];
+    for (let i = from; i < to; i++) {
+      if (scanned.levels[i] === level) heads.push(i);
+    }
+    const groups: Array<{ headings: string[]; from: number; to: number }> = [];
+    const intro = trimmedSpan(scanned, from, heads[0]);
+    if (intro.end > intro.start) {
+      groups.push({ headings, from, to: heads[0] });
+    }
+    heads.forEach((head, index) => {
+      const childFrom = head + 1;
+      const childTo = index + 1 < heads.length ? heads[index + 1] : to;
+      const child = trimmedSpan(scanned, childFrom, childTo);
+      const childChars = child.end - child.start;
+      if (childChars === 0) {
+        return;
+      }
+      const previous = groups[groups.length - 1];
+      if (previous) {
+        const previousSpan = trimmedSpan(scanned, previous.from, previous.to);
+        const previousChars = previousSpan.end - previousSpan.start;
+        if (childChars < minPieceChars || previousChars < minPieceChars) {
+          const merged = textOf(trimmedSpan(scanned, previous.from, childTo));
+          if (estimateTokens(merged) <= contentBudget(nameOf(overview, previous.headings).title)) {
+            previous.to = childTo;
+            return;
+          }
+        }
+      }
+      groups.push({ headings: [...headings, scanned.headings[head]], from: childFrom, to: childTo });
+    });
+
+    for (const group of groups) {
+      addSection(overview, group.headings, group.from, group.to);
+    }
+  };
+
+  // 개요: 첫 ## 앞의 내용. 맨 앞의 # 제목 줄(문구가 없는 것 포함)은 뺀다
+  const h2Lines: number[] = [];
+  for (let i = 0; i < scanned.lines.length; i++) {
+    if (scanned.levels[i] === 2) h2Lines.push(i);
+  }
+  const overviewEnd = h2Lines.length > 0 ? h2Lines[0] : scanned.lines.length;
+  let overviewStart = 0;
+  while (overviewStart < overviewEnd && scanned.lines[overviewStart].trim() === '') overviewStart += 1;
+  if (
+    overviewStart < overviewEnd &&
+    scanned.kinds[overviewStart] === 'text' &&
+    (scanned.levels[overviewStart] === 1 || /^#\s*$/.test(scanned.lines[overviewStart]))
+  ) {
+    overviewStart += 1;
+  }
+  addSection(true, [], overviewStart, overviewEnd);
+
+  // ## 절
+  h2Lines.forEach((line, index) => {
+    const end = index + 1 < h2Lines.length ? h2Lines[index + 1] : scanned.lines.length;
+    addSection(false, [scanned.headings[line]], line + 1, end);
+  });
+
+  // 조각 번호가 붙을 절의 section 이 문서 안에서 겹치지 않게 한다
+  const numbered = new Set<string>();
+  for (const section of sections) {
+    if (section.pieces.length < 2) continue;
+    let ordinal = 1;
+    let candidate = section.section;
+    while (numbered.has(candidate)) {
+      ordinal += 1;
+      candidate = `${section.section} [${ordinal}]`;
+    }
+    if (ordinal > 1) {
+      section.title = `${section.title} [${ordinal}]`;
+      section.section = candidate;
+    }
+    numbered.add(candidate);
+  }
+
+  return sections;
+}
+
+/**
+ * 마크다운 문서를 색인할 청크로 나눈다 (splitGuideSections 의 절과 조각을 청크로 편 것).
+ *
+ * 조각이 하나뿐인 절의 title 은 "문서: 절", section 은 "절" 이고, 여러 조각으로 나뉜 절은 둘 다 끝에 " (k/n)" 이 붙는다.
  *
  * relativePath 는 가이드 디렉토리 기준 상대 경로다. 구분자를 POSIX(/)로 맞춘 뒤 layer 와
  * category 를 구하므로, Windows 의 역슬래시 경로가 와도 색인 내용(source, layer, category)이 같다.
@@ -37,102 +816,25 @@ export function chunkMarkdown(
   body: string,
   frontmatter: { title: string; url?: string },
   relativePath: string,
+  options: GuideChunkOptions = {},
 ): Omit<GuideChunk, 'id' | 'vector'>[] {
-  const filePath = relativePath.replace(/\\/g, '/');
-  const pathParts = filePath.split('/');
-  const layer = pathParts[0] || 'unknown';
-  const category = pathParts.length > 2 ? pathParts[1] : '';
-  const docTitle = frontmatter.title || path.posix.basename(filePath, '.md');
-  const url = frontmatter.url || '';
-
+  const info = describeDocument(frontmatter, relativePath);
   const chunks: Omit<GuideChunk, 'id' | 'vector'>[] = [];
 
-  // ## 기준 분할
-  const h2Sections = body.split(/^##\s+/gm);
-  
-  for (let i = 0; i < h2Sections.length; i++) {
-    const raw = h2Sections[i].trim();
-    if (!raw) continue;
-
-    if (i === 0) {
-      // 첫 번째 청크: ## 이전 내용 (개요/소개)
-      // H1 제거
-      const cleanedContent = raw.replace(/^#\s+.*\n?/, '').trim();
-      if (cleanedContent.length >= 50) {
-        chunks.push({
-          title: docTitle,
-          content: cleanedContent,
-          source: filePath,
-          layer,
-          category,
-          section: '개요',
-          docTitle,
-          url,
-        });
-      }
-      continue;
-    }
-
-    // ## 섹션
-    const lines = raw.split('\n');
-    const sectionHeading = lines[0].trim();
-    const sectionContent = lines.slice(1).join('\n').trim();
-
-    if (sectionContent.length < 50) continue;
-
-    // 긴 섹션은 ### 기준으로 추가 분할
-    if (sectionContent.length > 2000) {
-      const h3Sections = sectionContent.split(/^###\s+/gm);
-
-      if (h3Sections.length > 1) {
-        // ### 이전 내용
-        const preH3 = h3Sections[0].trim();
-        if (preH3.length >= 50) {
-          chunks.push({
-            title: `${docTitle}: ${sectionHeading}`,
-            content: preH3,
-            source: filePath,
-            layer,
-            category,
-            section: sectionHeading,
-            docTitle,
-            url,
-          });
-        }
-
-        // 각 ### 섹션
-        for (let j = 1; j < h3Sections.length; j++) {
-          const h3Lines = h3Sections[j].split('\n');
-          const h3Heading = h3Lines[0].trim();
-          const h3Content = h3Lines.slice(1).join('\n').trim();
-
-          if (h3Content.length < 50) continue;
-
-          chunks.push({
-            title: `${docTitle}: ${sectionHeading} > ${h3Heading}`,
-            content: h3Content,
-            source: filePath,
-            layer,
-            category,
-            section: `${sectionHeading} > ${h3Heading}`,
-            docTitle,
-            url,
-          });
-        }
-        continue;
-      }
-    }
-
-    // 일반 크기 섹션 - 그대로 추가
-    chunks.push({
-      title: `${docTitle}: ${sectionHeading}`,
-      content: sectionContent,
-      source: filePath,
-      layer,
-      category,
-      section: sectionHeading,
-      docTitle,
-      url,
+  for (const section of splitGuideSections(body, frontmatter, relativePath, options)) {
+    const count = section.pieces.length;
+    section.pieces.forEach((piece, index) => {
+      const suffix = count > 1 ? ` (${index + 1}/${count})` : '';
+      chunks.push({
+        title: `${section.title}${suffix}`,
+        content: piece.content,
+        source: info.source,
+        layer: info.layer,
+        category: info.category,
+        section: `${section.section}${suffix}`,
+        docTitle: info.docTitle,
+        url: info.url,
+      });
     });
   }
 

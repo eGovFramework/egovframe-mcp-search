@@ -4,6 +4,8 @@
  * 색인 결과(source, layer, category)가 플랫폼과 무관하게 같은지, 게시되지 않는 문서(draft)가
  * 색인에서 빠지는지 확인한다. 대부분 순수 함수 검증이고, 실제 색인(indexGuideDirectory)은
  * 임베딩 모델이 있을 때만 임시 디렉토리에서 돌려 본다.
+ *
+ * 긴 절을 나누는 규칙은 guideChunkSplit.test.ts 에서 확인한다. 여기서는 색인 경로가 그 결과를 그대로 쓰는지를 본다.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "fs-extra";
@@ -12,11 +14,18 @@ import path from "node:path";
 import * as lancedb from "@lancedb/lancedb";
 import { GuideSearchManager, chunkMarkdown, parseFrontMatter } from "../../src/rag/guideManager.js";
 import { chunkGuideDocument, indexGuideDirectory, relativeGuidePath } from "../../src/kb/guideIndexer.js";
-import { hasEmbeddingModel } from "../integration/_helper.js";
+import { REPO_ROOT, hasEmbeddingModel } from "../integration/_helper.js";
 
 const paragraph = (label: string) => `${label} 문단입니다. `.repeat(10).trim();
 
 const BODY = [`# Transaction 서비스`, "", paragraph("개요"), "", "## 설명", "", paragraph("설명")].join("\n");
+
+/** 기본 상한을 넘어 여러 조각으로 나뉘는 절 (제목 없이 문단 스무 개) */
+const LONG_SECTION = [
+  "## 선언적 트랜잭션",
+  "",
+  ...Array.from({ length: 20 }, (_, i) => [`${i + 1}번째 ${paragraph("선언적 트랜잭션 설정")}`, ""]).flat(),
+].join("\n");
 
 describe("chunkMarkdown — 경로에서 layer / category 를 구한다", () => {
   const frontmatter = { title: "Transaction 서비스", url: "/egovframe-runtime/persistence-layer/transaction/" };
@@ -93,6 +102,33 @@ describe("chunkGuideDocument — 색인 대상 판정", () => {
 
   it("본문이 너무 짧은 문서는 색인하지 않는다", () => {
     expect(chunkGuideDocument(["---", "title: 목차", "---", "# 목차", "", "짧은 본문"].join("\n"), "a/_index.md")).toBeNull();
+  });
+
+  it("긴 절은 기본 상한으로 나눈 조각이 된다 (chunkMarkdown 의 결과 그대로)", () => {
+    const relative = "egovframe-runtime/persistence-layer/transaction.md";
+    const content = [withFrontMatter("title: Transaction 서비스"), "", LONG_SECTION].join("\n");
+    const chunks = chunkGuideDocument(content, relative)!;
+    const { frontmatter, body } = parseFrontMatter(content);
+    expect(chunks).toEqual(chunkMarkdown(body, frontmatter, relative));
+
+    // 짧은 절은 그대로, 긴 절은 조각 번호가 붙은 여러 청크
+    expect(chunks.slice(0, 2).map((chunk) => chunk.section)).toEqual(["개요", "설명"]);
+    const parts = chunks.slice(2);
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts.map((chunk) => chunk.section)).toEqual(
+      parts.map((_, index) => `선언적 트랜잭션 (${index + 1}/${parts.length})`),
+    );
+  });
+});
+
+describe("가이드 색인 경로 — build-index 와 update CLI 가 같은 청킹을 쓴다", () => {
+  it("두 경로 모두 kb/guideIndexer 의 indexGuideDirectory 로 색인하고, 청킹을 따로 부르지 않는다", async () => {
+    for (const file of ["src/scripts/buildIndex.ts", "src/cli/lancedb/guide.ts"]) {
+      const source = await fs.readFile(path.join(REPO_ROOT, file), "utf-8");
+      expect(source, file).toMatch(/import \{[^}]*\bindexGuideDirectory\b[^}]*\} from ['"][./]+\/kb\/guideIndexer\.js['"]/);
+      expect(source, file).toMatch(/await indexGuideDirectory\(/);
+      expect(source, file).not.toMatch(/chunkMarkdown|chunkGuideDocument|splitGuideSections|guideChunking/);
+    }
   });
 });
 

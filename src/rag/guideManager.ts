@@ -24,12 +24,12 @@ export { chunkMarkdown } from './guideChunking.js';
 /** 가이드 문서 청크 */
 export interface GuideChunk {
   id: string;
-  title: string;       // 문서제목: 섹션제목 (예: "MyBatis 적용 가이드: Step 3. DAO 작성")
+  title: string;       // 문서제목: 섹션제목 (예: "MyBatis 적용 가이드: Step 3. DAO 작성"). 여러 조각으로 나뉜 절은 끝에 " (k/n)"
   content: string;     // 섹션 본문 (마크다운)
   source: string;      // 상대 파일 경로 (예: "egovframe-runtime/persistence-layer/dataaccess-mybatis-guide.md")
   layer: string;       // 최상위 카테고리 (예: "egovframe-runtime")
   category: string;    // 하위 카테고리 (예: "persistence-layer")
-  section: string;     // 섹션 제목 (예: "Step 3. DAO 작성")
+  section: string;     // 섹션 제목 경로 (예: "Step 3. DAO 작성", "설정 > 캐시"). 여러 조각으로 나뉜 절은 끝에 " (k/n)"
   docTitle: string;    // 문서 제목 (예: "MyBatis 적용 가이드")
   url: string;         // Hugo URL (예: "/egovframe-runtime/persistence-layer/dataaccess-mybatis-guide/")
   vector: number[];    // 384차원 임베딩 벡터
@@ -400,7 +400,7 @@ export class GuideSearchManager {
 
     console.error(`📦 ${chunks.length}개 가이드 청크 처리 중...`);
 
-    // 검색 텍스트 생성
+    // 검색 텍스트 생성 (청킹이 상한을 잴 때 쓰는 것과 같은 문자열)
     const searchTexts = chunks.map(chunk =>
       guideSearchText(chunk.title, chunk.content, chunk.layer, chunk.category)
     );
