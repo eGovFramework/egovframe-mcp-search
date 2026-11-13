@@ -8,7 +8,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { getSQLiteDBPath } from '../utils/projectPath.js';
-import { sanitizeFts5MatchQuery } from '../utils/fts5Query.js';
+import { buildFts5MatchQuery, extractSearchTerms } from '../utils/fts5Query.js';
 import { escapeLikePattern } from '../utils/sqlLike.js';
 import {
   CompatibilitySoftware,
@@ -306,8 +306,9 @@ export class SQLiteManager {
    * 전체 텍스트 검색
    */
   fullTextSearchCompatibility(query: string, limit: number = 20): CompatibilitySoftware[] {
-    const safe = sanitizeFts5MatchQuery(query);
-    if (!safe) {
+    const terms = extractSearchTerms(query);
+    const match = buildFts5MatchQuery(terms);
+    if (!match) {
       return [];
     }
 
@@ -319,14 +320,14 @@ export class SQLiteManager {
       WHERE compatibility_fts MATCH ?
       ORDER BY rank
       LIMIT ?
-    `).all(safe, limit) as CompatibilitySoftware[];
+    `).all(match, limit) as CompatibilitySoftware[];
     } catch {
-      return this.fallbackCompatibilityKeywordSearch(safe, limit);
+      return this.fallbackCompatibilityKeywordSearch(terms, limit);
     }
   }
 
-  private fallbackCompatibilityKeywordSearch(sanitizedQuery: string, limit: number): CompatibilitySoftware[] {
-    const tokens = sanitizedQuery.split(/\s+/).filter((t) => t.length >= 2).slice(0, 8);
+  private fallbackCompatibilityKeywordSearch(terms: string[], limit: number): CompatibilitySoftware[] {
+    const tokens = terms.filter((t) => t.length >= 2).slice(0, 8);
     if (tokens.length === 0) {
       return [];
     }
@@ -671,8 +672,9 @@ export class SQLiteManager {
    * 컴포넌트 전체 텍스트 검색
    */
   searchComponents(query: string, limit: number = 20): CommonComponent[] {
-    const safe = sanitizeFts5MatchQuery(query);
-    if (!safe) {
+    const terms = extractSearchTerms(query);
+    const match = buildFts5MatchQuery(terms);
+    if (!match) {
       return [];
     }
 
@@ -685,14 +687,14 @@ export class SQLiteManager {
       WHERE components_fts MATCH ?
       ORDER BY rank
       LIMIT ?
-    `).all(safe, limit) as CommonComponent[];
+    `).all(match, limit) as CommonComponent[];
     } catch {
-      return this.fallbackComponentKeywordSearch(safe, limit);
+      return this.fallbackComponentKeywordSearch(terms, limit);
     }
   }
 
-  private fallbackComponentKeywordSearch(sanitizedQuery: string, limit: number): CommonComponent[] {
-    const tokens = sanitizedQuery.split(/\s+/).filter((t) => t.length >= 2).slice(0, 8);
+  private fallbackComponentKeywordSearch(terms: string[], limit: number): CommonComponent[] {
+    const tokens = terms.filter((t) => t.length >= 2).slice(0, 8);
     if (tokens.length === 0) {
       return [];
     }

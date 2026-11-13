@@ -7,7 +7,6 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { escapeLikePattern } from "../../src/utils/sqlLike.js";
-import { sanitizeFts5MatchQuery } from "../../src/utils/fts5Query.js";
 import { SQLiteManager } from "../../src/database/sqliteManager.js";
 
 describe("escapeLikePattern", () => {
@@ -66,21 +65,5 @@ describe("SQLiteManager LIKE 검색 — 와일드카드 리터럴 처리", () =>
   it("일반 키워드 부분 일치는 그대로 동작한다", () => {
     const rows = db.searchCompatibleSoftware({ productName: "제품" });
     expect(rows.map((r) => r.product_name).sort()).toEqual(["일반제품", "제품10%", "제품10점"].sort());
-  });
-});
-
-describe("sanitizeFts5MatchQuery", () => {
-  it("FTS5 특수문자를 공백으로 치환한다", () => {
-    expect(sanitizeFts5MatchQuery('spring "boot" (mvc)')).toBe("spring boot mvc");
-    expect(sanitizeFts5MatchQuery("egov:framework.core")).toBe("egov framework core");
-  });
-
-  it("특수문자만 있는 입력은 null 을 반환한다", () => {
-    expect(sanitizeFts5MatchQuery('()[]{}"*^|')).toBeNull();
-    expect(sanitizeFts5MatchQuery("   ")).toBeNull();
-  });
-
-  it("한글/영문 혼합 질의는 보존한다", () => {
-    expect(sanitizeFts5MatchQuery("게시판 컴포넌트")).toBe("게시판 컴포넌트");
   });
 });
