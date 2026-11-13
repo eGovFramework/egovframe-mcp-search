@@ -183,8 +183,15 @@ function describeHead(sourceDir: string): string {
 /**
  * 소스 체크아웃의 사람 친화 버전 표기 (state.json 기록용).
  * 정확히 태그 위면 그 태그, 아니면 describe 결과, git 정보가 없으면 null.
+ *
+ * sourceDir 자체가 저장소(독립 클론)나 서브모듈 체크아웃일 때만 답한다. 자기 .git 이 없는 디렉토리(반입한
+ * 소스, 복사본)에서 git 을 실행하면 바깥 저장소를 찾아 올라가 그 저장소의 버전을 돌려주므로, 그런 디렉토리는
+ * git 정보가 없는 것으로 본다.
  */
 export function describeSourceVersion(sourceDir: string): string | null {
+  if (!fs.existsSync(path.join(sourceDir, '.git'))) {
+    return null;
+  }
   try {
     return describeExactTag(sourceDir) ?? describeHead(sourceDir);
   } catch {

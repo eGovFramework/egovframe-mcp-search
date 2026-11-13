@@ -21,6 +21,7 @@ import { execFileSync } from "node:child_process";
 import {
   ensureEgovframeDocs,
   ensureCommonComponentsSrc,
+  describeSourceVersion,
   TagSelectionAbortedError,
   type TagSelectionContext,
 } from "../../src/scripts/templateSources.js";
@@ -508,5 +509,30 @@ describe("ensureCommonComponentsSrc", () => {
     expect(ok).toBe(true);
     expect(calls[0].currentTag).toBe("v5.0.1");
     expect(await readMarker(componentsDir, "pom.xml")).toBe("<project>v5.0.6</project>");
+  });
+});
+
+describe("describeSourceVersion", () => {
+  it("자기 저장소의 태그를 돌려준다", () => {
+    commitMarker(upstream, "_index.md", "v1", "v1.0.0");
+
+    expect(describeSourceVersion(upstream)).toBe("v1.0.0");
+  });
+
+  it("서브모듈 체크아웃은 부모가 아니라 서브모듈의 버전을 돌려준다", () => {
+    commitMarker(upstream, "_index.md", "v1", "v1.0.0");
+    setupParentWithSubmodule();
+    git(parentRoot, "tag", "parent-tag");
+
+    expect(describeSourceVersion(guideDir)).toBe("v1.0.0");
+  });
+
+  it("git 저장소가 아닌 디렉토리는 바깥 저장소의 버전을 빌려 오지 않고 null 이다", () => {
+    // 저장소 안에 있지만 자기 .git 이 없는 디렉토리 (반입한 소스, 복사본)
+    commitMarker(upstream, "_index.md", "v1", "v1.0.0");
+    const plainDir = path.join(upstream, "templates", "plain-copy");
+    fs.outputFileSync(path.join(plainDir, "pom.xml"), "<project/>");
+
+    expect(describeSourceVersion(plainDir)).toBeNull();
   });
 });
