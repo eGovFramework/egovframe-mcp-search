@@ -1017,6 +1017,27 @@ describe("integration — egov_search_knowledge 쓰이지 않은 입력 안내",
     expect(res.text).not.toContain(UNUSED_PARAM_MARKER);
   });
 
+  it("componentId 와 별칭에 서로 다른 값을 주면 오류로 응답한다", async () => {
+    const res = await search({ scope: "components", action: "get", filters: { componentId: "bbs", component: "uia" } });
+    expect(res.isError).toBe(true);
+    expect(res.text).toContain("filters.componentId");
+    expect(res.text).toContain("filters.component");
+
+    const dependencies = await search({
+      scope: "components",
+      action: "dependencies",
+      filters: { componentIds: ["bbs"], componentId: "uia", id: "cmt" },
+    });
+    expect(dependencies.isError).toBe(true);
+    expect(dependencies.text).toContain("filters.id");
+  });
+
+  it("componentId 와 별칭에 같은 컴포넌트를 주면 정상 조회한다 (대소문자는 가리지 않는다)", async () => {
+    const res = await search({ scope: "components", action: "get", filters: { componentId: "bbs", id: "BBS" } });
+    expect(res.isError).toBe(false);
+    expect(res.text).toContain("egovframework.com.cop.bbs");
+  });
+
   it("빈 문자열만 든 배열 필터는 지정하지 않은 것으로 본다", async () => {
     // 지정한 것으로 보면 scope 추론이 knowledge·components 로 가서 오류가 된다
     for (const filters of [{ tags: [""] }, { componentIds: ["", "  "] }]) {

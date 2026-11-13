@@ -655,9 +655,23 @@ async function searchDeveloperKnowledge(args: EgovSearchKnowledgeArgs, options: 
   );
 }
 
-/** filters.componentId 와 그 별칭(component, id) 가운데 먼저 지정된 값. */
+/**
+ * filters.componentId 와 그 별칭(component, id) 가운데 먼저 지정된 값.
+ * 서로 다른 값이 들어 있으면 어느 컴포넌트를 조회할지 정할 수 없으므로 입력 오류로 돌려준다
+ * (한쪽을 조용히 버리면 호출자는 다른 컴포넌트의 결과를 받고도 알 수 없다). 대소문자만 다른 값은 같은 값으로 본다.
+ */
 function getComponentId(filters: Record<string, unknown>): string | undefined {
-  return asString(filters.componentId) || asString(filters.component) || asString(filters.id);
+  const given = COMPONENT_ID_KEYS.map((key) => ({ key, value: asString(filters[key]) })).filter(
+    (entry): entry is { key: (typeof COMPONENT_ID_KEYS)[number]; value: string } => entry.value !== undefined,
+  );
+  if (new Set(given.map((entry) => entry.value.toLowerCase())).size > 1) {
+    throw new UserFacingError(
+      `filters.componentId, filters.component, filters.id 는 같은 뜻의 별칭인데 서로 다른 값이 들어 있습니다 (${given
+        .map((entry) => `filters.${entry.key}: "${entry.value}"`)
+        .join(", ")}). 하나만 지정하세요. 여러 컴포넌트의 의존성은 action "dependencies" 와 filters.componentIds 배열로 조회합니다.`,
+    );
+  }
+  return given[0]?.value;
 }
 
 function requireComponentId(filters: Record<string, unknown>, purpose: string): string {
