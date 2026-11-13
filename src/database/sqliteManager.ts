@@ -372,10 +372,13 @@ export class SQLiteManager {
       params.push(`%${escapeLikePattern(vendor)}%`);
     }
 
+    // 제품명 필터는 버전 표기(product_version, 예: 'JEUS 8.5')와도 비교한다.
+    // 조회 결과에 보이는 값을 그대로 넣어도 찾을 수 있어야 한다.
     const productName = trimFilter(filters.productName);
     if (productName) {
-      clauses.push("cs.product_name LIKE ? ESCAPE '\\'");
-      params.push(`%${escapeLikePattern(productName)}%`);
+      const pattern = `%${escapeLikePattern(productName)}%`;
+      clauses.push("(cs.product_name LIKE ? ESCAPE '\\' OR cs.product_version LIKE ? ESCAPE '\\')");
+      params.push(pattern, pattern);
     }
 
     return { sql: clauses.map((clause) => ` AND ${clause}`).join(''), params };

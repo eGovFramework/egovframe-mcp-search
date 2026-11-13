@@ -200,6 +200,26 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(sqlite.queryCompatibleSoftware({ filters: { vendor: "   " } }).rows).toHaveLength(CATALOGUE.length);
     });
 
+    it("productName 은 제품명 또는 제품 버전 표기에 부분 일치하면 통과시킨다", () => {
+      // 응답에 표시되는 product_version('JEUS 8.5')을 그대로 넣어도 찾을 수 있어야 한다
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ filters: { productName: "JEUS 8.5" } }).rows)).toEqual([
+        "JEUS 8.5",
+      ]);
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ filters: { productName: "12c" } }).rows)).toEqual([
+        "WebLogic 12c",
+      ]);
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ filters: { productName: "JEUS" } }).rows)).toEqual([
+        "JEUS 21",
+        "JEUS 8.5",
+      ]);
+      // 키워드와 함께 줄 때도 같다
+      expect(
+        versionsOf(sqlite.queryCompatibleSoftware({ query: "티맥스", filters: { productName: "jeus 21" } }).rows),
+      ).toEqual(["JEUS 21"]);
+      // 버전 표기와 비교할 때도 와일드카드는 글자 그대로 본다 ('_' 가 공백과 일치하면 안 된다)
+      expect(sqlite.queryCompatibleSoftware({ filters: { productName: "JEUS_8" } }).rows).toEqual([]);
+    });
+
     it("searchCompatibleSoftware 는 같은 필터 조회 결과를 배열로 돌려준다", () => {
       expect(versionsOf(sqlite.searchCompatibleSoftware({ category: "WAS" }, 2))).toEqual(["JEUS 21", "JEUS 8.5"]);
       expect(sqlite.searchCompatibleSoftware()).toHaveLength(CATALOGUE.length);
