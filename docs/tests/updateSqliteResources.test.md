@@ -72,5 +72,5 @@ npx vitest run tests/integration/updateSqliteResources.test.ts
 | 증상 | 원인 | 대응 |
 |---|---|---|
 | 모든 케이스가 `skipped` 로 표시됨 | `describe.skip` 으로 건너뛰고 있습니다 | 실패가 아닙니다. 기능이 꺼져 있는 동안의 정상 상태입니다 |
-| 기능을 켜지 않고 `describe.skip` 만 풀었을 때 첫 케이스가 실패 | `runUpdate` 가 호환 소프트웨어 갱신을 건너뛰어서 오버레이 SQLite 사본이 만들어지지 않습니다 | `src/cli/update.ts` 의 `[SQLite 갱신 비활성화]` 블록을 함께 되살립니다 |
+| 기능을 켜지 않고 `describe.skip` 만 풀었을 때 첫째와 둘째 케이스가 `expected false to be true` 로 실패 | `runUpdate` 가 호환 소프트웨어 갱신을 건너뛰어서 오버레이 SQLite 사본이 만들어지지 않습니다 | `src/cli/update.ts` 의 `[SQLite 갱신 비활성화]` 블록을 함께 되살립니다. 이렇게 실패한 실행에서도 5절에 적은 대로 번들의 `state.json` 과 `egovframe.db` 가 바뀌므로 두 파일을 되돌립니다 |
 | 되살린 뒤 `git status` 에 `knowledge-base/egovframe.db` 나 `knowledge-base/state.json` 이 나타남 | 5절에 적은 대로 테스트가 번들의 파일을 씁니다 | `git restore knowledge-base/egovframe.db knowledge-base/state.json` 으로 두 파일을 되돌린 뒤, 테스트가 번들의 파일을 쓰지 않게 고칩니다 |

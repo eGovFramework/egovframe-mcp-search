@@ -35,7 +35,7 @@
 | 파일 | 검증하는 것 |
 |---|---|
 | `componentQuery.test.ts` | `SQLiteManager` 의 공통컴포넌트 키워드 조회(`queryComponents`): 모든 검색어가 일치하는 조회와 일부 검색어가 일치하는 대체 검색, 검색에서 빼는 낱말, 기호로 이은 검색어, `OR`, 정렬, 필터, `limit` 과 전체 건수, 한 건 조회(`findComponent`), 의존성 해결(`resolveDependencies`) |
-| `componentTools.test.ts` | 공통컴포넌트 도구(`src/tools/commonComponents.ts`)의 메타데이터 조회(상세 정보와 후보, 목록, 키워드 검색)와 결과 포맷(표의 칸, 카테고리 목록, 의존성 해결 결과, 컴포넌트 목록과 검색 안내 줄) |
+| `componentTools.test.ts` | 공통컴포넌트 도구(`src/tools/commonComponents.ts`)의 메타데이터 조회(상세 정보와 후보, 의존성 해결, 목록, 키워드 검색)와 결과 포맷(표의 칸, 카테고리 목록, 의존성 해결 결과, 컴포넌트 목록과 검색 안내 줄) |
 | `componentIds.test.ts` | 메타(`templates/common-components.json`)에서 겹치는 `id` 를 고유하게 만드는 규칙(`assignUniqueComponentIds`) |
 | `componentTables.test.ts` | 사용 테이블 목록(`use_tables`)을 공통컴포넌트 소스의 DDL 스크립트와 매퍼 XML 에서 도출하는 규칙(`readCreatedObjectNames`, `loadComponentTableContext`, `deriveComponentTables`) |
 | `componentsFts.test.ts` | FTS 인덱스 `components_fts` 에 갱신 전의 토큰이 남지 않는지와 `rebuildComponentsFts()` 의 복구 |
@@ -167,7 +167,7 @@
 | 임베딩 모델(`models/Xenova/multilingual-e5-small/onnx/model_quantized.onnx`)이 없음 | 의미 검색이나 실제 임베딩이 필요한 케이스: `searchKnowledge.test.ts` 의 일부, `updateKnowledge.test.ts` 전체, 단위 테스트 `compatibilityKnowledgeBundled` 전체, 단위 테스트 `embedder`, `guideChunkCorpus`, `guideChunking`, `knowledgeFilter`, `pdfKnowledgeChunks`, `vectorSearchExhaustive`, `vectorSearchScore` 의 일부 |
 | 공통컴포넌트 소스(`templates/common-components-src`)가 없음. 그 안에 `pom.xml` 이 있는지로 판정하고, `componentTables.test.ts` 만 그 안의 `src/script/ddl/mysql` 디렉터리로 판정함 | 소스 파일, DDL, DML 내용이 필요한 케이스: `searchKnowledge.test.ts` 의 일부, 단위 테스트 `componentDdl`, `componentDml`, `componentSourceFiles`, `componentSourceRead`, `componentTables` 가운데 동봉 소스 트리를 읽는 묶음 |
 | 공식 가이드 원문(`templates/egovframe_guide`)이 없음 | `guideChunkCorpus.test.ts` 전체, `guideFrontMatter.test.ts` 가운데 공식 가이드 원문 전체를 읽는 묶음 |
-| 동봉 LanceDB 테이블(`knowledge-base/egovframe_guide.lance`, `knowledge-base/developer_knowledge.lance`)이 없음 | 단위 테스트 가운데 동봉 테이블을 읽는 묶음 |
+| 동봉 LanceDB 테이블(`knowledge-base/egovframe_guide.lance`, `knowledge-base/developer_knowledge.lance`) 가운데 하나라도 없음 | 단위 테스트 가운데 동봉 테이블을 읽는 묶음. 두 테이블이 모두 있는지로 판정하므로, 하나만 없어도 다른 테이블을 읽는 묶음까지 건너뜀 |
 | 적용가이드 PDF(`templates/developer_knowledge/` 의 `.pdf`)가 없음 | `pdfKnowledgeChunks.test.ts` 가운데 동봉 PDF 를 읽는 묶음 |
 | `describe.skip` | `updateSqliteResources.test.ts` 전체 (호환 소프트웨어 갱신 기능이 비활성화된 동안) |
 | Windows 이거나 root 계정으로 실행 | 파일 권한을 막아서 확인하는 케이스 (`componentFsErrors.test.ts`, `embedder.test.ts`, `sqliteReadonly.test.ts` 의 일부) |

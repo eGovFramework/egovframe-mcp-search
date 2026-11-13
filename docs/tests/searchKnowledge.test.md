@@ -308,7 +308,7 @@ npx vitest run tests/integration/searchKnowledge.test.ts -t "scope 추론"
 
 | 증상 | 원인 | 대응 |
 |---|---|---|
-| 모든 묶음이 `beforeAll` 에서 실패 | `build/index.js` 가 없거나 서버가 실행되지 않았습니다 | [_helper.md](./_helper.md)의 "흔한 실패와 진단" 표를 봅니다 |
+| 모든 묶음이 실패. 마지막 묶음은 케이스 안에서, 나머지 묶음은 `beforeAll` 에서 실패함 | `build/index.js` 가 없거나 서버가 실행되지 않았습니다 | [_helper.md](./_helper.md)의 "흔한 실패와 진단" 표를 봅니다 |
 | `src/` 를 고쳤는데 결과가 바뀌지 않음 | 서버는 `build/` 의 코드로 실행됩니다 | `npm run build` 를 다시 실행하거나 `npm test` 로 실행합니다 |
 | 전제가 `모델` 또는 `소스` 인 케이스가 `skipped` 로 표시됨 | 임베딩 모델이나 공통컴포넌트 소스가 없습니다 | 실패가 아닙니다. 모두 실행하려면 5절의 명령으로 파일을 받습니다 |
 | 본문에 `네이티브 모듈(better-sqlite3)을 불러오지 못했습니다` 가 나오며 SQLite 를 쓰는 케이스가 실패 | 서버를 실행한 `node`(`PATH` 에서 찾은 것)의 메이저 버전이 `node_modules` 를 설치할 때의 Node 와 다릅니다 | `nvm use` 로 `.nvmrc` 의 버전(22)을 맞춘 뒤 다시 실행합니다 |

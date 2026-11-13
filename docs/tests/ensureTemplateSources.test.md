@@ -130,5 +130,6 @@ npx vitest run tests/integration/ensureTemplateSources.test.ts
 | 증상 | 원인 | 대응 |
 |---|---|---|
 | 모든 케이스가 `spawnSync git ENOENT` 로 실패 | `PATH` 에서 `git` 을 찾지 못했습니다 | git 을 설치하거나 `PATH` 를 확인합니다 |
+| `브랜치 폴백이 non-fast-forward 로 실패해도 충돌 상태를 남기지 않는다` 케이스만 `Command failed: git commit -m update to: local-divergent` 와 `gpg failed to sign the data` 로 실패 | 전역 git 설정에 `commit.gpgsign = true` 가 있어서 git 이 커밋에 서명하려다 실패했습니다. 이 케이스는 `git clone` 으로 받은 클론에서 커밋을 만드는데, 클론에는 `initRepo` 가 넣는 서명 끄기 설정이 없습니다. 테스트용 사용자(`tester <test@example.com>`)의 서명 키가 없으면 서명이 실패합니다 | 환경 변수로 이 실행에서만 커밋 서명을 끕니다: `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=commit.gpgsign GIT_CONFIG_VALUE_0=false npx vitest run tests/integration/ensureTemplateSources.test.ts` |
 | 체크아웃된 내용이 기대와 다름 | `applyTagSelection` 의 분기(콜백 없음, 태그 없음, fetch 실패)를 바꿨습니다 | 이 문서 1절의 규칙과 `src/scripts/templateSources.ts` 머리 주석을 대조합니다 |
 | `describeSourceVersion` 의 `null` 케이스가 `v1.0.0` 을 받아 실패 | 소스 디렉터리에 자기 `.git` 이 있는지 확인하는 처리가 빠졌습니다 | `src/scripts/templateSources.ts` 의 `describeSourceVersion` 을 확인합니다 |
