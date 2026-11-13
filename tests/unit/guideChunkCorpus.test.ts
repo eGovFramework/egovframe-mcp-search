@@ -5,7 +5,8 @@
  * 같은 판정(kb/guideIndexer 의 chunkGuideDocument)과 같은 상한(기본값)으로 나눈 결과에서 다음을 확인한다.
  *
  * - 한 절의 조각들을 순서대로 이으면 절의 본문이 그대로 나온다 (내용이 빠지거나 바뀌지 않는다).
- * - 색인되지 않는 것은 제목 줄과 50자 미만의 절뿐이다.
+ * - 색인에서 빠지는 글은 50자 미만인 ## 절이나 개요 전체뿐이다. 긴 절을 나눈 결과는 짧아도 빠지지 않는다.
+ * - 본문에서 빠진 제목 줄(title 로 올라간 제목)의 문구는 그 문서의 어느 청크의 title 이나 content 에 있다.
  * - 조각은 스스로 읽히는 마크다운이다 (펜스의 짝, 표 머리).
  * - 임베딩 입력이 모델의 입력 창(512 토큰)에 들어간다. 실제 토큰 수는 임베딩 모델의 토크나이저가 있을 때만 센다.
  */
@@ -84,6 +85,28 @@ function endsInsideFence(content: string): boolean {
     }
   }
   return fence !== null;
+}
+
+/**
+ * 줄마다 펜스 밖 제목 줄의 수준(1~6)을 돌려준다 (제목이 아니면 0).
+ * 청킹이 본문을 읽는 규칙(여는 펜스와 같은 문자이고 길이가 같거나 긴 펜스가 닫는다)을 확인용으로 따로 짠 것이다.
+ */
+function headingLevelsOf(lines: string[]): number[] {
+  const levels: number[] = [];
+  let fence: string | null = null;
+  for (const line of lines) {
+    const match = line.match(FENCE_LINE);
+    if (match && fence === null) {
+      fence = match[1];
+      levels.push(0);
+    } else if (match && fence !== null && match[1][0] === fence[0] && match[1].length >= fence.length) {
+      fence = null;
+      levels.push(0);
+    } else {
+      levels.push(fence === null ? (line.match(/^(#{1,6})\s+\S/)?.[1].length ?? 0) : 0);
+    }
+  }
+  return levels;
 }
 
 describe.skipIf(GUIDE_FILES.length === 0)("가이드 원문 전체의 청킹", () => {
@@ -166,27 +189,86 @@ describe.skipIf(GUIDE_FILES.length === 0)("가이드 원문 전체의 청킹", (
     expect(open).toEqual([]);
   });
 
-  it("색인되지 않는 것은 제목 줄과 50자 미만의 절뿐이다", () => {
-    const lost: string[] = [];
+  it("색인에서 빠지는 글은 50자 미만인 ## 절이나 개요 전체뿐이고, 본문에서 빠진 제목 줄의 문구는 그 문서의 청크에 있다", () => {
+    const lostText: string[] = [];
+    const lostHeadings: string[] = [];
+    let droppedSections = 0;
+    let liftedHeadings = 0;
     for (const document of documents) {
-      // 절과 절 사이(문서의 처음과 끝 포함)에 남는 글을 제목 줄에서 끊어 본다
+      const lines = document.body.split("\n");
+      const levels = headingLevelsOf(lines);
+      const starts: number[] = [];
+      let offset = 0;
+      for (const line of lines) {
+        starts.push(offset);
+        offset += line.length + 1;
+      }
+      // 절의 본문(색인된 구간)이 덮는 글자. 절은 문서의 순서대로 나오고 서로 겹치지 않는다
+      const covered = new Uint8Array(document.body.length + 1);
       let position = 0;
-      const gaps: string[] = [];
       for (const section of document.sections) {
         expect(section.offset, document.relativePath).toBeGreaterThanOrEqual(position);
-        gaps.push(document.body.slice(position, section.offset));
+        covered.fill(1, section.offset, section.offset + section.body.length);
         position = section.offset + section.body.length;
       }
-      gaps.push(document.body.slice(position));
-      for (const gap of gaps) {
-        for (const leftover of gap.split(/^#{1,6}(?:[ \t].*)?$/m)) {
-          if (leftover.trim().length >= GUIDE_SECTION_MIN_CHARS) {
-            lost.push(`${document.relativePath}: ${JSON.stringify(leftover.trim().slice(0, 60))}`);
+      /** 줄의 글(앞뒤 공백 제외)이 색인된 구간 안에 있는지 */
+      const isCovered = (index: number) => {
+        const line = lines[index];
+        const first = starts[index] + (line.length - line.trimStart().length);
+        const last = starts[index] + line.trimEnd().length - 1;
+        return covered[first] === 1 && covered[last] === 1;
+      };
+      const phraseOf = (index: number) => lines[index].replace(/^#{1,6}\s+/, "").trim();
+
+      // 개요(첫 ## 앞)와 ## 절마다 본다
+      const h2 = levels.flatMap((level, index) => (level === 2 ? [index] : []));
+      const ranges = [
+        { head: -1, from: 0, to: h2[0] ?? lines.length },
+        ...h2.map((head, k) => ({ head, from: head + 1, to: h2[k + 1] ?? lines.length })),
+      ];
+      for (const range of ranges) {
+        const content: number[] = [];
+        for (let index = range.from; index < range.to; index++) {
+          if (lines[index].trim() !== "") content.push(index);
+        }
+        // 개요의 맨 앞에 있는 # 줄(문서 제목)은 색인하지 않는다
+        if (range.head < 0 && content.length > 0 && (levels[content[0]] === 1 || /^#\s*$/.test(lines[content[0]]))) {
+          content.shift();
+        }
+        const label = `${document.relativePath}:${range.head + 1}`;
+        if (!content.some(isCovered)) {
+          // 절 전체가 색인에서 빠졌다: 50자 미만이어야 한다
+          if (content.length === 0) continue;
+          const last = content[content.length - 1];
+          const text = document.body.slice(starts[content[0]], starts[last] + lines[last].length).trim();
+          droppedSections += 1;
+          if (text.length >= GUIDE_SECTION_MIN_CHARS) lostText.push(`${label} 절 전체 ${text.length}자`);
+          continue;
+        }
+        // 색인된 절에서 본문에 없는 줄은 title 로 올라간 제목 줄(### 이하)뿐이다
+        for (const index of content) {
+          if (isCovered(index)) continue;
+          if (levels[index] < 3) {
+            lostText.push(`${document.relativePath}:${index + 1} ${JSON.stringify(lines[index].slice(0, 60))}`);
+            continue;
           }
+          liftedHeadings += 1;
+          const phrase = phraseOf(index);
+          if (!document.chunks.some((chunk) => chunk.title.includes(phrase) || chunk.content.includes(phrase))) {
+            lostHeadings.push(`${document.relativePath}:${index + 1} ${JSON.stringify(lines[index].slice(0, 60))}`);
+          }
+        }
+        // ## 제목의 문구는 그 절에서 나온 청크의 title 에 있다
+        if (range.head >= 0 && !document.chunks.some((chunk) => chunk.title.includes(phraseOf(range.head)))) {
+          lostHeadings.push(`${label} ${JSON.stringify(lines[range.head].slice(0, 60))}`);
         }
       }
     }
-    expect(lost).toEqual([]);
+    expect(lostText).toEqual([]);
+    expect(lostHeadings).toEqual([]);
+    // 원문에 두 경우가 실제로 있다 (한 줄짜리 참고자료 절, 긴 절을 나눈 제목)
+    expect(droppedSections).toBeGreaterThan(10);
+    expect(liftedHeadings).toBeGreaterThan(1000);
   });
 
   it("조각 번호: 여러 조각으로 나뉜 절에만 ' (k/n)' 이 차례대로 붙고, title 과 section 의 번호가 같다", () => {

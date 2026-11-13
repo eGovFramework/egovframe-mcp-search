@@ -611,7 +611,7 @@ describe("chunkMarkdown — 조각 번호", () => {
 });
 
 describe("chunkMarkdown — 너무 작은 조각을 만들지 않는다", () => {
-  it("본문이 50자 미만인 절은 색인하지 않는다", () => {
+  it("본문이 50자 미만인 ## 절과 개요는 색인하지 않는다", () => {
     const chunks = chunk(doc("# 캐시 가이드", "", "짧은 개요", "", "## 설정", "", paragraph("설정", 6), "", "## 참고", "", "- 없음"));
     expect(chunks.map((c) => c.section)).toEqual(["설정"]);
   });
@@ -643,8 +643,9 @@ describe("chunkMarkdown — 너무 작은 조각을 만들지 않는다", () => 
     expect(chunks[0].content).toBe(["설정은 다음과 같다.", "", "### 캐시", "", paragraph("캐시", 8)].join("\n"));
   });
 
-  it("합치면 상한을 넘는 짧은 소절은 따로 두고, 50자 미만이면 색인하지 않는다", () => {
-    // 이웃 조각이 모두 상한 가까이 차 있어 합칠 수 없는 경우: 60자 소절은 따로 남고, 25자 소절은 빠진다
+  it("합치면 상한을 넘는 짧은 소절: 50자 미만이면 다음 소절에 붙여 다시 나누고, 50자 이상이면 따로 둔다", () => {
+    // 이웃 조각이 모두 상한 가까이 차 있어 한 청크로 합칠 수 없는 경우: 25자 소절은 버리지 않고 다음 소절 앞에 붙이고
+    // (붙인 묶음은 조각으로 다시 나뉜다), 60자 소절은 따로 남는다
     const chunks = chunk(
       doc(
         "## 설정",
@@ -669,8 +670,15 @@ describe("chunkMarkdown — 너무 작은 조각을 만들지 않는다", () => 
       ),
       { tokenBudget: 160, minPieceChars: 100 },
     );
-    expect(chunks.map((c) => c.section)).toEqual(["설정", "설정 > 세션", "설정 > 주의", "설정 > 복제"]);
-    expect(chunks[2].content).toBe("가".repeat(60));
+    expect(chunks.map((c) => c.section)).toEqual([
+      "설정",
+      "설정 > 참고 / 세션 (1/2)",
+      "설정 > 참고 / 세션 (2/2)",
+      "설정 > 주의",
+      "설정 > 복제",
+    ]);
+    expect(chunks[1].content.startsWith("캐시는 꺼 둘 수 있다. 기본값은 켜짐이다.\n\n### 세션\n\n세션 문단의 1번째 문장입니다.")).toBe(true);
+    expect(chunks[3].content).toBe("가".repeat(60));
   });
 
   it("문단에서 나눈 조각이 짧게 남지 않도록 자르는 자리를 옮긴다", () => {
@@ -684,6 +692,120 @@ describe("chunkMarkdown — 너무 작은 조각을 만들지 않는다", () => 
 
   it("기본값: 조각은 200자 미만이면 짧다고 본다", () => {
     expect(GUIDE_PIECE_MIN_CHARS).toBe(200);
+  });
+});
+
+describe("chunkMarkdown — 나눈 결과로 생긴 짧은 글과 본문 없는 제목 줄을 버리지 않는다", () => {
+  /** 본문의 모든 문장(번호가 붙은 문장)이 어느 한 청크에만 들어 있는지 확인한다 */
+  const expectEverySentenceOnce = (chunks: ReturnType<typeof chunk>, body: string) => {
+    const sentences = body.match(/\S+ 문단의 \d+번째 문장입니다\./g) ?? [];
+    expect(sentences.length).toBeGreaterThan(0);
+    for (const sentence of sentences) {
+      // "1번째" 가 "11번째" 에 들어 있으므로 앞뒤를 끊어서 센다
+      const count = chunks.filter((c) => ` ${c.content.replace(/\n/g, " ")} `.includes(` ${sentence} `)).length;
+      expect(count, sentence).toBe(1);
+    }
+  };
+
+  it("50자 미만인 도입부는 첫 소절 앞에 붙인다 (한 청크에 들어가지 않으면 붙인 묶음을 조각으로 나눈다)", () => {
+    const body = doc("## 설명", "", "출력 형식을 변환한다.", "", "##### 관련소스", "", paragraph("관련", 6), "", paragraph("소스", 6), "", paragraph("목록", 6));
+    const chunks = chunk(body);
+    // 도입부를 붙인 묶음은 소절의 내용이 조각마다 이어지므로 소절의 이름을 쓴다
+    expect(chunks.map((c) => c.section)).toEqual(["설명 > 관련소스 (1/2)", "설명 > 관련소스 (2/2)"]);
+    expect(chunks[0].content).toBe(["출력 형식을 변환한다.", "", "##### 관련소스", "", paragraph("관련", 6)].join("\n"));
+    expect(chunks[1].content).toBe([paragraph("소스", 6), "", paragraph("목록", 6)].join("\n"));
+    expectEverySentenceOnce(chunks, body);
+  });
+
+  it("긴 소절 사이의 50자 미만 소절은 다음 소절 앞에 붙이고, 두 소절의 이름을 함께 싣는다", () => {
+    const body = doc(
+      "## 사용법", "", "### 가", "", paragraph("가", 12), "", "### 관련 예제", "", "[Parallel 예제](./batch-example.md)", "", "### 나", "", paragraph("나", 7), "", paragraph("다", 7),
+    );
+    const chunks = chunk(body);
+    expect(chunks.map((c) => [c.title, c.section])).toEqual([
+      ["캐시 가이드: 사용법 > 가", "사용법 > 가"],
+      ["캐시 가이드: 사용법 > 관련 예제 / 나 (1/2)", "사용법 > 관련 예제 / 나 (1/2)"],
+      ["캐시 가이드: 사용법 > 관련 예제 / 나 (2/2)", "사용법 > 관련 예제 / 나 (2/2)"],
+    ]);
+    expect(chunks[1].content).toBe(["[Parallel 예제](./batch-example.md)", "", "### 나", "", paragraph("나", 7)].join("\n"));
+    expect(chunks[2].content).toBe(paragraph("다", 7));
+    expectEverySentenceOnce(chunks, body);
+  });
+
+  it("마지막 소절이 50자 미만이면 앞 묶음의 끝에 붙인다", () => {
+    const body = doc("## 사용법", "", "### 가", "", paragraph("가", 7), "", paragraph("나", 7), "", "### 참고", "", "- [관련 예제](./example.md)");
+    const chunks = chunk(body);
+    expect(chunks.map((c) => c.section)).toEqual(["사용법 > 가 / 참고 (1/2)", "사용법 > 가 / 참고 (2/2)"]);
+    expect(chunks[0].content).toBe(paragraph("가", 7));
+    expect(chunks[1].content).toBe([paragraph("나", 7), "", "### 참고", "", "- [관련 예제](./example.md)"].join("\n"));
+    expectEverySentenceOnce(chunks, body);
+  });
+
+  it("더 깊은 제목이 있는 큰 소절 앞에 붙인 짧은 소절은 그 소절의 첫 청크에 실린다", () => {
+    const body = doc(
+      "## 설명", "", paragraph("설명", 13), "", "### 클래스 다이어그램", "", "![그림](./images/class.png)", "",
+      "### 아이디 생성", "", "#### 테이블", "", paragraph("테이블", 9), "", "#### 환경설정", "", paragraph("환경", 9),
+    );
+    const chunks = chunk(body);
+    // 이름은 묶음에 든 제목을 차례로 잇는다: 같은 수준으로 넘어가면 ' / ', 더 깊은 제목으로 내려가면 ' > '
+    expect(chunks.map((c) => c.section)).toEqual([
+      "설명",
+      "설명 > 클래스 다이어그램 / 아이디 생성 > 테이블",
+      "설명 > 아이디 생성 > 환경설정",
+    ]);
+    expect(chunks[1].content).toBe(["![그림](./images/class.png)", "", "### 아이디 생성", "", "#### 테이블", "", paragraph("테이블", 9)].join("\n"));
+    expectEverySentenceOnce(chunks, body);
+  });
+
+  it("본문이 없는 제목 줄은 다음 소절과 묶어 제목 경로에 싣는다", () => {
+    const chunks = chunk(
+      doc("## 작업 생성", "", paragraph("도입", 8), "", "##### 팩토리 빈을 이용한 작업 생성", "", "##### 소스 코드", "", paragraph("코드", 9)),
+    );
+    expect(chunks.map((c) => c.section)).toEqual(["작업 생성", "작업 생성 > 팩토리 빈을 이용한 작업 생성 / 소스 코드"]);
+    // 본문 없는 제목은 title 로 올라가고, 다음 소절의 제목 줄은 본문의 첫 줄로 남는다
+    expect(chunks[1].title).toBe("캐시 가이드: 작업 생성 > 팩토리 빈을 이용한 작업 생성 / 소스 코드");
+    expect(chunks[1].content).toBe(["##### 소스 코드", "", paragraph("코드", 9)].join("\n"));
+  });
+
+  it("본문이 없는 제목 줄이 절의 마지막이면 앞 묶음의 끝에 남긴다", () => {
+    const chunks = chunk(doc("## 설정", "", paragraph("설정", 8), "", "### 캐시", "", paragraph("캐시", 9), "", "### 예정"));
+    expect(chunks.map((c) => c.section)).toEqual(["설정", "설정 > 캐시 / 예정"]);
+    expect(chunks[1].content).toBe([paragraph("캐시", 9), "", "### 예정"].join("\n"));
+  });
+
+  it("붙인 묶음을 조각으로 나눌 때 제목 줄 바로 뒤에서는 끊지 않는다 (제목만 앞 조각 끝에 남기지 않는다)", () => {
+    // 41자 소절(짧은 조각의 기준 40자보다는 길다)을 다음 소절 앞에 붙인다. 제목 줄 뒤에서 끊으면 두 조각의 크기가 더 고르지만
+    // 제목이 그 내용과 떨어진다
+    const note = "자세한 내용은 관련 예제 문서에 있는 설명과 그림을 함께 보면서 참고한다.";
+    const items = Array.from({ length: 11 }, (_, i) => `- 나 목록의 ${i + 1}번째 항목입니다.`);
+    expect(note.length).toBeGreaterThanOrEqual(SMALL.minPieceChars!);
+    const chunks = chunk(doc("## 사용법", "", "### 가", "", paragraph("가", 12), "", "### 참고", "", note, "", "### 나", "", ...items));
+    expect(chunks.map((c) => c.section)).toEqual(["사용법 > 가", "사용법 > 참고 / 나 (1/2)", "사용법 > 참고 / 나 (2/2)"]);
+    expect(chunks[1].content).toBe(note);
+    expect(chunks[2].content).toBe(["### 나", "", ...items].join("\n"));
+  });
+
+  it("붙인 묶음의 조각들도 묶음의 본문을 빠짐없이 덮는다", () => {
+    const bodies = [
+      doc("## 설명", "", "출력 형식을 변환한다.", "", "##### 관련소스", "", paragraph("관련", 6), "", paragraph("소스", 6), "", paragraph("목록", 6)),
+      doc("## 사용법", "", "### 가", "", paragraph("가", 12), "", "### 관련 예제", "", "[Parallel 예제](./batch-example.md)", "", "### 나", "", paragraph("나", 7), "", paragraph("다", 7)),
+      doc("## 사용법", "", "### 가", "", paragraph("가", 7), "", paragraph("나", 7), "", "### 참고", "", "- [관련 예제](./example.md)"),
+    ];
+    for (const body of bodies) {
+      const result = sections(body);
+      expect(result.some((section) => section.pieces.length > 1)).toBe(true);
+      for (const section of result) {
+        expectLossless(section);
+        expect(body.slice(section.offset, section.offset + section.body.length)).toBe(section.body);
+      }
+      // 절과 절 사이에 남는 것은 title 로 올라간 제목 줄과 빈 줄뿐이다
+      let position = 0;
+      for (const section of result) {
+        expect(body.slice(position, section.offset).replace(/^#{2,6}[ \t].*$/gm, "").trim()).toBe("");
+        position = section.offset + section.body.length;
+      }
+      expect(body.slice(position).trim()).toBe("");
+    }
   });
 });
 
