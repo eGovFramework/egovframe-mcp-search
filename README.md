@@ -165,7 +165,7 @@ npm run build-index -- --source=local \
 | `local` | `--template-dir` 아래의 `egovframe_guide/`(가이드 마크다운)와 `developer_knowledge/`(스냅샷 쌍 또는 xlsx)를 씁니다. 없는 것은 저장소의 `templates/` 로 대신합니다. 공통컴포넌트 메타, 호환 소프트웨어 목록, 적용가이드 PDF 는 항상 저장소의 `templates/` 에서 읽습니다. |
 | `bundled` | 저장소의 현재 체크아웃만 쓰고 네트워크에 접속하지 않습니다. `--source` 없이 `--yes` 만 주었을 때의 기본값입니다. |
 
-소스 모드, 버전 태그, 실행 계획 확인 같은 질문은 모두 빌드를 시작하기 전에 끝나고, 그 뒤로는 입력 없이 끝까지 진행합니다. 새 인덱스는 `knowledge-base.staging/` 에 만든 뒤 검증을 거쳐 `knowledge-base/` 와 교체하므로, 도중에 실패해도 기존 인덱스는 그대로 남습니다. 직전 인덱스는 `knowledge-base.prev/` 에 하나 보존됩니다.
+소스 모드, 버전 태그, 실행 계획 확인 같은 질문은 모두 빌드를 시작하기 전에 끝나고, 그 뒤로는 입력 없이 끝까지 진행합니다. 새 인덱스는 `knowledge-base.staging/` 에 만든 뒤 검증을 거쳐 `knowledge-base/` 와 교체하므로, 도중에 실패해도 기존 인덱스는 그대로 남습니다. 직전 인덱스는 `knowledge-base.prev/` 에 하나 보존됩니다. 실행 중인 MCP 서버는 열어 둔 SQLite DB 를 계속 읽고, LanceDB 인덱스는 읽기에 실패한 뒤에야 다시 엽니다. 그래서 다시 구축한 뒤에는 서버를 재시작합니다.
 
 공통컴포넌트의 사용 테이블 목록은 어느 소스 모드에서나 저장소의 `templates/common-components-src` 소스 트리(컴포넌트별 DDL 스크립트와 매퍼 XML)에서 도출합니다. 이 서브모듈이 없으면 메타(`templates/common-components.json`)에 적힌 목록을 그대로 적재하고 경고를 출력합니다. 소스 트리의 태그와 메타의 버전이 다를 때에도 경고를 출력하는데, 지금 동봉된 데이터(소스 v5.0.1, 메타 5.0.0)가 그 경우이고 오류는 아닙니다.
 
