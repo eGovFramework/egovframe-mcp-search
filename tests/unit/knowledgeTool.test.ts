@@ -20,7 +20,7 @@ import {
   useQueryVector,
   type VectorRow,
 } from "./_lanceFixtures.js";
-import { createKnowledgeTable, type KnowledgeTableFixture } from "./_knowledgeTableFixture.js";
+import { createKnowledgeTable, unitVector, type KnowledgeTableFixture } from "./_knowledgeTableFixture.js";
 
 /** getInitializedHybridManager() 가 돌려줄 객체 (테스트마다 필요한 부분만 채운다) */
 const hybrid = vi.hoisted(() => ({ current: undefined as unknown }));
@@ -486,5 +486,59 @@ describe("searchKnowledge 도구 — 통합 검색(scope=all)의 지식 필터",
 
     const options = smartSearchSpy.mock.calls[0]?.[0] as { knowledgeOptions?: Record<string, unknown> } | undefined;
     expect(Object.values(options?.knowledgeOptions ?? {}).filter((value) => value !== undefined)).toEqual([]);
+  });
+});
+
+describe("searchKnowledge 도구 — 응답의 민감한 식별번호와 제목 정규화", () => {
+  let fixture: KnowledgeTableFixture;
+
+  beforeAll(async () => {
+    // 테스트용으로 지어낸 번호다. 제목 하나는 자모가 분리된 NFD 로 넣는다
+    fixture = await createKnowledgeTable([
+      { id: "pii", title: "개인정보 900101-1234567", content: "질문:\n900101-1234567\n\n답변:\n850505-2345678", axis: 1 },
+      { id: "nfd", title: "적용가이드".normalize("NFD"), content: "질문:\n본문\n\n답변:\n답", axis: 2 },
+      { id: "cut", title: "발췌 경계", content: `${"가".repeat(20)} 900101-1234567 뒤에 이어지는 글`, axis: 3 },
+    ]);
+    hybrid.current = { getKnowledge: () => fixture.manager };
+  });
+
+  afterAll(async () => {
+    await fixture.cleanup();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("의미 검색 결과의 제목과 본문에서 주민등록번호 형식을 가린다", async () => {
+    useQueryVector(unitVector(1));
+    const results = semanticResults(await searchKnowledge({ query: "개인정보", limit: 1 }));
+
+    expect(results[0].id).toBe("pii");
+    expect(results[0].title).toBe("개인정보 ******-*******");
+    expect(results[0].content).toBe("질문:\n******-*******\n\n답변:\n******-*******");
+  });
+
+  it("발췌가 번호 중간에서 끊겨도 번호의 일부를 남기지 않는다", async () => {
+    useQueryVector(unitVector(3));
+    const results = semanticResults(await searchKnowledge({ query: "발췌", limit: 1, excerptLength: 30 }));
+
+    expect(results[0].id).toBe("cut");
+    expect(results[0].content).not.toMatch(/\d/);
+    expect(results[0].content).toContain("*");
+  });
+
+  it("최근 목록의 제목에서도 가린다", async () => {
+    const output = (await searchKnowledge({ sort: "recent", limit: 10 })) as { results: Array<{ id: string; title: string }> };
+    expect(output.results.find((row) => row.id === "pii")?.title).toBe("개인정보 ******-*******");
+  });
+
+  it("제목은 NFC 로 정규화해서 돌려준다", async () => {
+    useQueryVector(unitVector(2));
+    const results = semanticResults(await searchKnowledge({ query: "적용가이드", limit: 1 }));
+
+    expect(results[0].id).toBe("nfd");
+    expect(results[0].title).toBe("적용가이드");
+    expect(results[0].title).toBe((results[0].title as string).normalize("NFC"));
   });
 });

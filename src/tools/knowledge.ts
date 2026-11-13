@@ -11,6 +11,24 @@ import {
 import { UserFacingError } from '../utils/errors.js';
 import { excerptKnowledgeContent } from '../utils/knowledgeExcerpt.js';
 import { sliceHead } from '../utils/text.js';
+import { maskResidentNumbers } from '../utils/sensitiveText.js';
+
+/**
+ * 응답에 싣는 제목을 다듬는다: NFC 로 정규화하고(macOS 파일 이름에서 온 제목이 NFD 로 색인되어 있다)
+ * 주민등록번호 형식의 값을 가린다.
+ */
+function presentTitle(title: unknown): string {
+  return maskResidentNumbers(String(title ?? '').normalize('NFC'));
+}
+
+/**
+ * 응답에 싣는 본문을 만든다: 주민등록번호 형식의 값을 가린 뒤(공개 게시판의 글이라 본문에 들어 있을 수 있다)
+ * excerptLength 가 있으면 그 길이로 발췌한다. 발췌를 먼저 하면 번호가 중간에서 끊겨 일부가 남는다.
+ */
+function presentContent(content: string, excerptLength?: number): string {
+  const masked = maskResidentNumbers(content);
+  return excerptLength === undefined ? masked : excerptKnowledgeContent(masked, excerptLength);
+}
 
 /**
  * 검색 결과의 score(코사인 거리)를 코사인 유사도로 바꾼다.
@@ -117,8 +135,7 @@ export async function searchKnowledge(args: {
       results: results.map((r: any) => ({
         id: r.id,
         type: r.type,
-        title: r.title,
-        content: r.content,
+        title: presentTitle(r.title),
         tags: r.tags,
         importance: r.importance,
         createdAt: r.createdAt,
@@ -156,9 +173,9 @@ export async function searchKnowledge(args: {
         description: s.description,
       })),
       knowledge: results.knowledge.map((k: any) => ({
-        title: k.title,
+        title: presentTitle(k.title),
         type: k.type,
-        content: excerptKnowledgeContent(k.content, excerptLength ?? DEFAULT_PREVIEW_LENGTH),
+        content: presentContent(k.content, excerptLength ?? DEFAULT_PREVIEW_LENGTH),
         tags: k.tags,
         importance: k.importance,
       })),
@@ -186,8 +203,8 @@ export async function searchKnowledge(args: {
     results: results.map(r => ({
       id: r.id,
       type: r.type,
-      title: r.title,
-      content: excerptLength === undefined ? r.content : excerptKnowledgeContent(r.content, excerptLength),
+      title: presentTitle(r.title),
+      content: presentContent(r.content, excerptLength),
       context: r.context,
       tags: r.tags,
       importance: r.importance,
@@ -271,9 +288,9 @@ export async function smartSearch(args: {
       description: s.description,
     })),
     knowledge: results.knowledge.map(k => ({
-      title: k.title,
+      title: presentTitle(k.title),
       type: k.type,
-      content: excerptKnowledgeContent(k.content, DEFAULT_PREVIEW_LENGTH),
+      content: presentContent(k.content, DEFAULT_PREVIEW_LENGTH),
       tags: k.tags,
       importance: k.importance,
       similarity: toSimilarity(k.score),
