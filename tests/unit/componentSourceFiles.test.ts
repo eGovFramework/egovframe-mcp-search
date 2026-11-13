@@ -184,6 +184,54 @@ describe('collectComponentSourceFiles — ID 생성기 설정 귀속 (임시 소
   });
 });
 
+describe('collectComponentSourceFiles — macOS AppleDouble 파일 제외', () => {
+  let root: string;
+  const PKG_DIR = path.join('egovframework', 'com', 'cop', 'bbs');
+  const SUB_DIR = path.join('com', 'cop', 'bbs');
+
+  /** AppleDouble 파일의 머리 부분 (매직 넘버 00 05 16 07 + "Mac OS X") */
+  const appleDouble = Buffer.concat([Buffer.from([0x00, 0x05, 0x16, 0x07, 0x00, 0x02, 0x00, 0x00]), Buffer.from('Mac OS X        ')]);
+
+  beforeAll(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'egov-src-appledouble-'));
+    /** 실제 파일과, macOS tar 가 확장 속성을 담아 그 옆에 만드는 "._이름" 파일을 함께 쓴다 */
+    const writeWithTwin = (dir: string, name: string, content = 'x\n') => {
+      fs.mkdirSync(path.join(root, dir), { recursive: true });
+      fs.writeFileSync(path.join(root, dir, name), content);
+      fs.writeFileSync(path.join(root, dir, `._${name}`), appleDouble);
+    };
+
+    fs.writeFileSync(path.join(root, 'pom.xml'), '<project/>\n');
+    writeWithTwin(path.join('src', 'main', 'java', PKG_DIR, 'service'), 'Board.java', 'class Board {}\n');
+    writeWithTwin(path.join('src', 'main', 'java', PKG_DIR, 'service'), '.Hidden.java', 'class Hidden {}\n');
+    writeWithTwin(path.join('src', 'main', 'resources', 'egovframework', 'mapper', SUB_DIR), 'Board_SQL_mysql.xml');
+    writeWithTwin(path.join('src', 'main', 'webapp', 'WEB-INF', 'jsp', 'egovframework', SUB_DIR), 'BoardList.jsp');
+    writeWithTwin(path.join('src', 'main', 'webapp', 'css', 'egovframework', SUB_DIR), 'board.css');
+    writeWithTwin(path.join('src', 'main', 'webapp', 'images', 'egovframework', SUB_DIR), 'icon.png');
+    writeWithTwin(path.join('src', 'main', 'resources', 'egovframework', 'message', SUB_DIR), 'message_ko.properties');
+    writeWithTwin(path.join(SPRING_DIR, 'scheduling'), 'context-scheduling-cop-bbs.xml', '<beans/>\n');
+  });
+
+  afterAll(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('이름이 "._" 로 시작하는 파일은 어느 섹션에도 넣지 않는다', () => {
+    const files = collectComponentSourceFiles(root, component('egovframework.com.cop.bbs'));
+    const names = (list: string[]) => list.map((file) => path.basename(file)).sort();
+
+    // 점 하나로 시작하는 파일은 AppleDouble 이 아니므로 그대로 둔다
+    expect(names(files.java)).toEqual(['.Hidden.java', 'Board.java']);
+    expect(names(files.mapperXml)).toEqual(['Board_SQL_mysql.xml']);
+    expect(names(files.jsp)).toEqual(['BoardList.jsp']);
+    expect(names(files.css)).toEqual(['board.css']);
+    expect(names(files.images)).toEqual(['icon.png']);
+    expect(names(files.message)).toEqual(['message_ko.properties']);
+    expect(names(files.config)).toEqual(['context-scheduling-cop-bbs.xml']);
+    expect(files.total).toBe(8);
+  });
+});
+
 describe.skipIf(!hasComponentSources)('collectComponentSourceFiles — Spring 설정 귀속 (동봉 소스 트리)', () => {
   /** 컴포넌트 메타데이터 (DB 를 열지 않도록 원본 JSON 을 읽는다) */
   const packages: string[] = hasComponentSources

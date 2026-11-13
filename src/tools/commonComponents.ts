@@ -683,6 +683,8 @@ function listFilesRecursive(dirPath: string, extensions: string[], srcRoot: stri
     if (item.isDirectory()) {
       results.push(...listFilesRecursive(fullPath, extensions, srcRoot));
     } else if (item.isFile()) {
+      // macOS 의 tar 가 확장 속성을 담아 만드는 AppleDouble 파일("._이름")은 소스가 아니다
+      if (item.name.startsWith('._')) continue;
       const ext = path.extname(item.name).toLowerCase();
       if (extensions.length === 0 || extensions.includes(ext)) {
         results.push(fullPath);
