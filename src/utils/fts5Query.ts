@@ -21,7 +21,7 @@ export function extractSearchTerms(raw: string, maxTerms: number = MAX_SEARCH_TE
   const seen = new Set<string>();
 
   for (const candidate of raw.normalize('NFC').split(/[^\p{L}\p{N}._-]+/u)) {
-    const term = candidate.replace(/^[._-]+|[._-]+$/g, '');
+    const term = trimEdgeSeparators(candidate);
     if (!term || !/[\p{L}\p{N}]/u.test(term)) {
       continue;
     }
@@ -37,6 +37,29 @@ export function extractSearchTerms(raw: string, maxTerms: number = MAX_SEARCH_TE
   }
 
   return terms;
+}
+
+/** 검색어 안쪽에서는 남기고 양끝에서는 떼는 문자: '.', '-', '_' */
+function isEdgeSeparator(char: string): boolean {
+  return char === '.' || char === '-' || char === '_';
+}
+
+/**
+ * 양끝의 `.` `-` `_` 를 뗀다. 안쪽의 것은 그대로 둔다 (`..4.3-` → `4.3`).
+ *
+ * 앞뒤에서 한 번씩만 훑으므로 입력 길이에 비례하는 시간이 걸린다. 정규식 `/^[._-]+|[._-]+$/g` 로 떼면
+ * 끝에 닿지 않는 구분 문자 줄의 자리마다 줄 끝까지 다시 훑어, 'a' 사이에 '.' 이 8만 개 든 입력에 약 3초가 걸린다.
+ */
+export function trimEdgeSeparators(candidate: string): string {
+  let start = 0;
+  let end = candidate.length;
+  while (start < end && isEdgeSeparator(candidate[start])) {
+    start += 1;
+  }
+  while (end > start && isEdgeSeparator(candidate[end - 1])) {
+    end -= 1;
+  }
+  return candidate.slice(start, end);
 }
 
 /**

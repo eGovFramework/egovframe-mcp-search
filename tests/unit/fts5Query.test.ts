@@ -12,7 +12,15 @@ import {
   MAX_SEARCH_TERMS,
   buildFts5MatchQuery,
   extractSearchTerms,
+  trimEdgeSeparators,
 } from "../../src/utils/fts5Query.js";
+
+/** fn 을 한 번 실행하는 데 걸린 시간(ms) */
+const elapsedMs = (fn: () => unknown): number => {
+  const started = performance.now();
+  fn();
+  return performance.now() - started;
+};
 
 describe("extractSearchTerms", () => {
   it("공백으로 나눈 검색어를 순서대로 돌려준다", () => {
@@ -57,6 +65,39 @@ describe("extractSearchTerms", () => {
     const nfd = "게시판".normalize("NFD");
     expect(nfd).not.toBe("게시판");
     expect(extractSearchTerms(nfd)).toEqual(["게시판"]);
+  });
+});
+
+describe("trimEdgeSeparators", () => {
+  it("양끝의 '.', '-', '_' 만 떼고 안쪽의 것은 남긴다", () => {
+    expect(trimEdgeSeparators("..4.3-")).toBe("4.3");
+    expect(trimEdgeSeparators("_egovframework.com.cop.bbs_")).toBe("egovframework.com.cop.bbs");
+    expect(trimEdgeSeparators("-spring-boot.")).toBe("spring-boot");
+    expect(trimEdgeSeparators("게시판")).toBe("게시판");
+  });
+
+  it("구분 문자뿐이거나 빈 입력은 빈 문자열을 돌려준다", () => {
+    expect(trimEdgeSeparators("")).toBe("");
+    expect(trimEdgeSeparators(".")).toBe("");
+    expect(trimEdgeSeparators("._-._-")).toBe("");
+  });
+
+  it("안쪽에 구분 문자가 길게 이어져도 입력 길이에 비례하는 시간 안에 끝난다", () => {
+    // 정규식 /^[._-]+|[._-]+$/g 는 끝에 닿지 않는 구분 문자 줄의 자리마다 줄 끝까지 다시 훑어 2차 시간이 걸린다
+    const inner = `a${".".repeat(80000)}a`;
+    let trimmed = "";
+    expect(elapsedMs(() => (trimmed = trimEdgeSeparators(inner)))).toBeLessThan(100);
+    expect(trimmed).toBe(inner);
+    expect(elapsedMs(() => (trimmed = trimEdgeSeparators("-".repeat(60000))))).toBeLessThan(100);
+    expect(trimmed).toBe("");
+  });
+});
+
+describe("extractSearchTerms 의 처리 시간", () => {
+  it("구분 문자('.', '-', '_')가 길게 이어진 입력도 100ms 안에 끝난다", () => {
+    // 'a' + '.' 8만 개 + 'a' 는 약 3초가 걸렸고, 그동안 stdio 서버 전체가 멈췄다
+    expect(elapsedMs(() => extractSearchTerms(`a${".".repeat(80000)}a`))).toBeLessThan(100);
+    expect(elapsedMs(() => extractSearchTerms("-".repeat(60000)))).toBeLessThan(100);
   });
 });
 
