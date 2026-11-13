@@ -446,10 +446,20 @@ export function getComponentSourceFiles(componentId: string): ComponentSourceFil
     component = db.getComponentByPackage(componentId);
     if (!component) return null;
   }
-  
-  const srcRoot = getComponentSrcRoot();
+
+  return collectComponentSourceFiles(getComponentSrcRoot(), component);
+}
+
+/**
+ * 소스 루트에서 컴포넌트의 파일을 종류별로 모은다.
+ * getComponentSourceFiles 의 본체로, 소스 루트와 컴포넌트 메타데이터를 인자로 받는다.
+ */
+export function collectComponentSourceFiles(
+  srcRoot: string,
+  component: Pick<CommonComponent, 'component_id' | 'name' | 'package_name'>
+): ComponentSourceFiles {
   const pkgName = component.package_name;
-  
+
   // 패키지명에서 상대 경로 추출: egovframework.com.cop.bbs → com/cop/bbs
   const pkgParts = pkgName.split('.');
   const egovIdx = pkgParts.indexOf('egovframework');
@@ -461,32 +471,38 @@ export function getComponentSourceFiles(componentId: string): ComponentSourceFil
   // 각 카테고리별 디렉토리에서 파일 탐색
   const java = listFilesRecursive(
     path.join(srcRoot, 'src/main/java', fullPkgPath),
-    ['.java']
+    ['.java'],
+    srcRoot
   );
   
   const mapperXml = listFilesRecursive(
     path.join(srcRoot, 'src/main/resources/egovframework/mapper', subPath),
-    ['.xml']
+    ['.xml'],
+    srcRoot
   );
   
   const jsp = listFilesRecursive(
     path.join(srcRoot, 'src/main/webapp/WEB-INF/jsp/egovframework', subPath),
-    ['.jsp']
+    ['.jsp'],
+    srcRoot
   );
   
   const css = listFilesRecursive(
     path.join(srcRoot, 'src/main/webapp/css/egovframework', subPath),
-    ['.css']
+    ['.css'],
+    srcRoot
   );
   
   const images = listFilesRecursive(
     path.join(srcRoot, 'src/main/webapp/images/egovframework', subPath),
-    ['.jpg', '.png', '.gif', '.svg', '.ico']
+    ['.jpg', '.png', '.gif', '.svg', '.ico'],
+    srcRoot
   );
   
   const config = listFilesRecursive(
     path.join(srcRoot, 'src/main/resources/egovframework/spring/com'),
-    ['.xml']
+    ['.xml'],
+    srcRoot
   ).filter(f => {
     // scheduling 파일 중 해당 컴포넌트 관련만 필터
     const basename = path.basename(f).toLowerCase();
@@ -497,7 +513,8 @@ export function getComponentSourceFiles(componentId: string): ComponentSourceFil
   
   const message = listFilesRecursive(
     path.join(srcRoot, 'src/main/resources/egovframework/message', subPath),
-    ['.properties']
+    ['.properties'],
+    srcRoot
   );
   
   // 모든 경로를 srcRoot 기준 상대 경로로 변환
@@ -520,17 +537,52 @@ export function getComponentSourceFiles(componentId: string): ComponentSourceFil
   return result;
 }
 
-/** 디렉토리에서 특정 확장자 파일을 재귀적으로 탐색 */
-function listFilesRecursive(dirPath: string, extensions: string[]): string[] {
-  if (!fs.existsSync(dirPath)) return [];
-  
+/** 대상이 없다고 볼 fs 오류: 없는 경로, 경로 중간이 파일, 디렉토리를 파일로 읽음, 링크 순환 */
+const MISSING_PATH_ERROR_CODES: ReadonlySet<string> = new Set([
+  'ENOENT',
+  'ENOTDIR',
+  'EISDIR',
+  'ELOOP',
+  'ENAMETOOLONG',
+]);
+
+/**
+ * 소스 트리 안의 파일·디렉토리를 읽는 fs 호출을 감싼다.
+ *
+ * Node 의 fs 오류 메시지에는 절대 경로가 들어 있어 그대로 내보낼 수 없다.
+ * - 대상이 없는 경우는 null (호출한 쪽이 "찾을 수 없음"으로 처리)
+ * - 권한 거부는 소스 루트 기준 상대 경로만 담은 UserFacingError
+ * - 그 밖의 오류는 그대로 던진다 (서버가 고정 문구로 바꾸고 상세는 stderr 에 남긴다)
+ */
+function readFromSourceTree<T>(relPath: string, kind: 'file' | 'directory', read: () => T): T | null {
+  try {
+    return read();
+  } catch (error) {
+    const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined;
+    if (code !== undefined && MISSING_PATH_ERROR_CODES.has(code)) {
+      return null;
+    }
+    if (code === 'EACCES' || code === 'EPERM') {
+      const subject = kind === 'file' ? '파일을' : '디렉토리를';
+      throw new UserFacingError(`${subject} 읽을 수 없습니다: ${relPath} (권한 거부)`);
+    }
+    throw error;
+  }
+}
+
+/** 디렉토리에서 특정 확장자 파일을 재귀적으로 탐색 (없는 디렉토리는 빈 목록) */
+function listFilesRecursive(dirPath: string, extensions: string[], srcRoot: string): string[] {
+  const items = readFromSourceTree(path.relative(srcRoot, dirPath), 'directory', () =>
+    fs.readdirSync(dirPath, { withFileTypes: true })
+  );
+  if (!items) return [];
+
   const results: string[] = [];
-  const items = fs.readdirSync(dirPath, { withFileTypes: true });
-  
+
   for (const item of items) {
     const fullPath = path.join(dirPath, item.name);
     if (item.isDirectory()) {
-      results.push(...listFilesRecursive(fullPath, extensions));
+      results.push(...listFilesRecursive(fullPath, extensions, srcRoot));
     } else if (item.isFile()) {
       const ext = path.extname(item.name).toLowerCase();
       if (extensions.length === 0 || extensions.includes(ext)) {
@@ -538,7 +590,7 @@ function listFilesRecursive(dirPath: string, extensions: string[]): string[] {
       }
     }
   }
-  
+
   return results.sort();
 }
 
@@ -670,12 +722,14 @@ export function readSourceFileInRoot(
   if (!resolved) return null;
   const { realPath, relPath } = resolved;
 
-  const stat = fs.statSync(realPath);
-  if (!stat.isFile()) {
-    return null;
-  }
+  // 일반 파일만 읽는다 (디렉토리 등은 찾을 수 없음)
+  const file = readFromSourceTree(relPath, 'file', () => {
+    const stat = fs.statSync(realPath);
+    return stat.isFile() ? { size: stat.size, buffer: fs.readFileSync(realPath) } : null;
+  });
+  if (!file) return null;
 
-  const text = decodeUtf8Text(fs.readFileSync(realPath));
+  const text = decodeUtf8Text(file.buffer);
 
   // 바이너리 파일은 내용 없이 메타데이터만 돌려준다
   if (text === null) {
@@ -683,7 +737,7 @@ export function readSourceFileInRoot(
       filePath: relPath,
       content: '[바이너리 파일 - UTF-8 텍스트가 아니어서 내용을 표시하지 않습니다]',
       language: 'binary',
-      size: stat.size,
+      size: file.size,
       truncated: false,
       totalChars: 0,
       offset: 0,
@@ -706,7 +760,7 @@ export function readSourceFileInRoot(
     content: text.slice(offset, end),
     language: getLanguageFromExtension(path.extname(realPath).toLowerCase()),
     // 디코딩한 문자 수가 아니라 파일의 실제 바이트 수
-    size: stat.size,
+    size: file.size,
     truncated,
     totalChars,
     offset,
@@ -822,10 +876,9 @@ export function getComponentDDL(componentId: string, dbType: string = 'mysql'): 
   }
   
   // DDL 파일 읽기
-  const srcRoot = getComponentSrcRoot();
-  const ddlFilePath = path.join(srcRoot, 'script', 'ddl', normalizedDbType, `com_DDL_${normalizedDbType}.sql`);
-  
-  if (!fs.existsSync(ddlFilePath)) {
+  const fullDDL = readDbScript(getComponentSrcRoot(), 'ddl', normalizedDbType);
+
+  if (fullDDL === null) {
     return {
       componentId: component.component_id,
       componentName: component.name,
@@ -837,8 +890,7 @@ export function getComponentDDL(componentId: string, dbType: string = 'mysql'): 
       missing: [...tables],
     };
   }
-  
-  const fullDDL = fs.readFileSync(ddlFilePath, 'utf-8');
+
   const extractedDDL = extractTableDDLs(fullDDL, tables);
   
   return {
@@ -961,22 +1013,28 @@ export function getComponentDML(
   }
 
   // DML 파일 읽기
-  const srcRoot = getComponentSrcRoot();
-  const dmlFilePath = path.join(srcRoot, 'script', 'dml', normalizedDbType, `com_DML_${normalizedDbType}.sql`);
+  const fullDML = readDbScript(getComponentSrcRoot(), 'dml', normalizedDbType);
 
-  if (!fs.existsSync(dmlFilePath)) {
+  if (fullDML === null) {
     return {
       ...base,
       ...emptyDml(`-- DML 파일을 찾을 수 없습니다: ${normalizedDbType}`, selectedTable),
     };
   }
 
-  const fullDML = fs.readFileSync(dmlFilePath, 'utf-8');
-
   return {
     ...base,
     ...extractTableDMLs(fullDML, tables, options),
   };
+}
+
+/**
+ * 통합 DB 스크립트(script/<ddl|dml>/<dbType>/com_<DDL|DML>_<dbType>.sql)를 읽는다.
+ * 파일이 없으면 null, 읽을 권한이 없으면 상대 경로만 담은 UserFacingError.
+ */
+export function readDbScript(srcRoot: string, kind: 'ddl' | 'dml', dbType: DbType): string | null {
+  const relPath = path.join('script', kind, dbType, `com_${kind.toUpperCase()}_${dbType}.sql`);
+  return readFromSourceTree(relPath, 'file', () => fs.readFileSync(path.join(srcRoot, relPath), 'utf-8'));
 }
 
 /** DB 타입 별칭 → 정규 이름 */
