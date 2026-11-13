@@ -300,9 +300,13 @@ export class SQLiteManager {
 
   /**
    * 전체 텍스트 검색 — 키워드로 찾은 행을 배열로 돌려준다.
-   * 검색 규칙은 queryCompatibleSoftware 와 같다.
+   * 검색 규칙은 queryCompatibleSoftware 와 같다. 단, 검색어가 하나도 추출되지 않으면
+   * 전체 목록이 아니라 빈 배열을 돌려준다.
    */
   fullTextSearchCompatibility(query: string, limit: number = 20): CompatibilitySoftware[] {
+    if (extractSearchTerms(query).length === 0) {
+      return [];
+    }
     return this.queryCompatibleSoftware({ query, limit }).rows;
   }
 
@@ -310,22 +314,18 @@ export class SQLiteManager {
    * 호환성 소프트웨어 조회 (키워드 + 필터).
    *
    * 필터는 키워드 검색과 같은 SQL 문에서 적용하고 LIMIT 은 그 뒤에 적용한다.
-   * - query 가 없으면 필터에 맞는 행을 확인일자가 최근인 순으로 돌려준다.
-   * - query 가 있으면 모든 검색어가 접두 일치하는 행을 먼저 찾고(all-terms), 그런 행이 없으면
-   *   일부 검색어가 부분 문자열로 들어 있는 행을 찾는다(any-term).
-   *   검색어가 하나도 추출되지 않으면 빈 결과를 돌려준다.
+   * - query 에서 검색어가 추출되면 모든 검색어가 접두 일치하는 행을 먼저 찾고(all-terms),
+   *   그런 행이 없으면 일부 검색어가 부분 문자열로 들어 있는 행을 찾는다(any-term).
+   * - query 가 없거나 검색어가 하나도 추출되지 않으면("*", "?" 등) 필터에 맞는 행을
+   *   확인일자가 최근인 순으로 돌려준다.
    */
   queryCompatibleSoftware(options: CompatibilityQueryOptions = {}): CompatibilityQueryResult {
     const filter = this.buildCompatibilityFilter(options.filters ?? {});
     const limit = toSqlLimit(options.limit);
-    const query = options.query ?? '';
 
-    const terms = extractSearchTerms(query);
+    const terms = extractSearchTerms(options.query ?? '');
     if (terms.length > 0) {
       return this.keywordSearch<CompatibilitySoftware>(COMPATIBILITY_SEARCH, terms, filter, limit);
-    }
-    if (query.trim() !== '') {
-      return { rows: [] };
     }
 
     const rows = this.db

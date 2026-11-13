@@ -164,6 +164,14 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(result.matchMode).toBe("any-term");
     });
 
+    it("query 에서 검색어가 하나도 추출되지 않으면 query 가 없는 것으로 보고 필터만 적용한다", () => {
+      for (const query of ["*", ".", "?!", '"-"', "   "]) {
+        const result = sqlite.queryCompatibleSoftware({ query, filters: { frameworkVersion: "4.3" } });
+        expect(versionsOf(result.rows), `query=${JSON.stringify(query)}`).toEqual(["JEUS 21", "SampleCMS 1.0"]);
+        expect(result.matchMode).toBeUndefined();
+      }
+    });
+
     it("searchCompatibleSoftware 는 같은 필터 조회 결과를 배열로 돌려준다", () => {
       expect(versionsOf(sqlite.searchCompatibleSoftware({ category: "WAS" }, 2))).toEqual(["JEUS 21", "JEUS 8.5"]);
       expect(sqlite.searchCompatibleSoftware()).toHaveLength(CATALOGUE.length);

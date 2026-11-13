@@ -116,6 +116,26 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
     });
   });
 
+  describe("검색어가 추출되지 않는 query", () => {
+    useCatalogue(CATALOGUE);
+
+    it("필터를 무효로 만들지 않고, query 가 없을 때와 같은 결과를 돌려준다", async () => {
+      const expected = await searchCompatibleSoftware({ frameworkVersion: "4.3" });
+      expect(versionsOf(expected.software)).toEqual(["JEUS 21", "SampleCMS 1.0"]);
+
+      for (const query of ["*", ".", "?!"]) {
+        const response = await searchCompatibleSoftware({ query, frameworkVersion: "4.3" });
+        expect(versionsOf(response.software), `query=${query}`).toEqual(versionsOf(expected.software));
+        expect(response).not.toHaveProperty("matchMode");
+      }
+    });
+
+    it("필터도 없으면 전체 목록을 돌려준다", async () => {
+      const response = await searchCompatibleSoftware({ query: "*" });
+      expect(response.count).toBe(CATALOGUE.length);
+    });
+  });
+
   describe("query 와 필터를 함께 준 조회", () => {
     const db = useCatalogue(CROWDED);
 
