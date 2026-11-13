@@ -8,10 +8,7 @@ import { DeveloperKnowledgeManager } from '../rag/knowledgeManager.js';
 import { fileURLToPath } from 'url';
 import { getKnowledgeBasePath } from '../utils/projectPath.js';
 import { resolveDeveloperKnowledgeDbDir, resolveSQLiteDbPath } from '../utils/dataPaths.js';
-import {
-  CompatibilitySoftware,
-  CompatibilitySearchFilter,
-} from '../types/database.js';
+import { CompatibilitySoftware } from '../types/database.js';
 import {
   AddKnowledgeInput,
   KnowledgeSearchOptions,
@@ -24,7 +21,6 @@ export interface HybridSearchOptions {
   includeCompatibility?: boolean;  // 호환성 소프트웨어 검색
   includeKnowledge?: boolean;      // 개발자 지식 검색
   knowledgeOptions?: KnowledgeSearchOptions;
-  compatibilityFilter?: CompatibilitySearchFilter;
   limit?: number;
 }
 
@@ -130,7 +126,6 @@ export class HybridDatabaseManager {
       includeCompatibility = true,
       includeKnowledge = true,
       knowledgeOptions = {},
-      compatibilityFilter = {},
       limit = 10,
     } = options;
 
@@ -143,27 +138,11 @@ export class HybridDatabaseManager {
     // 병렬로 검색 실행
     const searches: Promise<void>[] = [];
 
-    // 1. 호환성 소프트웨어 검색 (키워드 기반)
+    // 1. 호환성 소프트웨어 검색 (키워드 기반): 모든 검색어가 일치하는 행을 limit 건까지
     if (includeCompatibility) {
       searches.push(
         (async () => {
-          // FTS 전체 텍스트 검색
-          const ftsResults = this.getSQLite().fullTextSearchCompatibility(query, limit);
-          
-          // 필터가 있으면 추가 검색
-          if (Object.keys(compatibilityFilter).length > 0) {
-            const filterResults = this.getSQLite().searchCompatibleSoftware(compatibilityFilter);
-            
-            // 중복 제거 후 병합
-            const combined = [...ftsResults, ...filterResults];
-            const uniqueMap = new Map<number, CompatibilitySoftware>();
-            combined.forEach(item => {
-              if (item.id) uniqueMap.set(item.id, item);
-            });
-            result.compatibility = Array.from(uniqueMap.values()).slice(0, limit);
-          } else {
-            result.compatibility = ftsResults;
-          }
+          result.compatibility = this.getSQLite().fullTextSearchCompatibility(query, limit);
         })()
       );
     }

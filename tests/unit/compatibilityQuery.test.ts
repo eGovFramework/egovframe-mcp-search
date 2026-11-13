@@ -1264,7 +1264,7 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       }
     });
 
-    it("배열을 돌려주는 기존 메서드는 id 를 유지한다 (id 로 중복을 걸러 내는 호출부가 있다)", () => {
+    it("배열을 돌려주는 기존 메서드는 id 를 유지한다 (행 전체를 돌려주는 메서드다)", () => {
       expect(sqlite.searchCompatibleSoftware({ category: "WAS" })[0]).toHaveProperty("id");
       expect(sqlite.fullTextSearchCompatibility("JEUS")[0]).toHaveProperty("id");
       expect(sqlite.fullTextSearchCompatibility("티맥스 Tibero")[0]).toHaveProperty("id");

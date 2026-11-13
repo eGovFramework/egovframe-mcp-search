@@ -1308,7 +1308,7 @@ const COMPATIBILITY_SEARCH: KeywordSearchTarget = {
   defaultOrder: COMPATIBILITY_NEWEST_FIRST,
 };
 
-/** 배열을 돌려주는 기존 메서드용: id 로 행을 구분하는 호출부가 있어 모든 컬럼을 조회한다. */
+/** 배열을 돌려주는 기존 메서드용: 행 전체(CompatibilitySoftware, id 와 created_at 포함)를 돌려주므로 모든 컬럼을 조회한다. */
 const COMPATIBILITY_SEARCH_ALL_COLUMNS: KeywordSearchTarget = { ...COMPATIBILITY_SEARCH, columns: 'cs.*' };
 
 const COMPONENT_SEARCH: KeywordSearchTarget = {
