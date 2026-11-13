@@ -862,9 +862,16 @@ export class SQLiteManager {
     const clauses: string[] = [];
     const params: unknown[] = [];
 
-    if (filters.categoryId) {
-      clauses.push('c.category_id = ?');
-      params.push(filters.categoryId);
+    // 카테고리는 ID 뿐 아니라 이름·영문명으로도 지정할 수 있다. 카테고리 목록에 보이는 값
+    // 어느 것을 넣어도 찾을 수 있어야 한다 (ID 는 '역할-권한관리', 이름은 '역할/권한관리' 처럼 다를 수 있다).
+    const categoryId = trimFilter(filters.categoryId);
+    if (categoryId) {
+      clauses.push(
+        `(c.category_id = ? COLLATE NOCASE OR c.category_id IN (
+            SELECT category_id FROM component_categories
+            WHERE name = ? COLLATE NOCASE OR name_en = ? COLLATE NOCASE))`,
+      );
+      params.push(categoryId, categoryId, categoryId);
     }
 
     if (filters.hasWeb !== undefined) {

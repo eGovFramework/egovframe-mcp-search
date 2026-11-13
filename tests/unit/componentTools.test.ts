@@ -10,7 +10,7 @@ import fs from "fs-extra";
 import path from "node:path";
 import os from "node:os";
 import { SQLiteManager } from "../../src/database/sqliteManager.js";
-import { COMPONENTS, idsOf, seedComponents } from "./_componentFixture.js";
+import { CATEGORIES, COMPONENTS, idsOf, seedComponents } from "./_componentFixture.js";
 
 const paths = vi.hoisted(() => ({ sqliteDb: "" }));
 
@@ -29,6 +29,7 @@ vi.mock("../../src/utils/dataPaths.js", async (importOriginal) => {
 });
 
 import {
+  formatCategoryList,
   formatComponentList,
   listCommonComponents,
   searchComponents,
@@ -54,6 +55,14 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
   });
 
   describe("listCommonComponents", () => {
+    it("categoryId 는 카테고리 ID·이름·영문명 어느 것으로든 지정할 수 있다", () => {
+      for (const categoryId of ["역할-권한관리", "역할/권한관리", "role/authority management"]) {
+        const listed = listCommonComponents({ categoryId });
+        expect(idsOf(listed.components).sort(), `categoryId=${categoryId}`).toEqual(["drm", "ram"]);
+        expect(listed.total).toBe(2);
+      }
+    });
+
     it("limit 을 주면 그만큼만 돌려주고 total 로 전체 건수를 알린다", () => {
       const listed = listCommonComponents({ version: "4.3.1" }, 2);
       expect(listed.components).toHaveLength(2);
@@ -116,6 +125,36 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
 
 describe("공통컴포넌트 도구 — 결과 포맷", () => {
   const [uia, sec] = COMPONENTS.map((component) => ({ ...component, category_name: component.category_id }));
+
+  describe("formatCategoryList", () => {
+    const categories = CATEGORIES.map((category, index) => ({ ...category, component_count: index + 1 }));
+
+    it("categoryId 필터에 쓸 카테고리 ID 열을 표에 넣는다", () => {
+      const text = formatCategoryList(categories);
+      expect(text).toContain("## eGovFrame 공통컴포넌트 카테고리");
+      expect(text).toContain(`총 **${CATEGORIES.length}개** 카테고리`);
+
+      const lines = text.split("\n");
+      const header = lines.find((line) => line.includes("카테고리 ID"));
+      expect(header).toBeDefined();
+      expect(header).toContain("컴포넌트 수");
+
+      // 이름과 ID 가 다른 카테고리는 두 값이 한 행에 함께 나온다
+      const row = lines.find((line) => line.includes("역할/권한관리"));
+      expect(row).toContain("역할-권한관리");
+      expect(row).toContain("Role/Authority Management");
+      expect(row).toContain("3개");
+    });
+
+    it("머리글과 각 행의 열 수가 같다", () => {
+      const tableLines = formatCategoryList(categories)
+        .split("\n")
+        .filter((line) => line.startsWith("|"));
+      const columns = tableLines.map((line) => line.split("|").length);
+      expect(tableLines).toHaveLength(CATEGORIES.length + 2);
+      expect(new Set(columns).size).toBe(1);
+    });
+  });
 
   describe("formatComponentList", () => {
     it("일부만 표시할 때는 제목 줄에 'N개 중 M개 표시' 를 적는다", () => {

@@ -187,17 +187,19 @@ export function getComponentSummary(): ComponentSummary {
 
 /**
  * 결과 포맷팅 - 카테고리 목록
+ *
+ * '카테고리 ID' 열의 값이 categoryId 필터에 쓰는 값이다 (이름과 다른 카테고리가 있다).
  */
 export function formatCategoryList(
   categories: (ComponentCategory & { component_count: number })[]
 ): string {
   let output = '## eGovFrame 공통컴포넌트 카테고리\n\n';
   output += `총 **${categories.length}개** 카테고리\n\n`;
-  output += '| # | 카테고리 | 영문명 | 컴포넌트 수 |\n';
-  output += '|---|----------|--------|-------------|\n';
-  
+  output += '| # | 카테고리 | 카테고리 ID | 영문명 | 컴포넌트 수 |\n';
+  output += '|---|----------|-------------|--------|-------------|\n';
+
   categories.forEach((cat, idx) => {
-    output += `| ${idx + 1} | ${cat.name} | ${cat.name_en || '-'} | ${cat.component_count}개 |\n`;
+    output += `| ${idx + 1} | ${cat.name} | \`${cat.category_id}\` | ${cat.name_en || '-'} | ${cat.component_count}개 |\n`;
   });
   
   return output;

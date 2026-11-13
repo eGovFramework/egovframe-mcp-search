@@ -162,6 +162,48 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     });
   });
 
+  describe("categoryId 필터", () => {
+    const inCategory = (categoryId: string) => idsOf(sqlite.queryComponents({ filters: { categoryId } }).rows).sort();
+
+    it("카테고리 ID 로 지정한다", () => {
+      expect(inCategory("역할-권한관리")).toEqual(["drm", "ram"]);
+      expect(inCategory("게시판")).toEqual(["bbs", "tpl"]);
+    });
+
+    it("목록에 보이는 카테고리 이름으로도 지정할 수 있다 (ID 와 이름이 다른 카테고리)", () => {
+      expect(inCategory("역할/권한관리")).toEqual(["drm", "ram"]);
+    });
+
+    it("영문명으로도 지정할 수 있다", () => {
+      expect(inCategory("BBS")).toEqual(["bbs", "tpl"]);
+      expect(inCategory("Role/Authority Management")).toEqual(["drm", "ram"]);
+    });
+
+    it("앞뒤 공백을 떼고 대소문자를 구분하지 않는다", () => {
+      expect(inCategory(" bbs ")).toEqual(["bbs", "tpl"]);
+      expect(inCategory("LOGIN")).toEqual(["sec", "uia"]);
+      expect(inCategory("role/authority management")).toEqual(["drm", "ram"]);
+      expect(inCategory("  역할-권한관리\n")).toEqual(["drm", "ram"]);
+    });
+
+    it("부분 일치는 아니다. 없는 카테고리는 빈 결과다", () => {
+      expect(inCategory("권한관리")).toEqual([]);
+      expect(inCategory("없는카테고리")).toEqual([]);
+      expect(sqlite.queryComponents({ filters: { categoryId: "없는카테고리" } }).total).toBe(0);
+    });
+
+    it("공백뿐이면 주지 않은 것으로 본다", () => {
+      expect(inCategory("   ")).toHaveLength(COMPONENTS.length);
+    });
+
+    it("키워드 검색과 함께 줄 때도 같은 기준으로 일치시킨다", () => {
+      const result = sqlite.queryComponents({ query: "관리", filters: { categoryId: "역할/권한관리" } });
+      expect(idsOf(result.rows).sort()).toEqual(["drm", "ram"]);
+      expect(idsOf(sqlite.searchComponents("관리", 20, { categoryId: "bbs" }))).toEqual(["tpl"]);
+      expect(idsOf(sqlite.getCommonComponents({ categoryId: "Login" })).sort()).toEqual(["sec", "uia"]);
+    });
+  });
+
   describe("목록의 limit 과 전체 건수", () => {
     it("limit 을 주면 앞에서부터 그만큼만 돌려주고, total 은 전체 건수다", () => {
       const result = sqlite.queryComponents({ filters: { version: "4.3.1" }, limit: 2 });
