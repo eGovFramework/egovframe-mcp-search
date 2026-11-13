@@ -323,29 +323,45 @@ describe("chunkMarkdown — 제목이 없으면 문단, 그다음 줄 경계에�
   });
 
   describe("아주 긴 한 줄", () => {
-    /** 가장 빨랐던 실행의 시간(ms). 다른 작업의 영향을 줄이려고 여러 번 재서 가장 작은 값을 쓴다 */
-    const fastest = (run: () => void, times = 5) => {
+    /**
+     * run 한 번에 쓴 CPU 시간(ms). process.cpuUsage 의 user 시간과 system 시간을 더한 값으로 잰다.
+     *
+     * 벽시계 시간으로 재면 다른 작업이 CPU 를 차지한 동안 기다린 시간까지 들어간다. 코어가 16개인 장비에서 계산만 하는
+     * 프로세스 24개를 띄운 채 아래 테스트의 비율(세 가지 줄 가운데 가장 큰 값)을 12번 쟀을 때, 벽시계 시간으로는 7.4배에서
+     * 9.1배였고(8배를 넘은 것이 11번) 이 함수로는 4.1배에서 4.6배였다. CPU 시간은 이 프로세스가 실제로 쓴 시간만 센다.
+     *
+     * CPU 시간의 눈금이 거친 환경에서도 값이 흔들리지 않도록, 잰 값이 100ms 이상이 될 때까지 이어 실행해 한 번의 평균을
+     * 구한다. 그렇게 세 번 재서 가장 작은 값을 쓴다 (가비지 컬렉션이 끼어든 측정을 고르지 않는다).
+     */
+    const cpuMsPerRun = (run: () => void, rounds = 3, minWindowMs = 100) => {
       let best = Infinity;
-      for (let i = 0; i < times; i++) {
-        const started = performance.now();
-        run();
-        best = Math.min(best, performance.now() - started);
+      for (let round = 0; round < rounds; round++) {
+        const started = process.cpuUsage();
+        let runs = 0;
+        let usedMs = 0;
+        do {
+          run();
+          runs += 1;
+          const used = process.cpuUsage(started);
+          usedMs = (used.user + used.system) / 1000;
+        } while (usedMs < minWindowMs);
+        best = Math.min(best, usedMs / runs);
       }
       return best;
     };
 
-    it("처리 시간이 줄 길이에 비례한다 (줄이 네 배가 되어도 시간이 여덟 배가 되지 않는다)", () => {
-      // 토막마다 남은 줄 전체를 다시 세면 시간이 길이의 제곱에 비례한다. 그렇게 구현했을 때는 아래의 세 가지 줄에서
-      // 20만 자와 80만 자의 시간이 15배 안팎으로 벌어졌다
+    it("처리 시간이 줄 길이에 비례한다 (줄이 네 배가 되어도 CPU 시간이 여덟 배가 되지 않는다)", () => {
+      // 토막마다 남은 줄 전체를 다시 세면 시간이 길이의 제곱에 비례한다. 그렇게 구현했던 커밋(26d52b5)의 빌드에서는
+      // 아래의 세 가지 줄에서 20만 자와 80만 자의 CPU 시간이 14.1배에서 15.1배로 벌어졌다
       for (const unit of ["가나다라마바사아자차", "A1b2C3d4", "낱말과 공백으로 된 문장입니다. "]) {
         const line = (length: number) => unit.repeat(Math.ceil(length / unit.length)).slice(0, length);
         const short = doc("## 데이터", "", line(200_000));
         const long = doc("## 데이터", "", line(800_000));
         chunkMarkdown(short, FRONTMATTER, DOC_PATH); // 준비 실행
-        const shortMs = fastest(() => chunkMarkdown(short, FRONTMATTER, DOC_PATH));
-        const longMs = fastest(() => chunkMarkdown(long, FRONTMATTER, DOC_PATH));
-        expect(longMs / Math.max(shortMs, 1), `${unit}: ${shortMs.toFixed(1)}ms → ${longMs.toFixed(1)}ms`).toBeLessThan(8);
-        // 80만 자 한 줄이 1초 안에 끝난다 (제곱에 비례하던 구현은 줄의 종류에 따라 1.3초에서 3.0초가 걸렸다)
+        const shortMs = cpuMsPerRun(() => chunkMarkdown(short, FRONTMATTER, DOC_PATH));
+        const longMs = cpuMsPerRun(() => chunkMarkdown(long, FRONTMATTER, DOC_PATH));
+        expect(longMs / shortMs, `${unit}: CPU ${shortMs.toFixed(1)}ms → ${longMs.toFixed(1)}ms`).toBeLessThan(8);
+        // 80만 자 한 줄을 CPU 시간 1초 안에 나눈다 (제곱에 비례하던 구현은 줄의 종류에 따라 2.0초에서 3.6초를 썼다)
         expect(longMs, unit).toBeLessThan(1000);
       }
     }, 120_000);
