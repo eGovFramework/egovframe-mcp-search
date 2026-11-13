@@ -372,6 +372,14 @@ describe("chunkPdfText — 이웃한 청크의 겹침", () => {
       sentences.slice(3, 7).join(" "),
       sentences.slice(6).join(" "),
     ]);
+
+    // 겹침 25자의 범위는 한 문장 앞의 끝 낱말("끝난다.")부터라서, 범위에서 가장 앞에 있는 낱말의 처음과
+    // 문장의 처음이 서로 다른 자리다. 낱말의 처음("끝난다. 4번 ...")이 아니라 문장의 처음("4번 ...")을 고른다
+    expect(chunkPdfText(sentences.join(" "), 70, 25)).toEqual([
+      sentences.slice(0, 4).join(" "),
+      sentences.slice(3, 6).join(" "),
+      sentences.slice(5).join(" "),
+    ]);
   });
 
   it("문장도 겹침 길이보다 길면 낱말 경계에서 겹침을 시작한다", () => {
