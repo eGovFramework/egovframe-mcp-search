@@ -429,7 +429,7 @@ export class DeveloperKnowledgeManager {
   async getKnowledgeById(id: string): Promise<DeveloperKnowledge | null> {
     const results = await this.table
       .query()
-      .where(`id = '${id}'`)
+      .where(lanceEquals('id', id))
       .toArray();
     
     return results.length > 0 ? (results[0] as DeveloperKnowledge) : null;
@@ -481,7 +481,7 @@ export class DeveloperKnowledgeManager {
     }
     
     // 기존 삭제 후 추가 (LanceDB는 in-place update 불가)
-    await this.table.delete(`id = '${input.id}'`);
+    await this.table.delete(lanceEquals('id', input.id));
     await this.table.add([updated]);
     
     console.error(`✅ 지식 업데이트 완료: "${updated.title}"`);
@@ -491,7 +491,7 @@ export class DeveloperKnowledgeManager {
    * 지식 삭제
    */
   async deleteKnowledge(id: string): Promise<void> {
-    await this.table.delete(`id = '${id}'`);
+    await this.table.delete(lanceEquals('id', id));
     console.error(`🗑️ 지식 삭제 완료: ID ${id}`);
   }
 
