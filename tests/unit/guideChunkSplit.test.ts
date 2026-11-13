@@ -630,7 +630,8 @@ describe("chunkMarkdown — 너무 작은 조각을 만들지 않는다", () => 
     const chunks = chunk(
       doc("## 설정", "", paragraph("설정", 6), "", "### 캐시", "", paragraph("캐시", 8), "", "### 참고", "", "캐시는 꺼 둘 수 있다.", "", "### 세션", "", paragraph("세션", 9)),
     );
-    expect(chunks.map((c) => c.section)).toEqual(["설정", "설정 > 캐시", "설정 > 세션"]);
+    // 합친 청크의 이름에는 합쳐진 소절의 이름이 함께 실린다 (아래의 "합친 묶음의 이름" 묶음에서 자세히 확인한다)
+    expect(chunks.map((c) => c.section)).toEqual(["설정", "설정 > 캐시 / 참고", "설정 > 세션"]);
     expect(chunks[1].content).toBe([paragraph("캐시", 8), "", "### 참고", "", "캐시는 꺼 둘 수 있다."].join("\n"));
   });
 
@@ -683,6 +684,69 @@ describe("chunkMarkdown — 너무 작은 조각을 만들지 않는다", () => 
 
   it("기본값: 조각은 200자 미만이면 짧다고 본다", () => {
     expect(GUIDE_PIECE_MIN_CHARS).toBe(200);
+  });
+});
+
+describe("chunkMarkdown — 합친 묶음의 이름에 합쳐진 소절을 함께 싣는다", () => {
+  it("소절 뒤에 합쳐진 소절의 이름을 ' / ' 로 이어 title 과 section 에 싣는다", () => {
+    const chunks = chunk(
+      doc("## 설정", "", paragraph("설정", 6), "", "### 캐시", "", paragraph("캐시", 8), "", "### 참고", "", "캐시는 꺼 둘 수 있다.", "", "### 세션", "", paragraph("세션", 9)),
+    );
+    expect(chunks.map((c) => [c.title, c.section])).toEqual([
+      ["캐시 가이드: 설정", "설정"],
+      ["캐시 가이드: 설정 > 캐시 / 참고", "설정 > 캐시 / 참고"],
+      ["캐시 가이드: 설정 > 세션", "설정 > 세션"],
+    ]);
+  });
+
+  it("제목 수준을 건너뛴 소절끼리 합쳐도 같은 방식으로 잇는다 (예: '설명 > Input / Output')", () => {
+    const chunks = chunk(
+      doc("## 설명", "", paragraph("설명", 6), "", "##### Input", "", paragraph("입력", 8), "", "##### Output", "", "변환된 문자열.", "", "##### 예외", "", paragraph("예외", 9)),
+    );
+    expect(chunks.map((c) => c.section)).toEqual(["설명", "설명 > Input / Output", "설명 > 예외"]);
+    expect(chunks[1].content).toBe([paragraph("입력", 8), "", "##### Output", "", "변환된 문자열."].join("\n"));
+  });
+
+  it("합쳐진 소절의 이름은 세 개까지 싣고, 넘는 수는 '외 N개' 로 적는다", () => {
+    // 짧은 소절 다섯 개가 앞 소절에 합쳐진다. 이름을 모두 실으면 제목이 본문 몫을 줄이므로 앞의 세 개만 싣는다
+    const shorts = ["등록", "수정", "삭제", "복구", "보관"].flatMap((name) => [`### ${name}`, "", `${name}한다.`, ""]);
+    const chunks = chunk(doc("## API", "", "### 조회", "", paragraph("조회", 3), "", ...shorts, "### 일괄 처리", "", paragraph("일괄", 9)));
+    expect(chunks.map((c) => c.section)).toEqual(["API > 조회 / 등록 / 수정 / 삭제 외 2개", "API > 일괄 처리"]);
+    expect(chunks[0].title).toBe("캐시 가이드: API > 조회 / 등록 / 수정 / 삭제 외 2개");
+    // 이름에 싣지 않은 소절도 제목 줄은 본문에 그대로 있다
+    expect(chunks[0].content).toContain("### 복구\n\n복구한다.\n\n### 보관\n\n보관한다.");
+  });
+
+  it("절의 도입부로 시작하는 묶음은 절의 이름만 쓴다 (그 절의 첫 청크다)", () => {
+    const chunks = chunk(
+      doc("## 설정", "", paragraph("설정", 6), "", "### 참고", "", "캐시는 꺼 둘 수 있다.", "", "### 세션", "", paragraph("세션", 13)),
+    );
+    expect(chunks.map((c) => [c.title, c.section])).toEqual([
+      ["캐시 가이드: 설정", "설정"],
+      ["캐시 가이드: 설정 > 세션", "설정 > 세션"],
+    ]);
+    expect(chunks[0].content).toBe([paragraph("설정", 6), "", "### 참고", "", "캐시는 꺼 둘 수 있다."].join("\n"));
+  });
+
+  it("제목이 길어지는 만큼 본문 몫이 줄어든다 (이름을 실으면 상한을 넘는 소절은 합치지 않는다)", () => {
+    const longName = "만료 시간과 최대 크기를 정하는 방법";
+    const cache = paragraph("캐시", 11);
+    const chunks = chunk(
+      doc("## 설정", "", paragraph("설정", 6), "", "### 캐시", "", cache, "", `### ${longName}`, "", "기본값을 쓴다.", "", "### 세션", "", paragraph("세션", 9)),
+    );
+    // 합친 본문은 앞 소절의 이름만 쓰면 상한 안에 들지만, 합쳐진 소절의 이름까지 실으면 넘는다
+    const merged = [cache, "", `### ${longName}`, "", "기본값을 쓴다."].join("\n");
+    const tokensAs = (section: string) =>
+      estimateGuideChunkTokens({ title: `캐시 가이드: ${section}`, content: merged, layer: "egovframe-runtime", category: "foundation-layer" });
+    expect(tokensAs("설정 > 캐시")).toBeLessThanOrEqual(SMALL.tokenBudget!);
+    expect(tokensAs(`설정 > 캐시 / ${longName}`)).toBeGreaterThan(SMALL.tokenBudget!);
+
+    const cacheChunk = chunks.find((c) => c.content.startsWith(cache))!;
+    expect(cacheChunk.section).toBe("설정 > 캐시");
+    expect(cacheChunk.content).toBe(cache);
+    for (const c of chunks) {
+      expect(estimateGuideChunkTokens(c), c.title).toBeLessThanOrEqual(SMALL.tokenBudget!);
+    }
   });
 });
 

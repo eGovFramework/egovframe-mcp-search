@@ -45,6 +45,21 @@ describe("parseSectionPart", () => {
     expect(parseSectionPart("예제 [2] (1/2)")).toEqual({ base: "예제 [2]", part: 1, count: 2 });
   });
 
+  it("합쳐진 소절의 이름이 실린 section 에서도 맨 끝의 조각 번호만 떼어 낸다", () => {
+    // 이웃 소절을 합친 묶음은 section 에 소절의 이름을 ' / ' 로 잇고, 넘는 수는 ' 외 N개' 로 적는다
+    expect(parseSectionPart("설명 > Input / Output (2/3)")).toEqual({ base: "설명 > Input / Output", part: 2, count: 3 });
+    expect(parseSectionPart("API > 조회 / 등록 / 수정 / 삭제 외 2개 (1/2)")).toEqual({
+      base: "API > 조회 / 등록 / 수정 / 삭제 외 2개",
+      part: 1,
+      count: 2,
+    });
+    // 같은 제목 경로를 구별하는 순번 ' [k]' 은 이름의 일부로 남는다
+    expect(parseSectionPart("설명 > Input / Output [2] (1/2)")).toEqual({ base: "설명 > Input / Output [2]", part: 1, count: 2 });
+    for (const section of ["설명 > Input / Output", "API > 조회 / 등록 외 2개", "설명 > Input / Output [2]"]) {
+      expect(parseSectionPart(section), section).toBeNull();
+    }
+  });
+
   it("문자열이 아닌 값에도 오류를 내지 않는다", () => {
     expect(parseSectionPart(undefined as unknown as string)).toBeNull();
     expect(parseSectionPart(null as unknown as string)).toBeNull();
@@ -117,6 +132,12 @@ describe("GuideSearchManager.getSectionParts", () => {
       // 조각 번호가 없는 같은 제목 경로의 절 두 개 (이전 청킹으로 만든 인덱스에도 있는 형태)
       row("ref-a", DOC, "참고자료"),
       row("ref-b", DOC, "참고자료"),
+      // 합쳐진 소절의 이름이 실린 절, 같은 제목 경로를 구별하는 순번이 붙은 절, 이름이 그 절로 시작하는 번호 없는 절
+      row("merged-2", DOC, "설명 > Input / Output (2/2)"),
+      row("merged-1", DOC, "설명 > Input / Output (1/2)"),
+      row("merged-again-1", DOC, "설명 > Input / Output [2] (1/2)"),
+      row("merged-again-2", DOC, "설명 > Input / Output [2] (2/2)"),
+      row("merged-more", DOC, "설명 > Input / Output 외 1개"),
       // 작은따옴표가 든 값
       row("quoted-2", QUOTED_DOC, "it's (2/2)"),
       row("quoted-1", QUOTED_DOC, "it's (1/2)"),
@@ -161,6 +182,21 @@ describe("GuideSearchManager.getSectionParts", () => {
       { id: "overview-1", part: 1, count: 2 },
       { id: "overview-2", part: 2, count: 2 },
     ]);
+  });
+
+  it("합쳐진 소절의 이름이나 순번 ' [k]' 이 실린 절도 이름이 같은 조각끼리만 묶는다", async () => {
+    expect(await manager.getSectionParts(DOC, "설명 > Input / Output")).toEqual([
+      { id: "merged-1", part: 1, count: 2 },
+      { id: "merged-2", part: 2, count: 2 },
+    ]);
+    expect(await manager.getSectionParts(DOC, "설명 > Input / Output [2]")).toEqual([
+      { id: "merged-again-1", part: 1, count: 2 },
+      { id: "merged-again-2", part: 2, count: 2 },
+    ]);
+    expect(await manager.getSectionParts(DOC, "설명 > Input / Output 외 1개")).toEqual([{ id: "merged-more", part: 1, count: 1 }]);
+    // 묶음에 든 소절 하나의 이름은 절의 이름이 아니다
+    expect(await manager.getSectionParts(DOC, "설명 > Input")).toEqual([]);
+    expect(await manager.getSectionParts(DOC, "설명 > Output")).toEqual([]);
   });
 
   it("없는 문서나 없는 절은 빈 배열이다", async () => {

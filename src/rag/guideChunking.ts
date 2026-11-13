@@ -669,6 +669,20 @@ function describeDocument(frontmatter: { title: string; url?: string }, relative
 const OVERVIEW_SECTION = '개요';
 
 /**
+ * 합친 묶음의 이름에 싣는, 합쳐진 소절 이름의 최대 수. 넘는 수는 ' 외 N개' 로 적는다.
+ *
+ * 합쳐진 소절의 제목 줄은 본문에도 그대로 있다. 이름을 모두 실으면 짧은 소절이 여럿 합쳐진 묶음의 제목이 길어지고,
+ * 제목이 길어지는 만큼 본문에 쓸 수 있는 몫이 줄어든다.
+ */
+const MAX_MERGED_NAMES = 3;
+
+/** 제목 경로의 한 마디: 제목 줄의 수준(2~6)과 문구 */
+interface HeadingPart {
+  level: number;
+  text: string;
+}
+
+/**
  * 가이드 문서를 절로 나누고, 절마다 색인할 조각을 만든다.
  *
  * 절: ## 앞의 내용(개요)과 ## 제목마다의 내용. 본문이 50자 미만인 절은 색인하지 않는다.
@@ -677,7 +691,10 @@ const OVERVIEW_SECTION = '개요';
  * 문단, 줄, 줄 안의 순서로 조각을 낸다 (splitIntoPieces).
  *
  * 제목에서 나눌 때 짧은 것(minPieceChars 미만)은 이웃과 합친다: 짧은 소절은 제목 줄과 함께 앞의 것에 붙이고,
- * 앞의 것이 짧으면 다음 소절을 끌어온다. 합친 것이 한 청크에 들어갈 때만 합치며, 이름은 앞의 것을 따른다.
+ * 앞의 것이 짧으면 다음 소절을 끌어온다. 합친 것이 한 청크에 들어갈 때만 합친다.
+ *
+ * 합친 묶음의 이름에는 합쳐진 소절의 이름을 함께 싣는다 ("설명 > Input / Output"). 합쳐진 소절을 제목 경로로도
+ * 찾을 수 있게 하려는 것이다. 절의 도입부로 시작하는 묶음은 그 절의 첫 청크이므로 절의 이름만 쓴다.
  *
  * 돌려주는 절의 title 과 section 은 조각 번호를 붙이기 전의 값이다. 한 문서에서 제목 경로가 같은 절이 둘 이상
  * 조각으로 나뉘면 둘째부터 " [2]", " [3]" … 을 붙여, 조각 번호가 붙은 절의 section 이 문서 안에서 겹치지 않게 한다
@@ -695,9 +712,54 @@ export function splitGuideSections(
   const scanned = scanBody(body);
   const sections: GuideSection[] = [];
 
-  /** 제목 경로(headings)의 이름. 개요 아래의 소절은 section 에만 '개요' 를 싣는다 */
-  const nameOf = (overview: boolean, headings: string[]) => {
-    const trail = headings.join(' > ');
+  /** 절 안의 제목 줄의 수준 (###~######). # 과 ## 는 절 안의 제목이 아니다 (0) */
+  const innerLevel = (line: number) => (scanned.levels[line] >= 3 ? scanned.levels[line] : 0);
+
+  // 제목 줄마다 그 제목을 품은 제목 줄 (## 절이나 개요 안에서 찾는다. 없으면 -1)
+  const parents = new Int32Array(scanned.lines.length).fill(-1);
+  const open: number[] = [];
+  for (let i = 0; i < scanned.lines.length; i++) {
+    const level = scanned.levels[i];
+    if (level < 2) continue;
+    while (open.length > 0 && scanned.levels[open[open.length - 1]] >= level) open.pop();
+    parents[i] = open.length > 0 ? open[open.length - 1] : -1;
+    open.push(i);
+  }
+  /** 제목 줄 head 까지의 제목 경로 (## 절의 제목부터. 개요 안의 제목은 개요 안에서만 따진다) */
+  const pathOf = (head: number): HeadingPart[] => {
+    const parts: HeadingPart[] = [];
+    for (let line = head; line >= 0; line = parents[line]) {
+      parts.unshift({ level: scanned.levels[line], text: scanned.headings[line] });
+    }
+    return parts;
+  };
+
+  /**
+   * 묶음 lines[from..to) 의 이름. startPath 는 묶음이 시작하는 자리의 제목 경로이고, floor 는 그 묶음을 만든 제목 수준이다
+   * (## 절과 개요는 2). 묶음 안에 있는 수준 floor 이하의 제목 줄이 그 묶음에 합쳐진 소절이다.
+   *
+   * 소절로 시작하는 묶음은 그 소절의 이름 뒤에 합쳐진 소절의 이름을 MAX_MERGED_NAMES 개까지 잇는다
+   * (더 깊은 제목으로 내려가면 ' > ', 같은 수준이거나 얕은 제목으로 넘어가면 ' / '). 절의 도입부로 시작하는 묶음은
+   * 절의 이름만 쓴다. 개요 아래의 소절은 section 에만 '개요' 를 싣는다.
+   */
+  const nameOf = (overview: boolean, startPath: HeadingPart[], from: number, to: number, floor: number) => {
+    const merged: HeadingPart[] = [];
+    for (let i = from; i < to; i++) {
+      const level = innerLevel(i);
+      if (level > 0 && level <= floor) merged.push({ level, text: scanned.headings[i] });
+    }
+    // 도입부로 시작하는 묶음: 시작하는 자리의 제목(절의 제목)보다 깊은 소절이 뒤따른다
+    const startLevel = startPath.length > 0 ? startPath[startPath.length - 1].level : 2;
+    const listed = merged.length > 0 && merged[0].level > startLevel ? [] : merged.slice(0, MAX_MERGED_NAMES);
+
+    const parts = [...startPath, ...listed];
+    let trail = '';
+    parts.forEach((part, index) => {
+      trail += index === 0 ? part.text : `${part.level > parts[index - 1].level ? ' > ' : ' / '}${part.text}`;
+    });
+    if (listed.length > 0 && merged.length > listed.length) {
+      trail += ` 외 ${merged.length - listed.length}개`;
+    }
     if (overview) {
       return {
         title: trail ? `${info.docTitle}: ${trail}` : info.docTitle,
@@ -719,15 +781,18 @@ export function splitGuideSections(
 
   const textOf = (span: { start: number; end: number }) => body.slice(span.start, span.end);
 
-  /** lines[from..to) 를 제목 경로 headings 의 절로 색인한다. 길면 더 깊은 제목이나 조각으로 나눈다 */
-  const addSection = (overview: boolean, headings: string[], from: number, to: number): void => {
+  /**
+   * lines[from..to) 를 색인한다. startPath 는 시작하는 자리의 제목 경로, floor 는 이 묶음을 만든 제목 수준이다 (nameOf 참고).
+   * 길면 floor 보다 깊은 제목이나 조각으로 나눈다.
+   */
+  const addSection = (overview: boolean, startPath: HeadingPart[], from: number, to: number, floor: number): void => {
     const span = trimmedSpan(scanned, from, to);
     const text = textOf(span);
     if (text.length < GUIDE_SECTION_MIN_CHARS) {
       return;
     }
 
-    const name = nameOf(overview, headings);
+    const name = nameOf(overview, startPath, from, to, floor);
     const toSection = (pieces: GuideSectionPiece[]): GuideSection => ({
       ...name,
       body: text,
@@ -740,10 +805,11 @@ export function splitGuideSections(
       return;
     }
 
-    // 이 절에 있는 가장 얕은 제목 수준 (###~######). # 과 ## 는 절 안의 제목이 아니다
+    // 이 묶음에 있는 가장 얕은 제목 수준 (floor 보다 깊은 것)
     let level = 0;
     for (let i = from; i < to; i++) {
-      if (scanned.levels[i] >= 3 && (level === 0 || scanned.levels[i] < level)) level = scanned.levels[i];
+      const candidate = innerLevel(i);
+      if (candidate > floor && (level === 0 || candidate < level)) level = candidate;
     }
     if (level === 0) {
       sections.push(toSection(splitIntoPieces(scanned, from, to, contentBudget(name.title, true), minPieceChars)));
@@ -755,10 +821,10 @@ export function splitGuideSections(
     for (let i = from; i < to; i++) {
       if (scanned.levels[i] === level) heads.push(i);
     }
-    const groups: Array<{ headings: string[]; from: number; to: number }> = [];
+    const groups: Array<{ startPath: HeadingPart[]; from: number; to: number }> = [];
     const intro = trimmedSpan(scanned, from, heads[0]);
     if (intro.end > intro.start) {
-      groups.push({ headings, from, to: heads[0] });
+      groups.push({ startPath, from, to: heads[0] });
     }
     heads.forEach((head, index) => {
       const childFrom = head + 1;
@@ -773,18 +839,20 @@ export function splitGuideSections(
         const previousSpan = trimmedSpan(scanned, previous.from, previous.to);
         const previousChars = previousSpan.end - previousSpan.start;
         if (childChars < minPieceChars || previousChars < minPieceChars) {
+          // 합친 묶음의 이름으로 잰다: 합쳐진 소절의 이름이 제목에 실리는 만큼 본문 몫이 줄어든다
           const merged = textOf(trimmedSpan(scanned, previous.from, childTo));
-          if (estimateTokens(merged) <= contentBudget(nameOf(overview, previous.headings).title)) {
+          const mergedName = nameOf(overview, previous.startPath, previous.from, childTo, level);
+          if (estimateTokens(merged) <= contentBudget(mergedName.title)) {
             previous.to = childTo;
             return;
           }
         }
       }
-      groups.push({ headings: [...headings, scanned.headings[head]], from: childFrom, to: childTo });
+      groups.push({ startPath: pathOf(head), from: childFrom, to: childTo });
     });
 
     for (const group of groups) {
-      addSection(overview, group.headings, group.from, group.to);
+      addSection(overview, group.startPath, group.from, group.to, level);
     }
   };
 
@@ -803,12 +871,12 @@ export function splitGuideSections(
   ) {
     overviewStart += 1;
   }
-  addSection(true, [], overviewStart, overviewEnd);
+  addSection(true, [], overviewStart, overviewEnd, 2);
 
   // ## 절
   h2Lines.forEach((line, index) => {
     const end = index + 1 < h2Lines.length ? h2Lines[index + 1] : scanned.lines.length;
-    addSection(false, [scanned.headings[line]], line + 1, end);
+    addSection(false, pathOf(line), line + 1, end, 2);
   });
 
   // 조각 번호가 붙을 절의 section 이 문서 안에서 겹치지 않게 한다
