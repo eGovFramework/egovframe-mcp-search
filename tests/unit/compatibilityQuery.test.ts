@@ -744,6 +744,22 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(names.terms?.required).toBe(1);
     });
 
+    it("일치 기준을 여러 단계 낮춰도 조회 문 수는 한 단계 낮출 때와 같다", () => {
+      // 기준을 1씩 낮춰 가며 그때마다 건수를 세면, 검색어가 많은 query 는 낮추는 단계마다 표 전체를 다시 훑는다.
+      // 가장 많이 일치한 행의 일치 수를 한 번 구해 그 값으로 낮춘다
+      sqlite.addCompatibilitySoftwareBatch([
+        { ...CATALOGUE[5], product_name: "ExtraTool", product_version: "ExtraTool 1.0", description: "설명 없음" },
+      ]);
+      // 두 query 모두 쓸 수 있는 검색어가 여섯이라 기준 3 에서 시작한다
+      const oneStep = "JEUS 8.5 Tibero WebLogic OtherCMS SampleCMS"; // JEUS 8.5 행이 JEUS·8.5 두 개와 일치한다 → 기준 2
+      const twoSteps = "JEUS Tibero WebLogic OtherCMS SampleCMS ExtraTool"; // 어느 행도 하나씩만 일치한다 → 기준 1
+      expect(sqlite.queryCompatibleSoftware({ query: oneStep }).terms?.required).toBe(2);
+      expect(sqlite.queryCompatibleSoftware({ query: twoSteps }).terms?.required).toBe(1);
+      expect(sqlite.queryCompatibleSoftware({ query: twoSteps }).total).toBe(CATALOGUE.length + 1);
+      const statements = (query: string) => statementsOf(sqlite, () => sqlite.queryCompatibleSoftware({ query })).length;
+      expect(statements(twoSteps)).toBe(statements(oneStep));
+    });
+
     it("쓸 수 있는 검색어가 하나라도 있으면 결과가 0건이 되지 않는다", () => {
       const queries = [
         "JEUS Tibero WebLogic",

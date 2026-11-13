@@ -624,7 +624,7 @@ export class SQLiteManager {
    * 섞이는 군말('추천', '되나요')이 일치 기준을 올려 결과를 0건으로 만들지 않게 한다.
    *
    * 쓸 수 있는 검색어가 k 개일 때 ceil(k/2) 개 이상 일치한 행을 돌려준다 (k 가 0 이면 빈 결과).
-   * 그 기준을 채운 행이 없으면 기준을 1씩 낮춰 행이 나올 때까지 찾는다. 제품명 셋을 나열한 query 처럼
+   * 그 기준을 채운 행이 없으면 행이 나오는 데까지 기준을 낮춘다 (highestMatchCount). 제품명 셋을 나열한 query 처럼
    * 한 행에 두 검색어가 함께 들 수 없는 경우에 0건을 돌려주면, 호출자는 그 제품들이 목록에 없다고 읽는다.
    * 쓸 수 있는 검색어는 저마다 대상 안에 일치하는 행이 있으므로, k 가 1 이상이면 결과가 0건이 되지 않는다.
    *
@@ -655,15 +655,34 @@ export class SQLiteManager {
     const matchers = usable.map((term) => term.matcher);
     const scope = anyOne ? filter : this.distinctiveScope(target, usable, filter);
 
-    // 절반(올림)에서 시작해, 그 기준을 채운 행이 없으면 1 까지 낮춘다 (anyOne 이면 처음부터 1 이다).
+    // 절반(올림)에서 시작한다 (anyOne 이면 처음부터 1 이다). 그 기준을 채운 행이 없으면, 가장 많은 검색어가 일치한
+    // 행의 일치 수로 기준을 낮춘다. 기준을 1씩 낮춰 가며 행이 나올 때까지 찾는 것과 같은 결과이고, 낮추는 단계마다
+    // 표를 다시 훑지 않는다.
     // 행이 있는지는 페이지가 아니라 전체 건수로 판단한다 (offset 이 끝을 넘었다고 기준을 낮추지 않는다)
     let required = anyOne ? 1 : Math.ceil(matchers.length / 2);
     let found = this.selectByMatchedTerms<Row>(target, matchers, required, scope, page);
-    while (found.total === 0 && required > 1) {
-      required -= 1;
+    if (found.total === 0 && required > 1) {
+      required = this.highestMatchCount(target, matchers, scope);
       found = this.selectByMatchedTerms<Row>(target, matchers, required, scope, page);
     }
     return { ...found, terms: { used, ignored, required } };
+  }
+
+  /**
+   * 조건(scope)을 채우는 행 가운데 가장 많은 검색어가 일치한 행의 일치한 검색어 수.
+   *
+   * 대체 검색이 일치 기준을 낮출 때 쓴다. 대체 검색이 쓰는 검색어는 저마다 필터를 적용한 대상 안에 일치하는 행이
+   * 있고, 흔한 검색어를 거르는 조건(distinctiveScope)도 그런 검색어가 일치한 행을 남기므로 1 이상이다.
+   */
+  private highestMatchCount(target: KeywordSearchTarget, matchers: TermMatcher[], scope: SqlCondition): number {
+    const matchedTerms = countOf(matchers.map((matcher) => matcher.matches));
+    const row = this.db
+      .prepare(
+        `SELECT MAX(${matchedTerms.sql}) AS highest FROM ${target.table} ${target.joins ?? ''}
+         WHERE 1=1${scope.sql}`,
+      )
+      .get(...matchedTerms.params, ...scope.params) as { highest: number };
+    return row.highest;
   }
 
   /**
