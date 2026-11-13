@@ -6,6 +6,7 @@
 import { getHybridManager, type HybridDatabaseManager } from '../database/hybridManager.js';
 import type { SQLiteManager } from '../database/sqliteManager.js';
 import { CompatibilitySearchFilter, CompatibilitySoftwareInfo, KeywordMatchMode } from '../types/database.js';
+import { UserFacingError } from '../utils/errors.js';
 import { normalizeFrameworkVersion } from '../utils/frameworkVersion.js';
 import { collapseWhitespace, excerptAround, presentTitle } from '../utils/knowledgePresentation.js';
 import { findProductMention, lowerAscii, nameWithoutParentheses } from '../utils/productMention.js';
@@ -151,22 +152,45 @@ function mentionExcerpt(content: unknown, name: string): string {
     : excerptAround(text, at, name.length, KNOWLEDGE_EXCERPT_LENGTH);
 }
 
-/** 관련 지식 조회가 실패했을 때 응답에 싣는 안내. 상세 원인은 서버 로그(stderr)에만 남긴다. */
+/** 관련 지식 조회가 실패했을 때 응답에 싣는 안내. 내부 오류의 상세 원인은 서버 로그(stderr)에만 남긴다. */
 const KNOWLEDGE_WARNING =
   '관련 지식을 조회하는 중 오류가 발생해 일부 또는 전부를 싣지 못했습니다. ' +
   '호환 소프트웨어 목록은 정상입니다. 자세한 내용은 MCP 서버 로그(stderr)를 확인하세요.';
 
 /**
- * 개발자 지식 매니저를 준비한다 (LanceDB 테이블 열기).
- * 실패하면 원인을 서버 로그에 남기고 null 을 돌려준다.
+ * knowledgeWarning 에 싣는 문구를 만든다.
+ *
+ * cause 는 호출자가 읽고 조치할 수 있는 실패 원인이다 (임베딩 모델이 없거나 손상됨, 지식 인덱스가 없음).
+ * 있으면 고정 안내 끝에 덧붙인다. 내부 오류는 원인을 싣지 않으므로 cause 없이 고정 안내만 쓴다.
  */
-async function openKnowledge(manager: HybridDatabaseManager) {
+function knowledgeWarning(cause: string | undefined): string {
+  return cause === undefined ? KNOWLEDGE_WARNING : `${KNOWLEDGE_WARNING} 원인: ${cause}`;
+}
+
+/**
+ * 오류가 호출자가 읽고 조치할 수 있는 것(UserFacingError)이면 그 문구를 돌려준다.
+ * 그 밖의 오류는 문구에 절대 경로나 내부 SQL 이 들어 있을 수 있으므로 undefined 를 돌려준다.
+ */
+function actionableCause(error: unknown): string | undefined {
+  return error instanceof UserFacingError ? error.message : undefined;
+}
+
+/** 개발자 지식 매니저 (하이브리드 매니저가 내주는 것) */
+type KnowledgeManager = ReturnType<HybridDatabaseManager['getKnowledge']>;
+
+/**
+ * 개발자 지식 매니저를 준비한다 (LanceDB 테이블 열기).
+ * 실패하면 원인을 서버 로그에 남기고, 매니저 없이(knowledge: null) 실패 원인(error)을 돌려준다.
+ */
+async function openKnowledge(
+  manager: HybridDatabaseManager,
+): Promise<{ knowledge: KnowledgeManager } | { knowledge: null; error: unknown }> {
   try {
     await manager.initialize();
-    return manager.getKnowledge();
+    return { knowledge: manager.getKnowledge() };
   } catch (error) {
     console.error('[egovframe-mcp-search] 관련 지식 조회를 준비하지 못했습니다:', error);
-    return null;
+    return { knowledge: null, error };
   }
 }
 
@@ -184,24 +208,27 @@ async function openKnowledge(manager: HybridDatabaseManager) {
  * 검색하지 않고도 그 글이 제품을 어떻게 언급하는지 볼 수 있다.
  *
  * 지식 쪽 오류는 던지지 않고 failed 로 알린다 (소프트웨어 조회 결과는 이미 구해져 있다).
+ * 실패 가운데 호출자가 조치할 수 있는 것이 있으면 그 문구를 cause 로 함께 돌려준다 (여럿이면 처음 것).
  * searchedProducts 는 조회를 마친 제품 수다. productNames 가 비어 있으면 지식 쪽을 초기화하지 않는다.
  */
 async function findRelatedKnowledge(
   manager: HybridDatabaseManager,
   productNames: string[],
-): Promise<{ relatedKnowledge: RelatedKnowledge[]; searchedProducts: number; failed: boolean }> {
+): Promise<{ relatedKnowledge: RelatedKnowledge[]; searchedProducts: number; failed: boolean; cause?: string }> {
   const relatedKnowledge: RelatedKnowledge[] = [];
   if (productNames.length === 0) {
     return { relatedKnowledge, searchedProducts: 0, failed: false };
   }
 
-  const knowledge = await openKnowledge(manager);
-  if (!knowledge) {
-    return { relatedKnowledge, searchedProducts: 0, failed: true };
+  const opened = await openKnowledge(manager);
+  if (opened.knowledge === null) {
+    return { relatedKnowledge, searchedProducts: 0, failed: true, cause: actionableCause(opened.error) };
   }
+  const { knowledge } = opened;
 
   let searchedProducts = 0;
   let failed = false;
+  let cause: string | undefined;
 
   for (const productName of productNames) {
     try {
@@ -228,11 +255,12 @@ async function findRelatedKnowledge(
       }
     } catch (error) {
       failed = true;
+      cause ??= actionableCause(error);
       console.error(`[egovframe-mcp-search] 관련 지식 조회 실패 (${productName}):`, error);
     }
   }
 
-  return { relatedKnowledge, searchedProducts, failed };
+  return { relatedKnowledge, searchedProducts, failed, cause };
 }
 
 /** 호환성 소프트웨어 검색 응답 */
@@ -279,7 +307,10 @@ export interface CompatibilitySearchResponse {
    * 앞에서부터 searchedProducts 개만 조회했다. 나머지 제품의 지식은 그 제품을 productName 으로 좁혀 조회한다
    */
   knowledgeLookup?: { searchedProducts: number; pageProducts: number };
-  /** 관련 지식 조회가 일부라도 실패했을 때의 안내 (소프트웨어 목록에는 영향이 없다) */
+  /**
+   * 관련 지식 조회가 일부라도 실패했을 때의 안내 (소프트웨어 목록에는 영향이 없다).
+   * 호출자가 조치할 수 있는 실패(임베딩 모델이나 지식 인덱스가 없음)이면 끝에 " 원인: …" 이 붙는다
+   */
   knowledgeWarning?: string;
 }
 
@@ -354,14 +385,14 @@ export async function searchCompatibleSoftware(args: {
     const pageProducts = [...new Set(results.map((item) => item.product_name))].filter(
       (productName) => productName.trim() !== '',
     );
-    const { relatedKnowledge, searchedProducts, failed } = await findRelatedKnowledge(
+    const { relatedKnowledge, searchedProducts, failed, cause } = await findRelatedKnowledge(
       manager,
       pageProducts.slice(0, MAX_KNOWLEDGE_PRODUCTS),
     );
     response.relatedKnowledge = relatedKnowledge;
     response.knowledgeLookup = { searchedProducts, pageProducts: pageProducts.length };
     if (failed) {
-      response.knowledgeWarning = KNOWLEDGE_WARNING;
+      response.knowledgeWarning = knowledgeWarning(cause);
     }
   }
 

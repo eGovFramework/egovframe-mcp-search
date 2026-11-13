@@ -11,6 +11,7 @@ import fs from "fs-extra";
 import path from "node:path";
 import os from "node:os";
 import { SQLiteManager } from "../../src/database/sqliteManager.js";
+import { UserFacingError } from "../../src/utils/errors.js";
 import { CATALOGUE, DATED, versionsOf, type SoftwareSeed } from "./_compatibilityFixture.js";
 
 const hybrid = vi.hoisted(() => ({
@@ -731,6 +732,88 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
           knowledge("k3", "다른 문의", "DevOnFrameworks 는 다른 이름입니다."),
         ]),
       ).toEqual(["k1", "k2"]);
+    });
+  });
+
+  describe("includeKnowledge — 조회 실패의 원인 (knowledgeWarning)", () => {
+    useCatalogue(CATALOGUE);
+
+    /** 관련 지식 조회가 실패했을 때의 고정 안내 */
+    const WARNING =
+      "관련 지식을 조회하는 중 오류가 발생해 일부 또는 전부를 싣지 못했습니다. " +
+      "호환 소프트웨어 목록은 정상입니다. 자세한 내용은 MCP 서버 로그(stderr)를 확인하세요.";
+    /** 임베더가 모델 파일을 찾지 못했을 때 던지는 안내 (호출자가 읽고 조치할 수 있다) */
+    const MODEL_MISSING =
+      "임베딩 모델을 찾을 수 없습니다 (models/Xenova/multilingual-e5-small). " +
+      "저장소를 클론해 쓰는 경우 npm run fetch-model 을 실행하세요.";
+    const INDEX_MISSING = "개발자 지식 인덱스(knowledge-base/developer_knowledge.lance)를 찾을 수 없습니다.";
+
+    beforeEach(() => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+    });
+
+    it("호출자가 조치할 수 있는 오류(UserFacingError)로 실패하면 안내 끝에 원인을 덧붙인다", async () => {
+      // 임베딩 모델은 의미 검색을 처음 실행할 때 불러오므로, 모델이 없으면 제품마다의 조회가 실패한다
+      hybrid.searchKnowledge.mockRejectedValue(new UserFacingError(MODEL_MISSING));
+
+      const response = await searchCompatibleSoftware({ query: "JEUS", includeKnowledge: true });
+
+      expect(response.count).toBe(2);
+      expect(response.relatedKnowledge).toEqual([]);
+      expect(response.knowledgeLookup).toEqual({ searchedProducts: 0, pageProducts: 1 });
+      expect(response.knowledgeWarning).toBe(`${WARNING} 원인: ${MODEL_MISSING}`);
+    });
+
+    it("지식 쪽 초기화가 UserFacingError 로 실패해도 원인을 덧붙인다", async () => {
+      hybrid.initialize.mockRejectedValueOnce(new UserFacingError(INDEX_MISSING));
+
+      const response = await searchCompatibleSoftware({ query: "JEUS", includeKnowledge: true });
+
+      expect(response.count).toBe(2);
+      expect(response.knowledgeWarning).toBe(`${WARNING} 원인: ${INDEX_MISSING}`);
+      expect(hybrid.searchKnowledge).not.toHaveBeenCalled();
+    });
+
+    it("그 밖의 오류는 고정 문구만 싣는다 (내부 오류의 문구와 경로를 싣지 않는다)", async () => {
+      hybrid.searchKnowledge.mockRejectedValue(
+        new Error("lance error: LanceError(IO): Permission denied, /Users/someone/secret/local.rs:124:24"),
+      );
+      const searchFailed = await searchCompatibleSoftware({ query: "JEUS", includeKnowledge: true });
+      expect(searchFailed.knowledgeWarning).toBe(WARNING);
+
+      hybrid.initialized = false;
+      hybrid.initialize.mockRejectedValueOnce(new Error("SQLITE_ERROR: no such table: compatibility_software"));
+      const initFailed = await searchCompatibleSoftware({ query: "JEUS", includeKnowledge: true });
+      expect(initFailed.knowledgeWarning).toBe(WARNING);
+    });
+
+    it("여러 제품이 같은 원인으로 실패해도 원인은 한 번만 적는다", async () => {
+      hybrid.searchKnowledge.mockRejectedValue(new UserFacingError(MODEL_MISSING));
+
+      // JEUS 와 Tibero 두 제품의 조회가 모두 실패한다
+      const response = await searchCompatibleSoftware({ query: "티맥스", includeKnowledge: true });
+
+      expect(hybrid.searchKnowledge).toHaveBeenCalledTimes(2);
+      expect(response.knowledgeWarning).toBe(`${WARNING} 원인: ${MODEL_MISSING}`);
+    });
+
+    it("내부 오류와 조치할 수 있는 오류가 섞여 있으면 조치할 수 있는 오류의 문구만 원인으로 적는다", async () => {
+      hybrid.searchKnowledge.mockImplementation(async (productName: string) => {
+        if (productName === "JEUS") {
+          throw new Error("lance error: LanceError(IO): /Users/someone/secret");
+        }
+        throw new UserFacingError(MODEL_MISSING);
+      });
+
+      const response = await searchCompatibleSoftware({ query: "티맥스", includeKnowledge: true });
+
+      expect(response.knowledgeWarning).toBe(`${WARNING} 원인: ${MODEL_MISSING}`);
+      expect(JSON.stringify(response)).not.toContain("/Users/someone");
+    });
+
+    it("조회가 모두 성공하면 knowledgeWarning 을 싣지 않는다", async () => {
+      const response = await searchCompatibleSoftware({ query: "JEUS", includeKnowledge: true });
+      expect(response).not.toHaveProperty("knowledgeWarning");
     });
   });
 
