@@ -13,6 +13,7 @@ import {
   MAX_SEARCH_TERMS,
   buildFts5MatchQuery,
   extractSearchTerms,
+  particleStrippedForms,
   trimEdgeSeparators,
 } from "../../src/utils/fts5Query.js";
 
@@ -160,6 +161,91 @@ describe("extractSearchTerms 가 읽는 query 의 길이", () => {
     const words = Array.from({ length: 10 }, (_, index) => `낱말${index}`);
     expect(extractSearchTerms(words.join(" "))).toEqual(words);
     expect(extractSearchTerms("가".repeat(2000))).toEqual(["가".repeat(2000)]);
+  });
+});
+
+describe("particleStrippedForms", () => {
+  it("영문·숫자 뒤에 한글 1~3자가 붙은 꼴은 한글을 뗀 앞부분을 돌려준다", () => {
+    expect(particleStrippedForms("JEUS는")).toEqual(["JEUS"]);
+    expect(particleStrippedForms("4.3에서")).toEqual(["4.3"]);
+    expect(particleStrippedForms("Tibero를")).toEqual(["Tibero"]);
+    expect(particleStrippedForms("JEUS입니다")).toEqual(["JEUS"]);
+    expect(particleStrippedForms("spring-boot_starter로")).toEqual(["spring-boot_starter"]);
+  });
+
+  it("붙은 한글이 조사가 아니어도 뗀다", () => {
+    expect(particleStrippedForms("JEUS서버")).toEqual(["JEUS"]);
+  });
+
+  it("붙은 한글이 네 자 이상이면 앞부분을 돌려주지 않는다", () => {
+    expect(particleStrippedForms("JEUS이라면서")).toEqual([]);
+    // 끝의 조사를 떼는 규칙은 따로 적용된다
+    expect(particleStrippedForms("JEUS이라면서도")).toEqual(["JEUS이라면서"]);
+  });
+
+  it("조사로 끝나면 조사를 뗀 나머지를 돌려준다", () => {
+    const cases: Array<[string, string]> = [
+      ["티맥스는", "티맥스"],
+      ["게시판은", "게시판"],
+      ["게시판이", "게시판"],
+      ["오라클가", "오라클"],
+      ["게시판을", "게시판"],
+      ["티맥스를", "티맥스"],
+      ["로그인와", "로그인"],
+      ["게시판과", "게시판"],
+      ["오라클의", "오라클"],
+      ["게시판에", "게시판"],
+      ["권한도", "권한"],
+      ["티베로로", "티베로"],
+      ["템플릿으로", "템플릿"],
+      ["게시판에서", "게시판"],
+      ["담당자에게", "담당자"],
+      ["로그인부터", "로그인"],
+      ["권한까지", "권한"],
+    ];
+    for (const [term, expected] of cases) {
+      expect(particleStrippedForms(term), `term=${term}`).toEqual([expected]);
+    }
+  });
+
+  it("'으로' 로 끝나면 '로' 가 아니라 '으로' 를 뗀다", () => {
+    expect(particleStrippedForms("확인으로")).toEqual(["확인"]);
+  });
+
+  it("뗀 나머지가 두 글자 미만이면 돌려주지 않는다", () => {
+    expect(particleStrippedForms("주는")).toEqual([]);
+    expect(particleStrippedForms("나의")).toEqual([]);
+    expect(particleStrippedForms("집으로")).toEqual([]);
+    expect(particleStrippedForms("C는")).toEqual([]);
+    expect(particleStrippedForms("8에서")).toEqual([]);
+    // 조사만으로 된 낱말
+    expect(particleStrippedForms("에서")).toEqual([]);
+    expect(particleStrippedForms("부터")).toEqual([]);
+  });
+
+  it("두 규칙이 모두 맞으면 영문·숫자 앞부분을 먼저, 서로 다른 꼴만 돌려준다", () => {
+    // 한글을 모두 뗀 'ABC' 가 먼저고, 끝의 조사 '는' 만 뗀 'ABC가나' 가 다음이다
+    expect(particleStrippedForms("ABC가나는")).toEqual(["ABC", "ABC가나"]);
+    // 두 규칙의 결과가 같으면 한 번만 돌려준다
+    expect(particleStrippedForms("JEUS는")).toEqual(["JEUS"]);
+  });
+
+  it("뗀 꼴의 끝에 남은 '.', '-', '_' 는 뗀다", () => {
+    expect(particleStrippedForms("spring-boot-는")).toEqual(["spring-boot"]);
+    expect(particleStrippedForms("게시판_을")).toEqual(["게시판"]);
+  });
+
+  it("어느 규칙에도 맞지 않으면 빈 배열을 돌려준다", () => {
+    expect(particleStrippedForms("JEUS")).toEqual([]);
+    expect(particleStrippedForms("게시판")).toEqual([]);
+    expect(particleStrippedForms("솔루션")).toEqual([]);
+    expect(particleStrippedForms("")).toEqual([]);
+  });
+
+  it("아주 긴 낱말도 100ms 안에 처리한다", () => {
+    for (const term of ["a".repeat(2000), `${"a".repeat(1999)}는`, `${"가".repeat(1999)}는`, `${"a-".repeat(999)}는`]) {
+      expect(elapsedMs(() => particleStrippedForms(term))).toBeLessThan(100);
+    }
   });
 });
 

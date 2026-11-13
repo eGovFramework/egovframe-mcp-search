@@ -34,7 +34,8 @@ export interface CompatibilitySearchFilter {
  * 키워드 검색이 결과를 찾은 방식. 검색어가 행과 일치한다는 것은 검색어가 검색 대상 컬럼 가운데 하나에
  * 부분 문자열로 들어 있다는 뜻이다.
  * - all-terms: 모든 검색어가 일치하는 행을 찾았다
- * - any-term: 모든 검색어가 일치하는 행이 없어 대체 검색으로 찾았다. 일부 검색어만 일치하는 행이 들어 있다
+ * - any-term: 모든 검색어가 일치하는 행이 없어 대체 검색으로 찾았다. 일치하는 행이 있는 검색어만 남기고
+ *   (조사가 붙은 검색어는 조사를 떼어 본다), 그 절반 이상이 일치하는 행을 돌려준다. 0건일 수도 있다
  */
 export type KeywordMatchMode = 'all-terms' | 'any-term';
 

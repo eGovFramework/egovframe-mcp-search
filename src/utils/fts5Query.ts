@@ -96,6 +96,68 @@ export function trimEdgeSeparators(candidate: string): string {
   return candidate.slice(start, end);
 }
 
+/** 영문·숫자·`.`·`-`·`_` 로만 된 앞부분 뒤에 한글 음절 1~3자가 붙은 꼴 ('JEUS는', '4.3에서') */
+const ASCII_HEAD_WITH_HANGUL_TAIL = /^([A-Za-z0-9._-]+)[가-힣]{1,3}$/;
+
+/** 낱말 끝에서 떼어 보는 조사. 긴 것부터 견준다 ('으로' 로 끝나는 낱말에서 '로' 만 떼지 않게 한다). */
+const TRAILING_PARTICLES = [
+  '으로',
+  '에서',
+  '에게',
+  '부터',
+  '까지',
+  '은',
+  '는',
+  '이',
+  '가',
+  '을',
+  '를',
+  '와',
+  '과',
+  '의',
+  '에',
+  '도',
+  '로',
+];
+
+/** 문자열의 글자 수 (코드 포인트 기준. String.length 는 UTF-16 단위라 한 글자가 2 로 나올 수 있다) */
+export function codePointLength(value: string): number {
+  return Array.from(value).length;
+}
+
+/**
+ * 조사가 붙은 검색어('JEUS는', '티맥스는')를 조사 없는 꼴로 바꿔 볼 후보를, 먼저 견줄 것부터 돌려준다.
+ * 키워드 검색은 검색어 그대로는 어떤 행과도 일치하지 않을 때만 이 후보를 견준다.
+ *
+ * 1) 영문·숫자·`.`·`-`·`_` 뒤에 한글 1~3자가 붙은 꼴이면 한글을 뗀 앞부분 ('JEUS는' → 'JEUS', '4.3에서' → '4.3').
+ *    제품명과 버전은 영문·숫자라, 붙은 한글이 조사 목록에 없어도 뗀다 ('JEUS입니다' → 'JEUS').
+ * 2) 조사로 끝나면 조사를 뗀 나머지 ('티맥스는' → '티맥스'). 맞는 조사 가운데 가장 긴 것 하나만 뗀다.
+ *
+ * 후보는 검색어와 같은 꼴을 지킨다: 양끝의 `.` `-` `_` 를 떼고, 두 글자 이상인 것만 돌려준다
+ * (한 글자는 부분 문자열로 너무 많은 행과 일치한다). 맞는 규칙이 없으면 빈 배열이다.
+ */
+export function particleStrippedForms(term: string): string[] {
+  const forms: string[] = [];
+  const add = (stripped: string) => {
+    const form = trimEdgeSeparators(stripped);
+    if (codePointLength(form) >= 2 && !forms.includes(form)) {
+      forms.push(form);
+    }
+  };
+
+  const asciiHead = ASCII_HEAD_WITH_HANGUL_TAIL.exec(term);
+  if (asciiHead) {
+    add(asciiHead[1]);
+  }
+
+  const particle = TRAILING_PARTICLES.find((candidate) => term.endsWith(candidate));
+  if (particle) {
+    add(term.slice(0, -particle.length));
+  }
+
+  return forms;
+}
+
 /**
  * 검색어 목록으로 FTS5 MATCH 식을 만든다.
  *

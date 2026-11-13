@@ -115,10 +115,17 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       expect(response.matchMode).toBe("all-terms");
     });
 
-    it("일부 검색어만 일치하는 행으로 대체했으면 any-term 을 알린다", async () => {
+    it("모든 검색어가 든 행이 없어 대체 검색으로 찾았으면 any-term 을 알린다", async () => {
+      // '여부' 는 어느 행에도 없다. JEUS 와 호환이 모두 든 두 행이 먼저고, '호환' 만 든 네 행이 뒤따른다
       const response = await searchCompatibleSoftware({ query: "JEUS 호환 여부" });
+      expect(versionsOf(response.software).slice(0, 2)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(response).toMatchObject({ total: CATALOGUE.length, count: CATALOGUE.length, matchMode: "any-term" });
+    });
+
+    it("조사가 붙은 제품명으로 물어도 찾는다", async () => {
+      const response = await searchCompatibleSoftware({ query: "JEUS는 지원되나요" });
       expect(versionsOf(response.software)).toEqual(["JEUS 21", "JEUS 8.5"]);
-      expect(response.matchMode).toBe("any-term");
+      expect(response).toMatchObject({ total: 2, matchMode: "any-term" });
     });
 
     it("문장으로 물으면서 필터를 함께 줘도 뜻이 있는 검색어로 찾는다", async () => {

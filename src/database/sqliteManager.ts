@@ -8,7 +8,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { getSQLiteDBPath } from '../utils/projectPath.js';
-import { extractSearchTerms } from '../utils/fts5Query.js';
+import { codePointLength, extractSearchTerms, particleStrippedForms } from '../utils/fts5Query.js';
 import { escapeLikePattern } from '../utils/sqlLike.js';
 import { UserFacingError } from '../utils/errors.js';
 import {
@@ -420,7 +420,8 @@ export class SQLiteManager {
    *
    * 한 글자 검색어는 두 글자 이상인 검색어가 있으면 쓰지 않는다 (dropSingleCharacterTerms).
    * 1) 모든 검색어가 일치하는 행을 찾는다 (allTermsSearch).
-   * 2) 필터까지 적용한 결과가 0건이면 부분 일치 대체 검색(partialTermSearch)으로 넘어간다.
+   * 2) 필터까지 적용한 결과가 0건이면 대체 검색(anyTermSearch)으로 넘어간다: 일치하는 행이 있는 검색어만
+   *    남기고, 그 절반 이상이 일치하는 행을 찾는다.
    *    0건인지는 페이지가 아니라 전체 건수로 판단한다 (offset 이 끝을 넘었다고 검색 방식을 바꾸지 않는다).
    *
    * 두 단계 모두 일치한 검색어가 많은 행, 이름 컬럼(nameColumns)에 일치한 검색어가 많은 행, 대상의 기본 정렬,
@@ -438,7 +439,7 @@ export class SQLiteManager {
     if (allTerms) {
       return { ...allTerms, matchMode: 'all-terms' };
     }
-    return { ...this.partialTermSearch<Row>(target, searchable, filter, page), matchMode: 'any-term' };
+    return { ...this.anyTermSearch<Row>(target, searchable, filter, page), matchMode: 'any-term' };
   }
 
   /**
@@ -514,63 +515,56 @@ export class SQLiteManager {
   }
 
   /**
-   * 부분 일치 대체 검색.
+   * 대체 검색: 모든 검색어가 일치하는 행이 없을 때, 쓸 수 있는 검색어의 절반 이상이 일치하는 행을 찾는다.
    *
-   * 각 검색어는 대상 컬럼에 부분 문자열로 들어 있는지로 판정한다. 아래 검색어는 세지 않는다.
-   * - 길이가 2 미만인 검색어
-   * - 테이블 전체 행의 절반을 넘게 일치하는 검색어 (변별력이 없다)
-   * - 필터를 적용한 검색 대상 안에서 일치하는 행이 하나도 없는 검색어
-   *   (문장으로 물을 때 섞이는 군말이 일치 기준을 올려 결과를 0건으로 만들지 않게 한다)
+   * 필터를 적용한 대상 안에서 일치하는 행이 하나도 없는 검색어는 조사를 뗀 꼴(particleStrippedForms)로 바꿔 보고,
+   * 그 꼴도 일치하는 행이 없으면 쓰지 않는다. 문장으로 물을 때 섞이는 군말('추천', '되나요')이 일치 기준을 올려
+   * 결과를 0건으로 만들지 않게 하고, 조사가 붙은 제품명('JEUS는', '티맥스는')으로도 찾게 한다.
+   * 많은 행과 일치하는 검색어는 버리지 않는다. 그런 검색어만 일치한 행은 정렬에서 뒤로 갈 뿐이다.
    *
    * 남은 검색어가 k 개일 때 ceil(k/2) 개 이상 일치한 행만 돌려준다 (k 가 0 이면 빈 결과).
    * 정렬과 필터 적용은 selectByMatchedTerms 를 따른다.
    */
-  private partialTermSearch<Row>(
+  private anyTermSearch<Row>(
     target: KeywordSearchTarget,
     terms: string[],
     filter: SqlCondition,
     page: SqlPage,
   ): { rows: Row[]; total: number } {
-    const termMatches = likeAnyColumn(target.searchColumns);
-    const bindPattern = (pattern: string) => target.searchColumns.map(() => pattern);
-
-    const tableRows = (
-      this.db.prepare(`SELECT COUNT(*) AS count FROM ${target.table}`).get() as { count: number }
-    ).count;
-    const countInTable = this.db.prepare(`SELECT COUNT(*) AS count FROM ${target.table} WHERE ${termMatches}`);
-    // 필터가 없으면 검색 대상이 테이블 전체이므로 따로 세지 않는다
-    const countInScope = filter.sql
-      ? this.db.prepare(
-          `SELECT COUNT(*) AS count FROM ${target.table} ${target.joins ?? ''} WHERE ${termMatches}${filter.sql}`,
-        )
-      : null;
-
-    // 세기로 한 검색어의 LIKE 패턴. 이 배열의 길이가 k 다.
-    const patterns: string[] = [];
-    for (const term of terms) {
-      // 글자 수는 코드 포인트로 센다 (String.length 는 UTF-16 단위라 한 글자가 2 로 나올 수 있다)
-      if (Array.from(term).length < 2) {
-        continue;
-      }
-      // LIKE 패턴 길이 한도를 넘는 검색어는 어떤 행과도 일치할 수 없다
-      const pattern = containsPattern(term);
+    const existsInScope = this.db.prepare(
+      `SELECT EXISTS(
+         SELECT 1 FROM ${target.table} ${target.joins ?? ''}
+         WHERE ${likeAnyColumn(target.searchColumns)}${filter.sql}
+       ) AS found`,
+    );
+    /** 필터를 적용한 대상 안에 form 과 일치하는 행이 있으면 그 LIKE 패턴, 없으면 null */
+    const matchingPattern = (form: string): string | null => {
+      const pattern = containsPattern(form);
+      // LIKE 패턴을 만들 수 없는 값은 어떤 행과도 일치하지 않는다
       if (pattern === null) {
-        continue;
+        return null;
       }
-      const params = bindPattern(pattern);
-      const inTable = (countInTable.get(...params) as { count: number }).count;
-      if (inTable * 2 > tableRows) {
-        continue;
+      const params = [...target.searchColumns.map(() => pattern), ...filter.params];
+      return (existsInScope.get(...params) as { found: number }).found ? pattern : null;
+    };
+
+    // 쓰기로 한 검색어의 LIKE 패턴. 이 배열의 길이가 k 다.
+    const patterns: string[] = [];
+    // 조사를 뗀 꼴이 다른 검색어와 같으면 한 번만 센다 (LIKE 처럼 영문자의 대소문자는 가리지 않는다)
+    const usedForms = new Set<string>();
+    for (const term of terms) {
+      // 검색어 그대로 일치하는 행이 있으면 그대로 쓰고, 없을 때만 조사를 뗀 꼴을 차례로 견준다
+      for (const form of [term, ...particleStrippedForms(term)]) {
+        const pattern = matchingPattern(form);
+        if (pattern === null) {
+          continue;
+        }
+        if (!usedForms.has(form.toLowerCase())) {
+          usedForms.add(form.toLowerCase());
+          patterns.push(pattern);
+        }
+        break;
       }
-      // 테이블 전체에서 일치하는 행이 없으면 필터를 적용한 대상 안에도 없다
-      const inScope =
-        countInScope && inTable > 0
-          ? (countInScope.get(...params, ...filter.params) as { count: number }).count
-          : inTable;
-      if (inScope === 0) {
-        continue;
-      }
-      patterns.push(pattern);
     }
 
     if (patterns.length === 0) {
@@ -1159,7 +1153,7 @@ const NO_FILTER: SqlCondition = { sql: '', params: [] };
 interface KeywordSearchTarget {
   /** 조회할 컬럼 목록 */
   columns: string;
-  /** 본 테이블과 별칭. 전체 행 수와 검색어별 일치 행 수도 이 테이블에서 센다 */
+  /** 본 테이블과 별칭 */
   table: string;
   /** 조회할 컬럼을 채우는 데 필요한 JOIN (행 수를 바꾸지 않는 것만) */
   joins?: string;
@@ -1290,11 +1284,6 @@ function toSqlOffset(offset: number | undefined): number {
 function dropSingleCharacterTerms(terms: string[]): string[] {
   const longer = terms.filter((term) => codePointLength(term) >= 2);
   return longer.length > 0 ? longer : terms;
-}
-
-/** 문자열의 글자 수 (코드 포인트 기준. String.length 는 UTF-16 단위라 한 글자가 2 로 나올 수 있다) */
-function codePointLength(value: string): number {
-  return Array.from(value).length;
 }
 
 /** 문자열 필터 값의 앞뒤 공백을 뗀다. 문자열이 아니거나 비어 있으면 빈 문자열. */
