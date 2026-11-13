@@ -1164,9 +1164,9 @@ export function normalizeDbType(dbType: string): DbType | null {
 /** 오류 문구에 싣는 입력값의 최대 길이 */
 const INPUT_ECHO_MAX_LENGTH = 40;
 
-/** 호출자가 준 값을 오류 문구에 실을 수 있게 다듬는다 (앞뒤 공백 제거, 길이 제한) */
+/** 호출자가 준 값을 오류 문구에 실을 수 있게 다듬는다 (공백·줄바꿈 정리, 길이 제한) */
 function echoInput(value: unknown): string {
-  const text = String(value).trim();
+  const text = String(value).replace(/\s+/g, ' ').trim();
   return text.length > INPUT_ECHO_MAX_LENGTH ? `${text.slice(0, INPUT_ECHO_MAX_LENGTH)}…` : text;
 }
 

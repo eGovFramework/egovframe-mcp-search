@@ -97,4 +97,12 @@ describe('지원하지 않는 dbType 으로 ddl/dml 을 요청하면', () => {
     expect(error).toBeInstanceOf(UserFacingError);
     expect((error as Error).message.length).toBeLessThan(250);
   });
+
+  it('오류 문구에 싣는 입력값의 줄바꿈은 공백으로 바꿔 한 줄로 유지한다', () => {
+    const error = catchError(() => getComponentDML('bbs', 'my\nsql\n\n# 제목'));
+
+    expect(error).toBeInstanceOf(UserFacingError);
+    expect((error as Error).message).toContain('지원하지 않는 DB 타입입니다: my sql # 제목 (지원:');
+    expect((error as Error).message).not.toContain('\n');
+  });
 });
