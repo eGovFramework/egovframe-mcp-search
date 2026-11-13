@@ -1553,6 +1553,31 @@ describe("integration — egov_search_knowledge 공개 스키마", () => {
     return tool;
   };
 
+  it("query 의 설명은 지금의 키워드 검색 규칙과 응답의 필드를 적는다", async () => {
+    const props = (await getTool()).inputSchema.properties as Record<string, any>;
+    const description: string = props.query.description;
+    // 가이드·개발자 지식·통합 검색에서의 쓰임을 적은 앞부분은 그대로다
+    expect(description.startsWith("Search question or keywords. Required for the guide, knowledge and all scopes")).toBe(true);
+    // 낱말의 접두 일치라는 예전 규칙을 적지 않고, 부분 문자열 일치를 적는다
+    expect(description).not.toContain("word prefix");
+    expect(description).toContain("substrings");
+    // 키워드 검색 응답을 읽는 데 필요한 필드와 값을 모두 든다
+    for (const name of [
+      "matchMode",
+      "all-terms",
+      "any-term",
+      "usedTerms",
+      "requiredMatches",
+      "ignoredTerms",
+      "droppedTerms",
+      "orQuery",
+    ]) {
+      expect(description, name).toContain(name);
+    }
+    // 호출하는 모델이 호출마다 읽는 글이라 길이를 묶어 둔다
+    expect(description.length).toBeLessThanOrEqual(1300);
+  });
+
   it("action 은 지원하는 값의 enum 으로 공개된다", async () => {
     const props = (await getTool()).inputSchema.properties as Record<string, any>;
     expect(props.action.enum).toEqual(["get", "info", "dependencies", "sourceFiles", "readSource", "ddl", "dml"]);
