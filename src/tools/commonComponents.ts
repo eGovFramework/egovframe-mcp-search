@@ -16,7 +16,6 @@ import {
   ComponentSearchFilter,
   ComponentSummary,
   DependencyResolution,
-  ComponentQueryResult,
   KeywordMatchMode,
 } from '../types/database.js';
 import { extractSearchTerms } from '../utils/fts5Query.js';
@@ -143,17 +142,9 @@ export function searchComponents(
     return { results: [], query, total: 0 };
   }
 
-  const db = getDB();
-
-  // FTS 검색 시도, 실패하면 일반 검색
-  let found: ComponentQueryResult;
-  try {
-    found = db.queryComponents({ query, filters, limit });
-  } catch {
-    // FTS 오류 시 일반 검색으로 대체
-    const matched = db.getCommonComponents({ ...filters, keyword: query });
-    found = { rows: matched.slice(0, limit), total: matched.length };
-  }
+  // 조회 중 예상하지 못한 오류는 다른 검색으로 바꾸지 않고 그대로 던진다.
+  // (검색어 일부만 일치하는 결과로 대체하는 일은 queryComponents 가 matchMode 와 함께 처리한다.)
+  const found = getDB().queryComponents({ query, filters, limit });
 
   return {
     results: found.rows,

@@ -158,6 +158,22 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
       expect(partial).toMatchObject({ total: 2, matchMode: "any-term" });
     });
 
+    it("예상하지 못한 오류는 다른 검색으로 바꾸지 않고 그대로 던진다", () => {
+      // 키워드 조회만 실패하게 한다. 예전에는 이 오류를 삼키고 keyword 필터 목록으로 대신 응답했다
+      const original = SQLiteManager.prototype.queryComponents;
+      vi.spyOn(SQLiteManager.prototype, "queryComponents").mockImplementation(function (
+        this: SQLiteManager,
+        options = {},
+      ) {
+        if (options.query) {
+          throw new Error("database disk image is malformed");
+        }
+        return original.call(this, options);
+      });
+
+      expect(() => searchComponents("게시판")).toThrow("database disk image is malformed");
+    });
+
     it("total 은 limit 과 무관하게 전체 일치 건수다", () => {
       const found = searchComponents("게시판 컴포넌트", 1);
       expect(idsOf(found.results)).toEqual(["bbs"]);
