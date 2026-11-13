@@ -1,0 +1,121 @@
+# `ensureTemplateSources.test.ts`
+
+`build-index` 가 템플릿 소스 저장소를 확보하고 버전 태그를 고르는 동작(`ensureEgovframeDocs`, `ensureCommonComponentsSrc`)을 검증하는 통합 테스트입니다.
+
+> - 위치: `tests/integration/ensureTemplateSources.test.ts`
+> - 실행: `npm test` 또는 `npx vitest run tests/integration/ensureTemplateSources.test.ts`
+> - 분류: 통합 테스트. 임시 디렉터리에 로컬 git 저장소를 만들어 `src/scripts/templateSources.ts` 의 함수를 직접 호출함
+
+## 1. 이 테스트가 검증하는 것
+
+`npm run build-index` 는 온라인 모드(`--source=online`)에서 공식 가이드 원문(`templates/egovframe_guide`)과 공통컴포넌트 소스(`templates/common-components-src`)를 확보하고, 어느 버전 태그의 소스로 인덱스를 만들지 정합니다. 이 파일은 그 규칙을 고정합니다.
+
+- 태그 선택 콜백(`selectTag`)에 최신 버전 태그 목록(최대 10개)과 현재 적용된 태그를 넘깁니다.
+- 콜백이 빈 문자열이나 현재 태그 이름을 돌려주면 체크아웃을 그대로 둡니다.
+- 콜백이 다른 태그 이름을 돌려주면 그 태그의 소스를 체크아웃합니다.
+- 콜백이 없으면(비대화형 실행) 어떤 경우에도 현재 체크아웃을 그대로 둡니다.
+- 버전 태그가 하나도 없는 원격이면 콜백을 부르지 않고, 대화형 실행에 한해 브랜치의 최신 커밋을 따릅니다.
+- 원격에 접근하지 못해도 예외를 던지지 않고, 기존 파일이 있으면 그것을 씁니다.
+
+체크아웃 형태(서브모듈, 독립 클론, git 정보가 없는 배포본, 아직 받지 않은 상태)마다 같은 규칙이 지켜지는지를 실제 git 저장소로 확인합니다. 체크아웃 형태를 판정하는 `resolveSourceStrategy` 와 태그 입력 처리는 단위 테스트 `tests/unit/templateSources.test.ts` 가 다룹니다.
+
+## 2. 파일 구조와 헬퍼
+
+이 파일은 [_helper.md](./_helper.md)의 헬퍼를 쓰지 않고, 서버도 실행하지 않습니다. `beforeEach` 에서 임시 디렉터리(`os.tmpdir()` 아래의 `ensure-sources-*`)를 만들고 그 안에 원격 역할의 저장소(`upstream`)를 초기화하며, `afterEach` 에서 임시 디렉터리를 지웁니다. 검증 대상 함수에는 `sourceDir`, `projectRoot`, `repoUrl` 을 임시 디렉터리의 경로로 넘기므로 저장소의 `templates/` 는 건드리지 않습니다.
+
+서브모듈을 로컬 경로에서 받을 수 있도록 케이스마다 `GIT_ALLOW_PROTOCOL=file` 을 설정하고 끝나면 원래 값으로 되돌립니다.
+
+| 도우미 | 하는 일 |
+|---|---|
+| `git(cwd, ...args)` | `execFileSync` 로 git 명령을 실행하고 출력을 돌려줌 |
+| `initRepo(dir)` | `git init -b main` 으로 저장소를 만들고 커밋에 필요한 사용자 설정을 넣음 |
+| `commitMarker(upstream, markerFile, content, tag?)` | 마커 파일의 내용을 바꿔 커밋하고, `tag` 를 주면 그 커밋에 태그를 붙임 |
+| `selectorReturning(answer)` | 항상 `answer` 를 돌려주는 `selectTag` 와, 콜백이 받은 인자를 기록한 `calls` 배열을 돌려줌 |
+| `setupParentWithSubmodule(rel)` | 부모 저장소를 만들고 `upstream` 을 서브모듈로 등록해 커밋함 |
+| `readMarker(dir, markerFile)` | 체크아웃된 마커 파일의 내용을 읽음 |
+
+마커 파일은 소스가 있는지를 판정하는 기준 파일입니다. 공식 가이드는 `_index.md`, 공통컴포넌트 소스는 `pom.xml` 입니다. 테스트는 커밋마다 마커 파일의 내용을 다르게 써서, 어느 커밋이 체크아웃되었는지를 마커 파일의 내용으로 확인합니다.
+
+## 3. 케이스 상세
+
+"돌려줌" 은 `selectTag` 콜백의 반환값을 뜻합니다. 3-3 을 뺀 묶음의 케이스는 함수가 `true` 를 돌려주는지도 함께 확인합니다. 콜백이 받은 인자만 확인하는 3-1 의 둘째 케이스와 오류 전파 케이스는 예외입니다.
+
+### 3-1. `ensureEgovframeDocs (서브모듈 + 태그 선택)`
+
+따로 적지 않은 케이스는 서브모듈이 `v1.0.0` 에 체크아웃되어 있고 원격에 `v1.1.0` 이 생긴 상태에서 시작합니다.
+
+| 케이스 | 준비와 콜백 | 확인하는 것 |
+|---|---|---|
+| `selectTag 가 다른 태그명을 반환하면 그 태그의 소스를 체크아웃한다` | 원격에 `v1.1.0` 과 태그 없는 최신 커밋이 있음. `v1.1.0` 을 돌려줌 | `v1.1.0` 의 내용이 체크아웃됨 (태그 없는 최신 커밋이 아님) |
+| `selectTag 에 최신 태그 목록(버전 정렬)과 현재 적용 태그를 넘긴다` | 서브모듈은 `v1.9.0`, 원격에 `v1.10.0` 이 있음. 빈 문자열을 돌려줌 | 콜백이 한 번 호출됨. `latestTags` 가 `["v1.10.0", "v1.9.0"]`, `currentTag` 가 `v1.9.0`, `fetchFailed` 가 `false` 임 |
+| `selectTag 가 '' (엔터) 를 반환하면 현재 체크아웃을 유지한다` | 빈 문자열을 돌려줌 | `v1.0.0` 의 내용이 그대로임 |
+| `selectTag 가 현재 적용된 태그명을 반환해도 체크아웃을 유지한다` | `v1.0.0` 을 돌려줌 | `v1.0.0` 의 내용이 그대로임 |
+| `selectTag 가 없으면(비대화형) 현재 체크아웃을 유지한다` | 콜백을 주지 않음 | `v1.0.0` 의 내용이 그대로임 |
+| `존재하지 않는 태그명을 반환하면 경고 후 현재 체크아웃을 유지한다` | `v9.9.9` 를 돌려줌 | `v1.0.0` 의 내용이 그대로임 |
+| `selectTag 가 TagSelectionAbortedError 를 던지면(Ctrl+C) 삼키지 않고 전파한다` | 원격에 `v1.0.0` 만 있음. 콜백이 `TagSelectionAbortedError` 를 던짐 | 함수가 같은 오류로 거부됨 |
+| `태그가 11개 이상이면 latestTags 는 10개로 잘리고, 목록 밖 태그도 선택 가능하다` | 원격에 `v1.0.0` 부터 `v1.11.0` 까지 태그 12개가 있음. 목록에서 밀려난 `v1.0.0` 을 돌려줌 | `latestTags` 가 10개이고 첫 항목이 `v1.11.0` 이며 `v1.0.0` 이 없음. `allTags` 는 12개임. `v1.0.0` 의 내용이 체크아웃됨 |
+| `버전 태그가 없는 원격이면 selectTag 를 부르지 않고 브랜치 최신으로 폴백한다` | 태그가 하나도 없고 서브모듈을 만든 뒤 원격에 커밋이 생김. 콜백을 줌 | 콜백이 호출되지 않고, 원격 브랜치의 최신 커밋 내용이 체크아웃됨 |
+| `원격 fetch 실패(오프라인) 시 로컬 태그 기준으로 선택을 계속한다` | `v1.0.0` 의 서브모듈을 만든 뒤 원격 저장소를 지움. 빈 문자열을 돌려줌 | 콜백이 한 번 호출됨. `fetchFailed` 가 `true` 이고 `latestTags` 가 `["v1.0.0"]` 임. 내용이 그대로임 |
+| `deinit 되어 비어 있는 서브모듈을 초기화한 뒤 선택한 태그로 이동한다` | `git submodule deinit -f` 로 서브모듈을 비움. `v1.1.0` 을 돌려줌 | `v1.1.0` 의 내용이 체크아웃됨 |
+
+### 3-2. `ensureEgovframeDocs (독립 클론 + 태그 선택)`
+
+`git clone` 으로 받은 독립 클론이거나, 아직 디렉터리가 없는 상태에서 시작합니다.
+
+| 케이스 | 준비와 콜백 | 확인하는 것 |
+|---|---|---|
+| `독립 클론에서도 선택한 태그를 체크아웃한다` | `v1.0.0` 시점에 클론한 뒤 원격에 `v1.1.0` 이 생김. `v1.1.0` 을 돌려줌 | `v1.1.0` 의 내용이 체크아웃됨 |
+| `버전 태그가 없으면 (대화형) fast-forward pull 로 브랜치 최신을 따른다` | 태그가 없고 클론 뒤에 원격에 커밋이 생김. 콜백을 줌 | 콜백이 호출되지 않고, 원격의 최신 커밋 내용이 체크아웃됨 |
+| `비대화형(selectTag 없음)에서는 태그 없는 원격이라도 현재 체크아웃을 유지한다` | 위와 같은 상태에서 콜백을 주지 않음 | 클론 시점의 내용이 그대로임 |
+| `브랜치 폴백이 non-fast-forward 로 실패해도 충돌 상태를 남기지 않는다` | 태그가 없고, 클론에 로컬 커밋이 하나 있으며 원격에도 새 커밋이 생김. 콜백을 줌 | 로컬 커밋의 내용이 그대로이고 `.git/rebase-merge`, `.git/rebase-apply` 가 없음 |
+| `오프라인 + 로컬 태그도 없으면 기존 파일을 유지하고 true 를 반환한다` | 태그 없이 클론한 뒤 원격 저장소를 지움. 콜백을 줌 | 콜백이 호출되지 않고 내용이 그대로임 |
+| `디렉터리가 없으면 클론한 뒤 선택한 태그로 이동한다` | 디렉터리가 없음. 원격에 `v1.0.0` 과 태그 없는 최신 커밋이 있음. `v1.0.0` 을 돌려줌 | `v1.0.0` 의 내용이 체크아웃됨 |
+| `클론 후 selectTag 가 '' 를 반환하면 클론된 상태를 유지한다` | 위와 같은 원격에서 빈 문자열을 돌려줌 | 태그 없는 최신 커밋의 내용(클론된 상태)이 그대로임 |
+
+### 3-3. `ensureEgovframeDocs (확보 실패 경로)`
+
+| 케이스 | 준비 | 확인하는 것 |
+|---|---|---|
+| `클론 실패 시 예외 대신 false 를 반환한다` | 디렉터리가 없고 `repoUrl` 이 없는 경로임 | 함수가 `false` 를 돌려줌 |
+| `서브모듈 초기화 실패 시 예외 대신 false 를 반환한다` | `.gitmodules` 에는 등록되어 있지만 인덱스에 서브모듈 항목이 없는 부모 저장소임 | 함수가 `false` 를 돌려줌 |
+
+### 3-4. `ensureEgovframeDocs (git 없는 배포본)`
+
+| 케이스 | 준비와 콜백 | 확인하는 것 |
+|---|---|---|
+| `마커 파일만 있으면 selectTag 호출 없이 그대로 사용한다` | `.git` 없이 `_index.md` 만 있는 디렉터리임. `v1.0.0` 을 돌려주는 콜백을 줌 | 콜백이 호출되지 않고 파일의 내용이 그대로임 |
+
+### 3-5. `ensureCommonComponentsSrc`
+
+| 케이스 | 준비와 콜백 | 확인하는 것 |
+|---|---|---|
+| `pom.xml 마커로 서브모듈을 감지하고 선택한 태그로 갱신한다` | `templates/common-components-src` 경로의 서브모듈이 `v5.0.1` 에 있고 원격에 `v5.0.6` 과 태그 없는 최신 커밋이 있음. `v5.0.6` 을 돌려줌 | 콜백이 받은 `currentTag` 가 `v5.0.1` 이고, `pom.xml` 의 내용이 `v5.0.6` 의 것임 |
+
+## 4. 실행 방법
+
+```bash
+# 전체 (빌드 후 단위 테스트와 통합 테스트)
+npm test
+
+# 이 파일만 (빌드가 필요 없음)
+npx vitest run tests/integration/ensureTemplateSources.test.ts
+```
+
+## 5. 의존성과 전제 조건
+
+| 항목 | 내용 |
+|---|---|
+| `git` | `PATH` 에서 찾을 수 있어야 하고 `git init -b main` 을 지원해야 합니다 |
+| 네트워크 | 필요하지 않습니다. 모든 원격이 임시 디렉터리 안의 로컬 저장소입니다 |
+| `build/`, 지식베이스, 임베딩 모델 | 필요하지 않습니다. `src/` 의 함수를 직접 import 합니다 |
+| 임시 디렉터리 | `os.tmpdir()` 아래에 쓸 수 있어야 합니다 |
+
+건너뛰는 케이스가 없습니다. 저장소의 `templates/` 와 서브모듈 상태를 바꾸지 않습니다.
+
+## 6. 흔한 실패와 진단
+
+| 증상 | 원인 | 대응 |
+|---|---|---|
+| 모든 케이스가 `spawnSync git ENOENT` 로 실패 | `PATH` 에서 `git` 을 찾지 못했습니다 | git 을 설치하거나 `PATH` 를 확인합니다 |
+| 태그를 쓰는 케이스가 `Command failed: git tag v1.0.0` 과 `fatal: no tag message?` 로 실패 | 전역 git 설정에 `tag.gpgSign = true` 가 있습니다. 테스트의 `initRepo` 는 `commit.gpgsign` 만 끄기 때문에 태그 서명 설정은 그대로 적용됩니다 | 환경 변수로 이 실행에서만 설정을 끕니다: `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=tag.gpgSign GIT_CONFIG_VALUE_0=false npx vitest run tests/integration/ensureTemplateSources.test.ts` |
+| 체크아웃된 내용이 기대와 다름 | `applyTagSelection` 의 분기(콜백 없음, 태그 없음, fetch 실패)를 바꿨습니다 | 이 문서 1절의 규칙과 `src/scripts/templateSources.ts` 머리 주석을 대조합니다 |
