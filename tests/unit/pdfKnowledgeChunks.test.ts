@@ -375,6 +375,31 @@ describe("chunkPdfText — 이웃한 청크의 겹침", () => {
   });
 });
 
+describe("chunkPdfText — 처리 시간", () => {
+  it("문장 부호가 없는 긴 줄이 많은 본문을 1초 안에 나눈다", () => {
+    // 낱말이 공백으로만 나뉜 700자 남짓한 줄 4,000개 (약 280만 자).
+    // 긴 줄 하나를 문장 경계에서 나누려 할 때 그 줄이 아니라 본문의 끝까지 훑으면, 걸리는 시간이 줄 수의 제곱으로 늘어난다
+    const longLine = (seed: number): string => {
+      let line = `낱말${seed % 97}가나다`;
+      for (let i = 1; line.length < 700; i++) {
+        line += ` 낱말${(seed + i) % 97}가나다`;
+      }
+      return line;
+    };
+    const text = Array.from({ length: 4000 }, (_, i) => longLine(i)).join("\n");
+    expect(text.length).toBeGreaterThan(2_800_000);
+
+    const startedAt = performance.now();
+    const chunks = chunkPdfText(text);
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(elapsedMs).toBeLessThan(1000);
+    // 빨리 끝난 결과가 올바른 결과인지도 본다
+    expect(Math.max(...chunks.map((chunk) => chunk.length))).toBeLessThanOrEqual(PDF_CHUNK_MAX_CHARS);
+    expectChunksCoverSource(text, chunks);
+  }, 120_000);
+});
+
 describe("pdfTextToKnowledge — 청크를 개발자 지식 입력으로 만든다", () => {
   const pdfPath = path.join(TEMPLATES_DIR, "developer_knowledge", "application-guide.pdf");
   // 어느 상한에서도 청크가 여러 개 나오도록 1,000자 문단을 여섯 개 둔다

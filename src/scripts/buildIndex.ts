@@ -841,7 +841,14 @@ function trimSpan(source: string, start: number, end: number): TextSpan | null {
   return start < end ? { start, end } : null;
 }
 
-/** 구간을 separator 가 나오는 자리에서 나눈다. separator 와 조각 양 끝의 공백은 어느 조각에도 넣지 않는다. */
+/**
+ * 구간을 separator 가 나오는 자리에서 나눈다. separator 와 조각 양 끝의 공백은 어느 조각에도 넣지 않는다.
+ *
+ * separator 는 구간만 잘라 낸 글에서 찾는다. 본문 전체에서 찾으면 구간 안에 separator 가 없을 때 구간 밖의 다음 자리나
+ * 본문의 끝까지 훑게 되어, 그런 구간이 많은 본문(문장 부호가 없는 긴 줄이 이어진 본문)에서는 걸리는 시간이 본문 크기의
+ * 제곱으로 늘어난다. 구간은 본문의 처음이나 공백 바로 뒤에서 시작하므로, 구간 앞의 글자를 볼 수 없어도 separator 의
+ * 뒤돌아보기 조건(문장 경계의 끝 부호)은 본문 전체에서 찾을 때와 같은 자리에서 성립한다.
+ */
 function splitSpan(source: string, span: TextSpan, separator: RegExp): TextSpan[] {
   const parts: TextSpan[] = [];
   const pushPart = (start: number, end: number): void => {
@@ -849,12 +856,11 @@ function splitSpan(source: string, span: TextSpan, separator: RegExp): TextSpan[
     if (part) parts.push(part);
   };
 
-  const pattern = new RegExp(separator);
-  pattern.lastIndex = span.start;
   let cursor = span.start;
-  for (let match = pattern.exec(source); match && match.index < span.end; match = pattern.exec(source)) {
-    pushPart(cursor, match.index);
-    cursor = match.index + match[0].length;
+  for (const match of source.slice(span.start, span.end).matchAll(separator)) {
+    const matchStart = span.start + match.index;
+    pushPart(cursor, matchStart);
+    cursor = matchStart + match[0].length;
   }
   pushPart(cursor, span.end);
   return parts;
