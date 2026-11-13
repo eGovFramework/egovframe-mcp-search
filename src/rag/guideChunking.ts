@@ -185,6 +185,33 @@ export function estimateGuideChunkTokens(chunk: Pick<GuideChunk, 'title' | 'cont
   return estimateTokens(PASSAGE_PREFIX + guideSearchText(chunk.title, chunk.content, chunk.layer, chunk.category));
 }
 
+// ─── 조각 번호 ───────────────────────────────────────────
+
+/** section 끝의 조각 번호 " (k/n)" */
+const SECTION_PART_PATTERN = /^(.+) \(([1-9]\d{0,5})\/([1-9]\d{0,5})\)$/s;
+
+/**
+ * section (또는 title) 끝의 " (k/n)" 을 해석한다. 조각 번호가 없으면 null.
+ *
+ * 청킹이 붙이는 번호만 조각 번호로 본다: 1 ≤ k ≤ n 이고 n 은 2 이상이다 (조각이 하나뿐인 절에는 번호를 붙이지 않는다).
+ * base 는 번호를 뗀 나머지로, GuideSearchManager.getSectionParts 에 넘기는 절의 이름이다.
+ */
+export function parseSectionPart(section: string): { base: string; part: number; count: number } | null {
+  if (typeof section !== 'string') {
+    return null;
+  }
+  const match = SECTION_PART_PATTERN.exec(section);
+  if (!match) {
+    return null;
+  }
+  const part = Number(match[2]);
+  const count = Number(match[3]);
+  if (count < 2 || part > count) {
+    return null;
+  }
+  return { base: match[1], part, count };
+}
+
 // ─── 줄 읽기 ─────────────────────────────────────────────
 
 /** 펜스 줄 (``` 또는 ~~~, 들여쓰기 허용) */

@@ -14,10 +14,10 @@ import { fileURLToPath } from 'url';
 import { resolveGuideDbDir } from '../utils/dataPaths.js';
 import { UserFacingError } from '../utils/errors.js';
 import { lanceEquals, clampSearchLimit, lanceIn, quoteFilterValue } from '../utils/lanceFilter.js';
-import { guideSearchText } from './guideChunking.js';
+import { guideSearchText, parseSectionPart } from './guideChunking.js';
 
 // 청킹은 LanceDB 와 임베딩 모델을 불러오지 않는 모듈에 둔다. 기존 호출자를 위해 여기서도 내보낸다
-export { chunkMarkdown } from './guideChunking.js';
+export { chunkMarkdown, parseSectionPart } from './guideChunking.js';
 
 // ─── 타입 정의 ────────────────────────────────────────────
 
@@ -502,6 +502,49 @@ export class GuideSearchManager {
       docTitle: row.docTitle,
       url: row.url,
     };
+  }
+
+  /**
+   * 같은 문서(source)의 같은 절에 속한 조각을 조각 번호 순으로 돌려준다.
+   * 검색 결과나 청크 읽기 응답에서 "이 절의 이전 조각과 다음 조각" 을 안내할 때 쓴다.
+   *
+   * sectionBase 는 조각 번호를 뗀 section 이다 (parseSectionPart 의 base). 긴 절은 여러 조각으로 나뉘어
+   * section 끝에 " (k/n)" 이 붙고, 그런 절의 sectionBase 는 한 문서 안에서 겹치지 않는다 (청킹이 보장한다).
+   *
+   * 조각 번호가 없는 절(나뉘지 않은 절, 이전 청킹으로 만든 인덱스의 행)은 조각 하나(1/1)로 돌려준다.
+   * 제목 경로가 같은 절이 둘이면 둘 다 나온다. 번호가 붙은 조각이 있으면 그것만 돌려준다.
+   * 해당하는 행이 없으면 빈 배열이다.
+   */
+  async getSectionParts(
+    source: string,
+    sectionBase: string,
+  ): Promise<Array<{ id: string; part: number; count: number }>> {
+    // 한 문서의 행은 많아야 수백 개다. source 로만 거르고 section 은 여기서 비교한다
+    // (LIKE 로 거르면 값의 % 와 _ 가 와일드카드가 된다)
+    const rows: Array<{ id?: unknown; section?: unknown }> = await this.table
+      .query()
+      .where(lanceEquals('source', String(source)))
+      .select(['id', 'section'])
+      .toArray();
+
+    const numbered: Array<{ id: string; part: number; count: number }> = [];
+    const unnumbered: Array<{ id: string; part: number; count: number }> = [];
+    for (const row of rows) {
+      const section = String(row.section ?? '');
+      const parsed = parseSectionPart(section);
+      if (parsed) {
+        if (parsed.base === sectionBase) {
+          numbered.push({ id: String(row.id), part: parsed.part, count: parsed.count });
+        }
+      } else if (section === sectionBase) {
+        unnumbered.push({ id: String(row.id), part: 1, count: 1 });
+      }
+    }
+
+    const parts = numbered.length > 0 ? numbered : unnumbered;
+    return parts.sort(
+      (a, b) => a.part - b.part || a.count - b.count || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    );
   }
 
   /** layer / category 고유 값 캐시 — 테이블 핸들과 버전이 그대로일 때만 유효하다 */

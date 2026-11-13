@@ -5,14 +5,15 @@
  * 색인에서 빠지는지 확인한다. 대부분 순수 함수 검증이고, 실제 색인(indexGuideDirectory)은
  * 임베딩 모델이 있을 때만 임시 디렉토리에서 돌려 본다.
  *
- * 긴 절을 나누는 규칙은 guideChunkSplit.test.ts 에서 확인한다. 여기서는 색인 경로가 그 결과를 그대로 쓰는지를 본다.
+ * 긴 절을 나누는 규칙은 guideChunkSplit.test.ts 에서 확인한다. 여기서는 색인 경로가 그 결과를 그대로
+ * 테이블에 넣는지와, 넣은 조각을 이웃 조각 조회(getSectionParts)로 찾을 수 있는지를 본다.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "fs-extra";
 import os from "node:os";
 import path from "node:path";
 import * as lancedb from "@lancedb/lancedb";
-import { GuideSearchManager, chunkMarkdown, parseFrontMatter } from "../../src/rag/guideManager.js";
+import { GuideSearchManager, chunkMarkdown, parseFrontMatter, parseSectionPart } from "../../src/rag/guideManager.js";
 import { chunkGuideDocument, indexGuideDirectory, relativeGuidePath } from "../../src/kb/guideIndexer.js";
 import { REPO_ROOT, hasEmbeddingModel } from "../integration/_helper.js";
 
@@ -190,6 +191,55 @@ describe.skipIf(!hasEmbeddingModel())("indexGuideDirectory — draft 문서 제�
         "egovframe-runtime/persistence-layer/transaction.md",
         "egovframe-runtime/persistence-layer/transaction.md",
       ]);
+    },
+    120_000,
+  );
+});
+
+describe.skipIf(!hasEmbeddingModel())("indexGuideDirectory — 긴 절의 조각과 이웃 조각 조회", () => {
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "egov-guide-parts-index-"));
+  });
+
+  afterAll(async () => {
+    await fs.remove(tmpDir);
+  });
+
+  it(
+    "색인한 행은 chunkGuideDocument 의 청크와 같고, getSectionParts 가 한 절의 조각을 순서대로 돌려준다",
+    async () => {
+      const guideDir = path.join(tmpDir, "docs");
+      const relative = "egovframe-runtime/persistence-layer/transaction.md";
+      const content = ["---", "title: Transaction 서비스", "---", BODY, "", LONG_SECTION].join("\n");
+      await fs.outputFile(path.join(guideDir, relative), content);
+      const expected = chunkGuideDocument(content, relative)!;
+      const expectedParts = expected.filter((chunk) => parseSectionPart(chunk.section) !== null);
+      expect(expectedParts.length).toBeGreaterThan(1);
+
+      const manager = new GuideSearchManager(path.join(tmpDir, "lance"));
+      await manager.initialize();
+      const stats = await indexGuideDirectory(manager, guideDir);
+      expect(stats.totalChunks).toBe(expected.length);
+
+      // 번호가 붙은 절: 조각 번호 순으로, 본문은 청킹 결과 그대로
+      const parts = await manager.getSectionParts(relative, "선언적 트랜잭션");
+      expect(parts.map(({ part, count }) => [part, count])).toEqual(
+        expectedParts.map((_, index) => [index + 1, expectedParts.length]),
+      );
+      for (const [index, part] of parts.entries()) {
+        const stored = await manager.getChunkById(part.id);
+        expect(stored?.section).toBe(expectedParts[index].section);
+        expect(stored?.title).toBe(expectedParts[index].title);
+        expect(stored?.content).toBe(expectedParts[index].content);
+      }
+
+      // 나뉘지 않은 절: 조각 하나
+      const whole = await manager.getSectionParts(relative, "설명");
+      expect(whole).toHaveLength(1);
+      expect(whole[0]).toMatchObject({ part: 1, count: 1 });
+      expect((await manager.getChunkById(whole[0].id))?.content).toBe(paragraph("설명"));
     },
     120_000,
   );
