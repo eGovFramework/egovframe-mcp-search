@@ -767,7 +767,7 @@ interface DeveloperKnowledgeIndexStats {
 }
 
 /**
- * PDF 에서 뽑은 본문의 공백을 정리한다: 줄바꿈을 LF 로 통일하고, 이어진 공백과 탭을 한 칸으로,
+ * PDF 에서 뽑은 본문을 정리한다: NFC 로 정규화하고, 줄바꿈을 LF 로 통일하고, 이어진 공백과 탭을 한 칸으로,
  * 이어진 빈 줄을 하나로 줄인다.
  *
  * 게시판 글에 쓰는 cleanText 는 쓰지 않는다. cleanText 는 HTML 태그를 지우는데, PDF 본문의 꺾쇠는
@@ -776,6 +776,7 @@ interface DeveloperKnowledgeIndexStats {
  */
 function normalizePdfText(text: string): string {
   return text
+    .normalize('NFC')
     .replace(/\r\n?/g, '\n')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')

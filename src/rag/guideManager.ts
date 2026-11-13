@@ -137,9 +137,11 @@ function parseTopLevelYaml(yaml: string): Map<string, string> {
  * Hugo YAML 프론트매터 파싱 (경량 구현, 외부 의존성 없음)
  *
  * 줄 끝은 LF 로 맞춘다 (Windows 체크아웃의 CRLF 문서도 같은 결과가 나오도록). 돌려주는 body 도 LF 다.
+ * 문서 전체를 NFC 로 정규화한 뒤에 읽는다.
  */
 export function parseFrontMatter(content: string): { frontmatter: FrontMatter; body: string } {
-  const normalized = content.replace(/\r\n?/g, '\n');
+  // 원문에는 자모가 분리된(NFD) 글이 섞여 있다. 색인된 제목과 본문이 응답에 그대로 실리므로 NFC 로 합친다
+  const normalized = content.normalize('NFC').replace(/\r\n?/g, '\n');
   const fmMatch = normalized.match(/^---[ \t]*\n([\s\S]*?)\n---[ \t]*(?:\n|$)([\s\S]*)$/);
 
   if (!fmMatch) {

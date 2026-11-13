@@ -40,6 +40,14 @@ describe("parseFrontMatter", () => {
     expect(body).toBe("# Transaction 서비스\n\n## 개요");
   });
 
+  it("자모가 분리된(NFD) 문서를 NFC 로 합친다 (제목과 본문 모두)", () => {
+    // 색인된 제목과 본문은 응답에 그대로 실린다. 원문에 NFD 로 적힌 글이 섞여 있다
+    const { frontmatter, body } = parseFrontMatter(doc("---", 'title: "실행환경 가이드"', "---", "본문 내용").normalize("NFD"));
+
+    expect(frontmatter.title).toBe("실행환경 가이드");
+    expect(body).toBe("본문 내용");
+  });
+
   it("프론트매터가 없는 문서는 본문 전체를 그대로 돌려준다", () => {
     const content = "# 표준프레임워크 실행환경 가이드\n\n## 실행환경\n";
     expect(parseFrontMatter(content)).toEqual({ frontmatter: { title: "" }, body: content });

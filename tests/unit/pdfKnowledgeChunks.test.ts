@@ -120,6 +120,13 @@ describe("chunkPdfText — 본문 정리", () => {
     expect(chunkPdfText(text)).toEqual([text]);
   });
 
+  it("자모가 분리된(NFD) 글을 NFC 로 합친다", () => {
+    // 색인된 본문은 응답에 그대로 실린다. Q&A 본문(cleanText)과 같은 기준으로 정규화한다
+    const text = "표준프레임워크 적용가이드";
+
+    expect(chunkPdfText(text.normalize("NFD"))).toEqual([text]);
+  });
+
   it("공백을 정리한다: 이어진 공백과 탭은 한 칸으로, 줄바꿈은 LF 로, 이어진 빈 줄은 하나로 줄인다", () => {
     const text = "  정보시스템 \t구축 \t발주자를   위한\r\n표준프레임워크 \t적용가이드\r\n\r\n\r\n\r\n-- 1 of 113 --\n\n\n목 \t차  ";
 
