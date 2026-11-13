@@ -13,7 +13,7 @@
 
 ## 요구 사항
 
-- **Node.js 22**: 두 방식 모두 Node.js 22 로 실행해야 합니다. `better-sqlite3` 의 네이티브 바이너리가 Node.js 메이저 버전에 맞춰 만들어지고, 배포 tgz 에는 패키징에 쓴 Node.js 22 용 바이너리가 그대로 들어가기 때문입니다. `package.json` 의 `engines` 는 `>=20` 이어서 Node.js 20 이상이면 npm 이 설치 단계에서 버전을 문제 삼지 않으므로, `node -v` 로 직접 확인합니다.
+- **Node.js 22**: 두 방식 모두 Node.js 22 로 실행해야 합니다. `better-sqlite3` 의 네이티브 바이너리가 Node.js 메이저 버전에 맞춰 만들어지고, 배포 tgz 에는 패키징에 쓴 Node.js 22 용 바이너리가 그대로 들어가기 때문입니다. `package.json` 의 `engines` 는 `>=22 <23` 입니다. 다른 메이저 버전에서 설치하면 npm 이 경고(`EBADENGINE`)를 내지만 설치는 그대로 진행되므로, `node -v` 로 직접 확인합니다.
 - **타깃 일치**: 배포 tgz 는 운영체제와 CPU 별로 따로 만들어지므로, 설치할 장비와 같은 타깃의 파일을 씁니다. Linux 용 tgz 는 glibc 기반 배포판용입니다.
 - **디스크**: darwin-arm64 기준으로 tgz 는 약 340MB 이고 설치하면 약 1GB 를 차지합니다.
 
@@ -52,9 +52,10 @@ tgz 에는 다음이 들어갑니다.
 | `package/models/` | 임베딩 모델 `Xenova/multilingual-e5-small` |
 | `package/templates/common-components-src/` | 공통컴포넌트 소스와 DDL, DML 스크립트 |
 | `package/node_modules/` | 타깃 플랫폼용 네이티브 바이너리를 포함한 실행 의존 패키지 |
+| `package/docs/` | 상세 문서 (README 가 링크하는 문서) |
 | `package/package.json`, `package/README.md`, `package/LICENSE` | 패키지 정보 |
 
-`docs/`, `src/`, `tests/`, `scripts/` 와 `templates/` 의 나머지 원본은 들어가지 않습니다.
+`src/`, `tests/`, `scripts/` 와 `templates/` 의 나머지 원본은 들어가지 않습니다.
 
 ## 배포 tgz 설치 (사용처)
 

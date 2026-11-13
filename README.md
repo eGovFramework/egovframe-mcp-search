@@ -90,7 +90,7 @@
 
 ### Prerequisites
 
-- **Node.js 22**: 저장소의 `.nvmrc` 가 22 를 가리킵니다. `better-sqlite3` 의 네이티브 바이너리는 설치하거나 패키징할 때의 Node 메이저 버전에 맞춰 만들어집니다. MCP 클라이언트가 다른 메이저 버전의 `node` 로 서버를 실행하면 서버는 시작되지만, 공식 가이드 검색을 뺀 나머지 조회(개발자 지식, 공통컴포넌트, 호환 소프트웨어)가 "네이티브 모듈(better-sqlite3)을 불러오지 못했습니다" 오류로 응답합니다. `package.json` 의 `engines` 는 `>=20` 으로 적혀 있지만, 개발과 패키징과 실행은 모두 Node.js 22 를 기준으로 합니다.
+- **Node.js 22**: 저장소의 `.nvmrc` 가 22 를 가리킵니다. `better-sqlite3` 의 네이티브 바이너리는 설치하거나 패키징할 때의 Node 메이저 버전에 맞춰 만들어집니다. MCP 클라이언트가 다른 메이저 버전의 `node` 로 서버를 실행하면 서버는 시작되지만, SQLite 를 쓰는 조회(공통컴포넌트, 호환 소프트웨어)가 "네이티브 모듈(better-sqlite3)을 불러오지 못했습니다" 오류로 응답합니다. `package.json` 의 `engines` 도 `>=22 <23` 으로 Node.js 22 를 요구합니다.
 - **npm**: Node.js 22 에 포함된 npm (10.x)
 - **git**: 서브모듈과 가이드 소스를 받는 데 사용
 
@@ -115,7 +115,7 @@ npm run fetch-model            # 임베딩 모델을 models/ 에 내려받음 (�
 
 ### 배포 패키지 (tgz)
 
-저장소를 클론하기 어려운 환경(폐쇄망 등)에는 플랫폼별 tgz 로 배포합니다. tgz 에는 `package.json` 의 `files`(`build`, `templates/common-components-src`, `knowledge-base`, `models`)와, `bundleDependencies` 설정에 따라 실행에 필요한 의존성(`node_modules`)이 함께 들어 있습니다. 그래서 설치할 때 다른 패키지를 내려받지 않습니다.
+저장소를 클론하기 어려운 환경(폐쇄망 등)에는 플랫폼별 tgz 로 배포합니다. tgz 에는 `package.json` 의 `files`(`build`, `templates/common-components-src`, `knowledge-base`, `models`, `docs`)와, `bundleDependencies` 설정에 따라 실행에 필요한 의존성(`node_modules`)이 함께 들어 있습니다. 그래서 설치할 때 다른 패키지를 내려받지 않습니다.
 
 ```bash
 npm run pack:platforms                            # 기본 타깃 5종의 tgz 를 dist/ 에 생성
