@@ -767,8 +767,12 @@ interface DeveloperKnowledgeIndexStats {
 }
 
 /**
- * PDF 에서 뽑은 본문을 정리한다: NFC 로 정규화하고, 줄바꿈을 LF 로 통일하고, 이어진 공백과 탭을 한 칸으로,
- * 이어진 빈 줄을 하나로 줄인다.
+ * PDF 에서 뽑은 본문을 정리한다: NFC 로 정규화하고, 줄바꿈을 LF 로 통일하고, 이어진 공백과 탭을 한 칸으로 줄이고,
+ * 줄바꿈 앞뒤의 공백을 지운 뒤, 이어진 빈 줄을 하나로 줄인다.
+ *
+ * 줄바꿈 앞뒤의 공백을 빈 줄을 줄이기 전에 지우므로, 공백이나 탭만 든 줄도 빈 줄이 되어 문단 경계
+ * (PDF_PARAGRAPH_BREAK)로 잡힌다. 그런 줄을 그대로 두면 앞뒤의 두 문단이 한 문단으로 이어져, 상한 안에 드는 문단이
+ * 줄 경계에서 쪼개질 수 있다.
  *
  * 게시판 글에 쓰는 cleanText 는 쓰지 않는다. cleanText 는 HTML 태그를 지우는데, PDF 본문의 꺾쇠는
  * 글자 그대로의 꺾쇠라서 "<" 부터 다음 ">" 까지가 통째로 사라진다. 동봉 적용가이드(v5.0)에서는
@@ -779,6 +783,7 @@ function normalizePdfText(text: string): string {
     .normalize('NFC')
     .replace(/\r\n?/g, '\n')
     .replace(/[ \t]+/g, ' ')
+    .replace(/ ?\n ?/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
@@ -822,7 +827,7 @@ interface TextSpan {
   end: number;
 }
 
-/** 문단 경계: 빈 줄 */
+/** 문단 경계: 빈 줄 (공백이나 탭만 든 줄은 normalizePdfText 가 빈 줄로 만들어 둔다) */
 const PDF_PARAGRAPH_BREAK = /\n{2,}/g;
 
 /** 문장 경계: 끝 부호(와 닫는 따옴표·괄호) 뒤의 공백 */
@@ -957,7 +962,7 @@ function findOverlapStart(source: string, previous: TextSpan, next: TextSpan, ov
 /**
  * 적용가이드 PDF 본문을 maxChars 글자 이하의 청크로 나눈다.
  *
- * - 문단(빈 줄로 나뉜 덩어리)을 순서대로 담다가 다음 문단이 들어가지 않으면 문단 경계에서 청크를 나눈다.
+ * - 문단(빈 줄이나 공백만 든 줄로 나뉜 덩어리)을 순서대로 담다가 다음 문단이 들어가지 않으면 문단 경계에서 청크를 나눈다.
  *   한 청크에 들어가는 문단은 쪼개지 않는다.
  * - 한 청크에 들어가지 않는 긴 문단만 줄 경계에서 나눈다. 줄 하나가 길면 문장 경계에서, 문장도 길면 낱말 사이에서
  *   나누고, 공백이 없는 글자열만 글자 수로 자른다.

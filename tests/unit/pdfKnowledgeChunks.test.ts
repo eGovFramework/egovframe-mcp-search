@@ -134,6 +134,12 @@ describe("chunkPdfText — 본문 정리", () => {
       "정보시스템 구축 발주자를 위한\n표준프레임워크 적용가이드\n\n-- 1 of 113 --\n\n목 차",
     ]);
   });
+
+  it("줄바꿈 앞뒤의 공백과 탭을 지운다 (공백만 든 줄은 빈 줄이 된다)", () => {
+    const text = "첫 줄 \t\n \t둘째 줄 \n \t \n\t\n   \n \t셋째 줄";
+
+    expect(chunkPdfText(text)).toEqual(["첫 줄\n둘째 줄\n\n셋째 줄"]);
+  });
 });
 
 describe("chunkPdfText — 청크 크기", () => {
@@ -189,6 +195,21 @@ describe("chunkPdfText — 내용 보존", () => {
 
     expect(chunkPdfText(lines.join("\n"), 90, 0).join("\n")).toBe(lines.join("\n"));
   });
+
+  it("줄 끝의 공백과 공백만 든 줄이 있어도, 겹친 부분을 빼고 이으면 정리한 본문과 같다", () => {
+    // 줄마다 끝에 공백과 탭을 두고, 문단 사이에는 공백과 탭만 든 줄을 둔다
+    const paragraphs = Array.from({ length: 6 }, (_, i) => linesOf(`문단${i + 1}줄`, 4, 21).map((line) => `${line} \t`));
+    const text = paragraphs.map((lines) => lines.join("\n")).join("\n \t\n");
+    // 상한을 본문의 길이로 주면 정리한 본문이 청크 하나로 나온다
+    const [normalized] = chunkPdfText(text, text.length, 0);
+
+    // 정리는 공백만 바꾼다
+    expect(normalized).not.toMatch(/[ \t]\n|\n[ \t]|\n{3,}/);
+    expect(normalized.replace(/\s/g, "")).toBe(text.replace(/\s/g, ""));
+    for (const { maxChars, overlapChars } of LIMITS) {
+      expectChunksCoverSource(normalized, chunkPdfText(text, maxChars, overlapChars));
+    }
+  });
 });
 
 describe("chunkPdfText — 나누는 자리", () => {
@@ -209,6 +230,22 @@ describe("chunkPdfText — 나누는 자리", () => {
 
     // 첫 청크에는 둘째 문단의 두 줄이 더 들어갈 자리(49자)가 남지만, 둘째 문단을 통째로 다음 청크에 담는다
     expect(chunkPdfText(`${first}\n\n${second}`, 90, 0)).toEqual([first, second]);
+  });
+
+  it("공백이나 탭만 든 줄도 빈 줄처럼 문단 경계로 본다", () => {
+    const first = "첫 문단 첫 줄\n첫 문단 둘째 줄"; // 18자
+    const second = "둘째 문단 첫 줄\n둘째 문단 둘째 줄\n둘째 문단 셋째 줄"; // 31자
+
+    // 두 문단은 40자 안에 함께 들어가지 않고 둘째 문단은 들어간다.
+    // 두 문단을 한 문단으로 보면 둘째 문단이 줄 경계에서 쪼개져 첫 줄이 앞 청크에 담긴다
+    expect(chunkPdfText(`${first}\n\n${second}`, 40, 0)).toEqual([first, second]);
+    for (const separator of ["\n \n", "\n\t\n", "\n \t \n", " \n\n", "\n\n\t", " \n \n ", "\n \n\t\n"]) {
+      const text = `${first}${separator}${second}`;
+
+      expect(chunkPdfText(text, 40, 0), JSON.stringify(separator)).toEqual([first, second]);
+      // 한 청크에 함께 담길 때에도 두 문단 사이에는 빈 줄 하나만 남는다
+      expect(chunkPdfText(text), JSON.stringify(separator)).toEqual([`${first}\n\n${second}`]);
+    }
   });
 
   it("상한보다 긴 문단은 줄 경계에서 나눈다", () => {
