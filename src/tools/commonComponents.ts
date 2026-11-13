@@ -128,6 +128,9 @@ export function getComponentInfo(componentId: string): {
  * - total: 일치하는 전체 건수 (results 는 그 가운데 앞에서부터 limit 건)
  * - matchMode: 결과를 찾은 방식 (all-terms: 모든 검색어가 일치하는 컴포넌트, any-term: 그런 컴포넌트가 없어
  *   대체 검색으로 찾은 컴포넌트. 일부 검색어만 일치한다). 검색어가 하나도 추출되지 않으면 없다.
+ * - orQuery: query 에 단독 낱말 OR(대소문자 무관)가 있어, 검색어 가운데 하나 이상이 일치하는 컴포넌트를 찾았을 때만
+ *   true 로 있다 (matchMode 는 any-term, requiredMatches 는 1). 이 필드가 없는 any-term 결과는 모든 검색어가 일치하는
+ *   컴포넌트가 없어 대체 검색으로 넘어간 것이다.
  * - usedTerms, requiredMatches: matchMode 가 any-term 일 때만 있다. 대체 검색에 쓴 검색어(조사를 떼어 쓴
  *   검색어는 뗀 꼴, '.', '-', '_' 에서 나눠 쓴 검색어는 조각)와, 결과의 컴포넌트마다 일치한 검색어의 최소 수다
  *   (쓴 검색어의 절반을 올림한 수에서 시작해, 그 기준을 채운 컴포넌트가 없으면 1 까지 낮춘 값. 쓴 검색어가 없으면 0).
@@ -146,6 +149,7 @@ export function searchComponents(
   query: string;
   total: number;
   matchMode?: KeywordMatchMode;
+  orQuery?: true;
   usedTerms?: string[];
   requiredMatches?: number;
   ignoredTerms?: string[];
@@ -165,6 +169,7 @@ export function searchComponents(
     query,
     total: found.total,
     ...(found.matchMode ? { matchMode: found.matchMode } : {}),
+    ...(found.terms?.orQuery ? { orQuery: true as const } : {}),
     ...(found.matchMode === 'any-term' && found.terms
       ? { usedTerms: found.terms.used, requiredMatches: found.terms.required }
       : {}),
@@ -225,18 +230,27 @@ export function formatCategoryList(
 }
 
 /**
- * 대체 검색(any-term)으로 찾은 결과임을 알리는 안내 줄.
+ * 일부 검색어만 일치한 결과(any-term)임을 알리는 안내 줄.
  *
  * 쓴 검색어와 일치 기준을 받으면 검색어 몇 개 가운데 몇 개 이상이 든 항목인지와 그 검색어를 적는다.
  * 받지 못하면 지금까지 쓰던 문구("절반 이상")를 그대로 쓴다. 이 문구는 쓴 검색어를 넘기지 않는 호출부를 위한
  * 것이고, 일치 기준은 절반에서 1 까지 낮아질 수 있으므로 기준을 낮춰 찾은 결과에서는 실제 기준과 다를 수 있다.
+ *
+ * orQuery 가 true 이면 query 에 OR 가 있어 그렇게 찾았다고 적는다. 그때는 모든 검색어가 든 항목이 있어도
+ * 하나 이상이 든 항목을 모두 찾으므로, "모든 검색어가 들어 있는 항목이 없어" 라는 문구는 사실과 다르다.
  */
-function anyTermNote(usedTerms: string[] | undefined, requiredMatches: number | undefined): string {
+function anyTermNote(
+  usedTerms: string[] | undefined,
+  requiredMatches: number | undefined,
+  orQuery: boolean | undefined,
+): string {
+  const reason = orQuery ? 'query 에 OR 가 있어' : '모든 검색어가 들어 있는 항목이 없어';
   if (!usedTerms || usedTerms.length === 0 || requiredMatches === undefined) {
-    return '> 모든 검색어가 들어 있는 항목이 없어, 검색어의 절반 이상이 들어 있는 항목을 표시합니다.';
+    const criterion = orQuery ? '검색어 가운데 하나 이상이' : '검색어의 절반 이상이';
+    return `> ${reason}, ${criterion} 들어 있는 항목을 표시합니다.`;
   }
   return (
-    `> 모든 검색어가 들어 있는 항목이 없어, 검색어 ${usedTerms.length}개 가운데 ${requiredMatches}개 이상이 ` +
+    `> ${reason}, 검색어 ${usedTerms.length}개 가운데 ${requiredMatches}개 이상이 ` +
     `들어 있는 항목을 표시합니다 (검색어: ${usedTerms.join(', ')}).`
   );
 }
@@ -251,6 +265,9 @@ function anyTermNote(usedTerms: string[] | undefined, requiredMatches: number | 
  * - options.usedTerms, options.requiredMatches: 대체 검색에 쓴 검색어와 적용한 일치 기준. 둘 다 받으면
  *   any-term 안내에 검색어 몇 개 가운데 몇 개 이상이 든 항목인지와 그 검색어를 적는다. 받지 못하면
  *   (쓴 검색어가 비어 있을 때도) 지금까지의 문구("절반 이상")를 그대로 쓴다.
+ * - options.orQuery: query 에 OR 가 있어 하나 이상 일치하는 항목을 찾은 결과(searchComponents 의 orQuery)이면
+ *   true 로 넘긴다. any-term 안내의 앞부분을 "모든 검색어가 들어 있는 항목이 없어" 대신 "query 에 OR 가 있어" 로
+ *   적는다. 넘기지 않으면 OR 로 찾은 결과에도 앞의 문구가 나오는데, 그 문구는 OR 로 찾은 결과에서는 사실과 다르다.
  * - options.ignoredTerms: 일치하는 항목이 없어 검색에 쓰지 않은 낱말. 비어 있지 않으면 any-term 안내 다음에 적는다.
  * - options.droppedTerms: 일치하는 항목이 있는지와 관계없이 검색에서 뺀 낱말 (한 글자 낱말, 영어 기능어,
  *   목록의 모든 항목에 해당하는 낱말). 비어 있지 않으면 위의 안내 다음에 따로 적는다.
@@ -262,6 +279,7 @@ export function formatComponentList(
   options: {
     total?: number;
     matchMode?: KeywordMatchMode;
+    orQuery?: boolean;
     usedTerms?: string[];
     requiredMatches?: number;
     ignoredTerms?: string[];
@@ -273,10 +291,10 @@ export function formatComponentList(
     options.total !== undefined && options.total > shown ? `${options.total}개 중 ${shown}개 표시` : `${shown}개`;
   let output = `## 공통컴포넌트 목록 (${countLabel})\n\n`;
 
-  // any-term 은 모든 검색어가 든 항목이 없어, 남은 검색어 가운데 일부가 든 항목을 찾았다는 뜻이다.
+  // any-term 은 모든 검색어가 든 항목이 없거나 query 에 OR 가 있어, 남은 검색어 가운데 일부가 든 항목을 찾았다는 뜻이다.
   // 표시할 항목이 없으면 이 안내는 적지 않는다.
   if (options.matchMode === 'any-term' && shown > 0) {
-    output += `${anyTermNote(options.usedTerms, options.requiredMatches)}\n\n`;
+    output += `${anyTermNote(options.usedTerms, options.requiredMatches, options.orQuery)}\n\n`;
   }
   if (options.ignoredTerms && options.ignoredTerms.length > 0) {
     output += `> 일치하는 항목이 없어 검색에 쓰지 않은 낱말: ${options.ignoredTerms.join(', ')}.\n\n`;

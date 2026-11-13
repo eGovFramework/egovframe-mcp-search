@@ -280,13 +280,19 @@ export interface CompatibilitySearchResponse {
   /** 키워드 검색이 결과를 찾은 방식. 키워드 검색을 하지 않았으면 없다 */
   matchMode?: KeywordMatchMode;
   /**
+   * query 에 단독 낱말 OR(대소문자 무관)가 있어, 검색어 가운데 하나 이상이 일치하는 행을 찾았을 때만 true 로 싣는다
+   * (matchMode 는 any-term, requiredMatches 는 1). 이 필드가 없는 any-term 결과는 모든 검색어가 일치하는 행이 없어
+   * 대체 검색으로 넘어간 것이다
+   */
+  orQuery?: true;
+  /**
    * matchMode 가 any-term 일 때: 대체 검색에 쓴 검색어. 조사를 떼어 쓴 검색어는 뗀 꼴이고,
    * '.', '-', '_' 에서 나눠 쓴 검색어는 조각이다 ('K2Web-Wizard' → 'K2Web', 'Wizard')
    */
   usedTerms?: string[];
   /**
    * matchMode 가 any-term 일 때: 결과의 행마다 일치한 검색어(usedTerms)의 최소 수.
-   * usedTerms 의 절반(올림)에서 시작해, 그 기준을 채운 행이 없으면 1 까지 낮춘 값이다.
+   * usedTerms 의 절반(올림)에서 시작해, 그 기준을 채운 행이 없으면 1 까지 낮춘 값이다 (orQuery 이면 처음부터 1 이다).
    * usedTerms 의 수보다 작으면 결과의 행은 검색어의 일부만 일치한 행이다. usedTerms 가 비면 0 이다
    */
   requiredMatches?: number;
@@ -362,6 +368,7 @@ export async function searchCompatibleSoftware(args: {
   // matchMode 는 키워드 검색이 결과를 찾은 방식이다 (all-terms: 모든 검색어가 일치하는 행,
   // any-term: 그런 행이 없어 대체 검색으로 찾은 행. 일부 검색어만 일치한다).
   // 대체 검색은 쓸 검색어가 하나라도 있으면 결과가 0건이 되지 않는다 (일치 기준을 낮춰 가며 찾는다).
+  // query 에 OR 가 있으면 처음부터 검색어 가운데 하나 이상이 일치하는 행을 찾는다 (any-term, terms.orQuery).
   const { rows: results, total, matchMode, terms } = sqlite.queryCompatibleSoftware({
     query: args.query?.trim(),
     filters,
@@ -384,6 +391,8 @@ export async function searchCompatibleSoftware(args: {
     offset,
     filters,
     ...(matchMode ? { matchMode } : {}),
+    // query 에 OR 가 있어 하나 이상 일치하는 행을 찾은 결과는, 모든 검색어가 일치하는 행이 없어 넘어간 대체 검색과 구분해 알린다
+    ...(terms?.orQuery ? { orQuery: true as const } : {}),
     // 대체 검색 결과는 일부 검색어만 일치한 행이다. 어떤 검색어 가운데 몇 개가 일치했는지 함께 알린다
     ...(matchMode === 'any-term' && terms ? { usedTerms: terms.used, requiredMatches: terms.required } : {}),
     ...(terms && terms.ignored.length > 0 ? { ignoredTerms: terms.ignored } : {}),

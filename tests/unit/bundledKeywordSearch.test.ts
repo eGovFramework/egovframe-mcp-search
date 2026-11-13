@@ -16,6 +16,7 @@
  * - 낱말을 저장된 표기와 다른 기호로 이으면 0건이었다 ("K2Web-Wizard", "sts_com", "JEUS-8").
  * - 두세 글자 영문 검색어가 다른 낱말 속에서 일치한 행이, 낱말로 일치한 행보다 앞에 왔다 ("ECM Solution", "ERS",
  *   컴포넌트 ID "ist").
+ * - OR 로 이은 낱말이 모두 든 행만 돌려줬다 ("게시판 OR 댓글", "CMS OR Portal").
  *
  * DB 는 읽기 전용으로 열고, 조회가 파일을 바꾸지 않았는지 마지막에 확인한다.
  * 동봉 데이터는 갱신될 수 있으므로 건수를 숫자로 고정하지 않고, 같은 뜻의 두 조회가 같은 결과를 내는지와
@@ -173,6 +174,27 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       }
     });
 
+    it('"게시판 OR 댓글" 은 두 낱말 가운데 하나라도 든 컴포넌트를 모두 돌려준다', () => {
+      // OR 를 검색어에서 빼기만 하던 때에는 "게시판 댓글" 과 같아져, 두 낱말이 모두 든 댓글관리(cmt) 한 건에서 끝났다
+      const both = sqlite.queryComponents({ query: "게시판 댓글" });
+      expect(both.matchMode).toBe("all-terms");
+      expect(idsOf(both.rows)).toContain("cmt");
+
+      const either = sqlite.queryComponents({ query: "게시판 OR 댓글" });
+      expect(either.matchMode).toBe("any-term");
+      expect(either.terms).toEqual({ used: ["게시판", "댓글"], ignored: [], dropped: [], required: 1, orQuery: true });
+      // '게시판' 으로 찾은 것과 '댓글' 로 찾은 것을 합친 것과 같다. 게시판(bbs)이 빠지지 않는다
+      const union = new Set([
+        ...idsOf(sqlite.queryComponents({ query: "게시판" }).rows),
+        ...idsOf(sqlite.queryComponents({ query: "댓글" }).rows),
+      ]);
+      expect(idsOf(either.rows).sort()).toEqual([...union].sort());
+      expect(idsOf(either.rows)).toContain("bbs");
+      expect(either.total).toBeGreaterThan(both.total);
+      // 두 낱말이 모두 든 컴포넌트가 앞에 온다
+      expect(idsOf(either.rows).slice(0, both.total).sort()).toEqual(idsOf(both.rows).sort());
+    });
+
     it('"Q&A" 는 두 글자가 모두 낱말의 처음에 든 컴포넌트를 앞에 돌려준다', () => {
       // 'Q' 와 'A' 가 어딘가에 든 컴포넌트는 서른 개가 넘는다. 낱말의 처음에서 일치했는지를 가리지 않던 때에는
       // Q&A관리(qna)가 이름이 더 짧은 컴포넌트들에 밀려 여섯 번째였다
@@ -203,6 +225,26 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       const names = new Set(plain.rows.map((row) => row.product_name));
       expect(names.has("JEUS")).toBe(true);
       expect(names.has("Tibero")).toBe(true);
+    });
+
+    it('"CMS OR Portal" 은 두 낱말 가운데 하나라도 든 행을 모두 돌려준다', () => {
+      // OR 를 검색어에서 빼기만 하던 때에는 "CMS Portal" 과 같아져, 두 낱말이 모두 든 일곱 행 남짓에서 끝났다
+      const both = compatible("CMS Portal");
+      expect(both.matchMode).toBe("all-terms");
+      expect(both.total).toBeGreaterThan(0);
+
+      const either = compatible("CMS OR Portal");
+      expect(either.matchMode).toBe("any-term");
+      expect(either.terms).toEqual({ used: ["CMS", "Portal"], ignored: [], dropped: [], required: 1, orQuery: true });
+      const union = new Set([...rowKeys(compatible("CMS")), ...rowKeys(compatible("Portal"))]);
+      expect(rowSet(either)).toEqual([...union].sort());
+      expect(either.total).toBeGreaterThan(both.total);
+      // 'CMS' 는 목록의 절반 넘는 행에 든 흔한 낱말이다. OR 로 이으면 그 낱말만 일치한 행도 돌려준다
+      expect(compatible("CMS").total * 2).toBeGreaterThan(sqlite.queryCompatibleSoftware().total);
+      // 두 낱말이 모두 든 행이 앞에 온다
+      expect(rowKeys(either).slice(0, both.total).sort()).toEqual(rowSet(both));
+      // 소문자로 적어도 같다
+      expect(rowKeys(compatible("CMS or Portal"))).toEqual(rowKeys(either));
     });
 
     it('제품명 셋을 나열한 "JEUS Tibero WebLogic" 은 세 제품의 행을 모두 돌려준다', () => {

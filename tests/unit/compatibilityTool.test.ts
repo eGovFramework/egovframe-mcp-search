@@ -365,6 +365,57 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
     });
   });
 
+  describe("query 에 OR 가 있을 때 (orQuery)", () => {
+    useCatalogue(CATALOGUE);
+
+    it("검색어 가운데 하나 이상이 일치하는 행을 돌려주고, OR 로 찾았음을 알린다", async () => {
+      // 'JEUS 4.3' 은 두 검색어가 모두 든 JEUS 21 한 행이다
+      expect(versionsOf((await searchCompatibleSoftware({ query: "JEUS 4.3" })).software)).toEqual(["JEUS 21"]);
+      const response = await searchCompatibleSoftware({ query: "JEUS OR 4.3" });
+      expect(versionsOf(response.software)).toEqual(["JEUS 21", "JEUS 8.5", "SampleCMS 1.0"]);
+      expect(response).toMatchObject({
+        total: 3,
+        matchMode: "any-term",
+        orQuery: true,
+        usedTerms: ["JEUS", "4.3"],
+        requiredMatches: 1,
+      });
+      expect(response).not.toHaveProperty("ignoredTerms");
+    });
+
+    it("쓰지 않은 검색어와 뺀 검색어도 함께 알린다", async () => {
+      const response = await searchCompatibleSoftware({ query: "JEUS OR 없는말 OR 8" });
+      expect(response).toMatchObject({
+        matchMode: "any-term",
+        orQuery: true,
+        usedTerms: ["JEUS"],
+        requiredMatches: 1,
+        ignoredTerms: ["없는말"],
+        droppedTerms: ["8"],
+      });
+    });
+
+    it("쓸 검색어가 하나도 없어 0건이어도 OR 로 찾았음을 알린다", async () => {
+      const response = await searchCompatibleSoftware({ query: "없는말 OR 다른말" });
+      expect(response).toMatchObject({ total: 0, matchMode: "any-term", orQuery: true, usedTerms: [], requiredMatches: 0 });
+    });
+
+    it("OR 가 없으면 싣지 않는다", async () => {
+      for (const response of [
+        await searchCompatibleSoftware({ query: "JEUS 4.3" }),
+        await searchCompatibleSoftware({ query: "JEUS AND 4.3" }),
+        // 모든 검색어가 든 행이 없어 대체 검색으로 넘어간 결과
+        await searchCompatibleSoftware({ query: "JEUS Tibero" }),
+        await searchCompatibleSoftware({ query: "Oracle 오라클" }),
+        await searchCompatibleSoftware({ frameworkVersion: "4.3" }),
+        // 검색어가 추출되지 않는다
+        await searchCompatibleSoftware({ query: "OR" }),
+      ]) {
+        expect(response).not.toHaveProperty("orQuery");
+      }
+    });
+  });
+
   describe("query 때문에 0건일 때의 안내 (totalWithoutQuery)", () => {
     useCatalogue(CATALOGUE);
 

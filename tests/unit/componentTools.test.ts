@@ -289,6 +289,25 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
       }
     });
 
+    it("query 에 OR 가 있으면 하나 이상 일치하는 컴포넌트를 돌려주고 orQuery 로 알린다", () => {
+      // '게시판 템플릿' 은 두 검색어가 모두 든 tpl 한 건이다. OR 로 이으면 '게시판' 만 든 bbs 도 나온다
+      const found = searchComponents("게시판 OR 템플릿");
+      expect(idsOf(found.results)).toEqual(["tpl", "bbs"]);
+      expect(found).toMatchObject({
+        total: 2,
+        matchMode: "any-term",
+        orQuery: true,
+        usedTerms: ["게시판", "템플릿"],
+        requiredMatches: 1,
+      });
+      expect(searchComponents("증서 OR 없는말")).toMatchObject({ orQuery: true, usedTerms: ["증서"], ignoredTerms: ["없는말"] });
+
+      // OR 가 없으면 싣지 않는다 (모든 검색어가 든 컴포넌트가 없어 대체 검색으로 넘어간 결과도 같다)
+      for (const query of ["게시판 템플릿", "게시판 AND 템플릿", "게시판 보여줘", "?!", "OR"]) {
+        expect(searchComponents(query), `query=${query}`).not.toHaveProperty("orQuery");
+      }
+    });
+
     it("예상하지 못한 오류는 다른 검색으로 바꾸지 않고 그대로 던진다", () => {
       // 키워드 조회만 실패하게 한다. 예전에는 이 오류를 삼키고 keyword 필터 목록으로 대신 응답했다
       const original = SQLiteManager.prototype.queryComponents;
@@ -606,6 +625,93 @@ describe("공통컴포넌트 도구 — 결과 포맷", () => {
         const lines = formatComponentList([uia, sec], false, options).split("\n");
         expect(lines[2], JSON.stringify(options)).toBe(ANY_TERM_NOTE);
       }
+    });
+
+    it("query 에 OR 가 있어 찾은 결과(orQuery)이면 모든 검색어가 든 항목이 없다고 적지 않고 OR 로 찾았다고 적는다", () => {
+      for (const groupByCategory of [true, false]) {
+        const text = formatComponentList([uia, sec], groupByCategory, {
+          matchMode: "any-term",
+          orQuery: true,
+          usedTerms: ["로그인", "인증서"],
+          requiredMatches: 1,
+        });
+        expect(text.split("\n").slice(0, 4), `groupByCategory=${groupByCategory}`).toEqual([
+          "## 공통컴포넌트 목록 (2개)",
+          "",
+          "> query 에 OR 가 있어, 검색어 2개 가운데 1개 이상이 들어 있는 항목을 표시합니다 (검색어: 로그인, 인증서).",
+          "",
+        ]);
+        // 모든 검색어가 든 항목이 있어도 OR 로 찾으므로, 그런 항목이 없다는 문구는 사실과 다르다
+        expect(text).not.toContain("모든 검색어가 들어 있는 항목이 없어");
+      }
+    });
+
+    it("orQuery 인데 쓴 검색어를 받지 못하면 검색어를 적지 않은 문구를 쓴다", () => {
+      for (const options of [
+        { matchMode: "any-term" as const, orQuery: true },
+        { matchMode: "any-term" as const, orQuery: true, requiredMatches: 1 },
+        { matchMode: "any-term" as const, orQuery: true, usedTerms: ["로그인"] },
+      ]) {
+        const lines = formatComponentList([uia, sec], false, options).split("\n");
+        expect(lines[2], JSON.stringify(options)).toBe(
+          "> query 에 OR 가 있어, 검색어 가운데 하나 이상이 들어 있는 항목을 표시합니다.",
+        );
+      }
+    });
+
+    it("orQuery 여도 쓰지 않은 낱말과 뺀 낱말은 그 다음 줄에 적고, 결과가 없으면 항목을 표시한다는 안내는 적지 않는다", () => {
+      const lines = formatComponentList([uia], false, {
+        matchMode: "any-term",
+        orQuery: true,
+        usedTerms: ["로그인"],
+        requiredMatches: 1,
+        ignoredTerms: ["없는말"],
+        droppedTerms: ["x"],
+      }).split("\n");
+      expect(lines.slice(0, 8)).toEqual([
+        "## 공통컴포넌트 목록 (1개)",
+        "",
+        "> query 에 OR 가 있어, 검색어 1개 가운데 1개 이상이 들어 있는 항목을 표시합니다 (검색어: 로그인).",
+        "",
+        "> 일치하는 항목이 없어 검색에 쓰지 않은 낱말: 없는말.",
+        "",
+        "> 한 글자이거나, 영어 기능어이거나, 목록의 모든 항목에 해당해 검색에 쓰지 않은 낱말: x.",
+        "",
+      ]);
+
+      const empty = formatComponentList([], false, {
+        total: 0,
+        matchMode: "any-term",
+        orQuery: true,
+        usedTerms: [],
+        requiredMatches: 0,
+        ignoredTerms: ["없는말", "다른말"],
+      });
+      expect(empty.split("\n")).toEqual([
+        "## 공통컴포넌트 목록 (0개)",
+        "",
+        "> 일치하는 항목이 없어 검색에 쓰지 않은 낱말: 없는말, 다른말.",
+        "",
+        "검색 결과가 없습니다.",
+        "",
+      ]);
+    });
+
+    it("orQuery 가 false 이거나 없으면 대체 검색 안내를 그대로 쓴다", () => {
+      for (const orQuery of [false, undefined]) {
+        const text = formatComponentList([uia], false, {
+          matchMode: "any-term",
+          orQuery,
+          usedTerms: ["로그인", "통계"],
+          requiredMatches: 1,
+        });
+        expect(text, `orQuery=${orQuery}`).toContain(
+          "> 모든 검색어가 들어 있는 항목이 없어, 검색어 2개 가운데 1개 이상이 들어 있는 항목을 표시합니다 (검색어: 로그인, 통계).",
+        );
+        expect(text, `orQuery=${orQuery}`).not.toContain("query 에 OR 가 있어");
+      }
+      // 모든 검색어가 일치한 결과에는 orQuery 를 줘도 적지 않는다 (OR 로 찾은 결과는 언제나 any-term 이다)
+      expect(formatComponentList([uia], false, { matchMode: "all-terms", orQuery: true })).not.toContain("OR 가 있어");
     });
 
     it("쓴 검색어와 일치 기준 다음 줄에 쓰지 않은 낱말을 적는다", () => {

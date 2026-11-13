@@ -532,6 +532,76 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     });
   });
 
+  describe("query 에 OR 가 있을 때", () => {
+    it("모든 검색어가 일치하는 컴포넌트가 있어도 검색어 가운데 하나 이상이 일치하는 컴포넌트를 돌려준다", () => {
+      // '게시판 템플릿' 은 두 검색어가 모두 든 tpl 한 건에서 끝난다
+      expect(idsOf(sqlite.queryComponents({ query: "게시판 템플릿" }).rows)).toEqual(["tpl"]);
+      // OR 로 이으면 '게시판' 만 든 bbs 도 돌려준다. 둘 다 일치한 tpl 이 먼저다
+      for (const query of ["게시판 OR 템플릿", "게시판 or 템플릿", "게시판 Or 템플릿"]) {
+        const result = sqlite.queryComponents({ query });
+        expect(idsOf(result.rows), `query=${query}`).toEqual(["tpl", "bbs"]);
+        expect(result.total, `query=${query}`).toBe(2);
+        expect(result.matchMode, `query=${query}`).toBe("any-term");
+        expect(result.terms, `query=${query}`).toEqual({
+          used: ["게시판", "템플릿"],
+          ignored: [],
+          dropped: [],
+          required: 1,
+          orQuery: true,
+        });
+      }
+    });
+
+    it("흔한 검색어만 일치한 컴포넌트도 돌려준다", () => {
+      // '기능' 은 여덟 컴포넌트 가운데 일곱의 설명에 든 흔한 검색어다. 대체 검색은 '게시판' 이 든 bbs, tpl 만 돌려주지만
+      // OR 로 이으면 '기능' 만 든 다섯 컴포넌트도 이름이 짧은 순으로 뒤따른다
+      expect(idsOf(sqlite.queryComponents({ query: "기능 게시판 없는말" }).rows)).toEqual(["bbs", "tpl"]);
+      const result = sqlite.queryComponents({ query: "기능 OR 게시판" });
+      expect(idsOf(result.rows)).toEqual(["bbs", "tpl", "ram", "bst", "uia", "drm", "sec"]);
+      expect(result.terms).toEqual({ used: ["기능", "게시판"], ignored: [], dropped: [], required: 1, orQuery: true });
+    });
+
+    it("일치하는 컴포넌트가 없는 검색어와 가려 주지 못하는 낱말은 대체 검색과 같이 다룬다", () => {
+      expect(sqlite.queryComponents({ query: "증서 OR 없는말" })).toMatchObject({
+        total: 1,
+        matchMode: "any-term",
+        terms: { used: ["증서"], ignored: ["없는말"], dropped: [], required: 1, orQuery: true },
+      });
+      expect(sqlite.queryComponents({ query: "게시판 OR 컴포넌트" }).terms).toEqual({
+        used: ["게시판"],
+        ignored: [],
+        dropped: ["컴포넌트"],
+        required: 1,
+        orQuery: true,
+      });
+      expect(sqlite.queryComponents({ query: "없는말 OR 다른말" })).toEqual({
+        rows: [],
+        total: 0,
+        matchMode: "any-term",
+        terms: { used: [], ignored: ["없는말", "다른말"], dropped: [], required: 0, orQuery: true },
+      });
+    });
+
+    it("필터를 함께 주면 필터를 적용한 대상 안에서 찾는다", () => {
+      const result = sqlite.queryComponents({ query: "게시판 OR 로그인", filters: { categoryId: "로그인" } });
+      expect(idsOf(result.rows)).toEqual(["uia", "sec"]);
+      expect(result.terms).toEqual({ used: ["로그인"], ignored: ["게시판"], dropped: [], required: 1, orQuery: true });
+    });
+
+    it("AND 는 검색어에서 빼기만 하고, OR 가 없는 query 의 결과에는 orQuery 를 싣지 않는다", () => {
+      const and = sqlite.queryComponents({ query: "게시판 AND 템플릿" });
+      expect(idsOf(and.rows)).toEqual(["tpl"]);
+      expect(and.matchMode).toBe("all-terms");
+      for (const query of ["게시판 AND 템플릿", "게시판 템플릿", "게시판 추천", "없는말"]) {
+        expect(sqlite.queryComponents({ query }).terms, `query=${query}`).not.toHaveProperty("orQuery");
+      }
+    });
+
+    it("배열을 돌려주는 searchComponents 도 같은 결과를 돌려준다", () => {
+      expect(idsOf(sqlite.searchComponents("게시판 OR 템플릿"))).toEqual(["tpl", "bbs"]);
+    });
+  });
+
   describe("쓴 검색어와 쓰지 않은 검색어 (terms)", () => {
     const termsOf = (query: string, filters = {}) => sqlite.queryComponents({ query, filters }).terms;
 

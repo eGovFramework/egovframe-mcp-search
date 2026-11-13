@@ -335,6 +335,7 @@ export class SQLiteManager {
    * queryCompatibleSoftware 와 달리 대체 검색(any-term)으로 넘어가지 않는다. 이 메서드의 결과는 통합 검색이
    * 결과를 찾은 방식(matchMode)의 표시 없이 싣기 때문에, 대체 검색 결과를 돌려주면 일부 검색어만 일치한 행이
    * 아무 표시 없이 쓰인다. 모든 검색어가 일치하는 행이 없거나 검색어가 하나도 추출되지 않으면 빈 결과(total 0)다.
+   * 같은 이유로 query 에 OR 가 있어도 따르지 않는다: OR 는 검색어에서 빠질 뿐이고, 모든 검색어가 일치하는 행만 돌려준다.
    */
   queryCompatibleSoftwareAllTerms(
     query: string,
@@ -359,7 +360,8 @@ export class SQLiteManager {
    * - query 에서 검색어가 추출되면 키워드 검색(keywordSearch)으로 찾는다. 검색어는 제품명·제품 버전 표기·
    *   업체명·분류·설명에 부분 문자열로 들어 있으면 일치한다. 프레임워크 버전과 확인일자는 부분 문자열로
    *   견주지 않고 따로 정한 규칙으로 견준다 (compatibilityTermConditions). 모든 검색어가 일치하는 행을 먼저
-   *   찾고(all-terms), 그런 행이 없으면 대체 검색으로 찾는다(any-term).
+   *   찾고(all-terms), 그런 행이 없으면 대체 검색으로 찾는다(any-term). query 에 단독 낱말 OR 가 있으면
+   *   처음부터 검색어 가운데 하나 이상이 일치하는 행을 찾는다 (any-term, terms.orQuery).
    * - query 가 없거나 검색어가 하나도 추출되지 않으면("*", "?" 등) 필터에 맞는 행을
    *   확인일자가 최근인 순으로 돌려준다.
    * - 확인일자 순은 어느 경로에서나 같다 (COMPATIBILITY_NEWEST_FIRST): verified_date 가 날짜 꼴이 아닌 행은
@@ -473,12 +475,16 @@ export class SQLiteManager {
    *    돌려주지 않는다.
    *    0건인지는 페이지가 아니라 전체 건수로 판단한다 (offset 이 끝을 넘었다고 검색 방식을 바꾸지 않는다).
    *
-   * 두 단계 모두 일치한 검색어가 많은 행, 낱말의 처음에서 일치한 영문 검색어가 많은 행, 이름 컬럼(nameColumns)에
+   * query 에 단독 낱말 OR 가 있으면(query.orQuery) 1)을 건너뛰고 2)로 간다. 'A OR B' 는 둘 가운데 하나라도 든 행을
+   * 찾는 것이라, 둘 다 든 행이 있다고 거기서 끝내면 한쪽만 든 행이 빠진다. 이때는 일치하는 행이 있는 검색어 가운데
+   * 하나 이상이 일치하는 행을 모두 돌려준다 (일치 기준 1, 흔한 검색어만 일치한 행도 돌려준다).
+   *
+   * 어느 경로에서나 일치한 검색어가 많은 행, 낱말의 처음에서 일치한 영문 검색어가 많은 행, 이름 컬럼(nameColumns)에
    * 일치한 검색어가 많은 행, 대상의 기본 정렬, rowid 순으로 돌려준다 (selectByMatchedTerms).
    *
    * 결과의 terms 는 실제로 쓴 검색어(used), 일치하는 행이 없어 쓰지 않은 검색어(ignored), 일치하는 행이 있는지와
    * 관계없이 검색에서 뺀 검색어(dropped: 가려 주지 못하는 낱말과 한 글자 검색어), 결과의 행마다 일치한 검색어의
-   * 최소 수(required)다.
+   * 최소 수(required)다. OR 가 있어 2)로 바로 간 결과에는 orQuery 를 true 로 싣는다.
    */
   private keywordSearch<Row>(
     target: KeywordSearchTarget,
@@ -486,13 +492,14 @@ export class SQLiteManager {
     filter: SqlCondition,
     page: SqlPage,
   ): { rows: Row[]; total: number; matchMode: KeywordMatchMode; terms: KeywordTermUsage } {
-    const { terms } = query;
+    const { terms, orQuery } = query;
     /** 검색에 넘긴 검색어(searched)에 들지 못한, 검색에서 뺀 검색어. query 에 적힌 순서다 */
     const droppedFrom = (searched: string[]): string[] => terms.filter((term) => !searched.includes(term));
 
     const kept = dropGenericTerms(terms, target.genericTerms, query.joinedTerms);
 
-    const allTerms = this.allTermsStage<Row>(target, kept, filter, page);
+    // OR 가 있으면 모든 검색어가 일치하는 행을 먼저 찾지 않는다
+    const allTerms = orQuery ? null : this.allTermsStage<Row>(target, kept, filter, page);
     if (allTerms) {
       const { used, rows, total } = allTerms;
       const usage: KeywordTermUsage = { used, ignored: [], dropped: droppedFrom(used), required: used.length };
@@ -500,12 +507,12 @@ export class SQLiteManager {
     }
 
     const searchable = dropSingleCharacterTerms(kept);
-    const fallback = this.anyTermSearch<Row>(target, searchable, filter, page);
+    const fallback = this.anyTermSearch<Row>(target, searchable, filter, page, orQuery);
     return {
       rows: fallback.rows,
       total: fallback.total,
       matchMode: 'any-term',
-      terms: { ...fallback.terms, dropped: droppedFrom(searchable) },
+      terms: { ...fallback.terms, dropped: droppedFrom(searchable), ...(orQuery ? { orQuery: true } : {}) },
     };
   }
 
@@ -624,16 +631,21 @@ export class SQLiteManager {
    * 흔한 검색어만 일치한 행은 돌려주지 않는다 (distinctiveScope). 일치 기준도 그 조건을 건 채로 낮춘다.
    * 정렬과 필터 적용은 selectByMatchedTerms 를 따른다.
    *
+   * anyOne 이 true 이면(query 에 OR 가 있다) 쓸 수 있는 검색어 가운데 하나 이상이 일치하는 행을 모두 돌려준다:
+   * 일치 기준은 처음부터 1 이고, 흔한 검색어만 일치한 행도 거르지 않는다. 호출자가 낱말을 OR 로 이어 어느 것이든
+   * 든 행을 달라고 한 것이라, 절반 이상이 일치한 행이 있다고 나머지를 빼거나 흔한 낱말이라고 거르지 않는다.
+   *
    * 결과의 terms.used 는 쓸 수 있는 검색어(조사를 떼어 쓴 것은 뗀 꼴, 나눠 쓴 것은 조각), terms.ignored 는 쓰지 않은 검색어,
-   * terms.required 는 실제로 적용한 일치 기준이다 (k 가 0 이면 0). 검색에서 뺀 검색어(dropped)는 이 단계에
-   * 넘어오지 않으므로 호출부가 채운다.
+   * terms.required 는 실제로 적용한 일치 기준이다 (k 가 0 이면 0). 검색에서 뺀 검색어(dropped)와 OR 로 찾았다는
+   * 표시(orQuery)는 호출부가 채운다.
    */
   private anyTermSearch<Row>(
     target: KeywordSearchTarget,
     terms: string[],
     filter: SqlCondition,
     page: SqlPage,
-  ): { rows: Row[]; total: number; terms: Omit<KeywordTermUsage, 'dropped'> } {
+    anyOne: boolean = false,
+  ): { rows: Row[]; total: number; terms: Pick<KeywordTermUsage, 'used' | 'ignored' | 'required'> } {
     const { usable, ignored } = this.usableTerms(target, terms, filter);
     if (usable.length === 0) {
       return { rows: [], total: 0, terms: { used: [], ignored, required: 0 } };
@@ -641,11 +653,11 @@ export class SQLiteManager {
 
     const used = usable.map((term) => term.form);
     const matchers = usable.map((term) => term.matcher);
-    const scope = this.distinctiveScope(target, usable, filter);
+    const scope = anyOne ? filter : this.distinctiveScope(target, usable, filter);
 
-    // 절반(올림)에서 시작해, 그 기준을 채운 행이 없으면 1 까지 낮춘다.
+    // 절반(올림)에서 시작해, 그 기준을 채운 행이 없으면 1 까지 낮춘다 (anyOne 이면 처음부터 1 이다).
     // 행이 있는지는 페이지가 아니라 전체 건수로 판단한다 (offset 이 끝을 넘었다고 기준을 낮추지 않는다)
-    let required = Math.ceil(matchers.length / 2);
+    let required = anyOne ? 1 : Math.ceil(matchers.length / 2);
     let found = this.selectByMatchedTerms<Row>(target, matchers, required, scope, page);
     while (found.total === 0 && required > 1) {
       required -= 1;
@@ -1143,7 +1155,8 @@ export class SQLiteManager {
    * LIMIT 은 그 뒤에 적용한다.
    * - query 에서 검색어가 추출되면 키워드 검색(keywordSearch)으로 찾는다. 검색어는 컴포넌트 ID·이름·영문명·
    *   설명·영문 설명·패키지명에 부분 문자열로 들어 있으면 일치한다. 모든 검색어가 일치하는 컴포넌트를 먼저
-   *   찾고(all-terms), 그런 컴포넌트가 없으면 대체 검색으로 찾는다(any-term).
+   *   찾고(all-terms), 그런 컴포넌트가 없으면 대체 검색으로 찾는다(any-term). query 에 단독 낱말 OR 가 있으면
+   *   처음부터 검색어 가운데 하나 이상이 일치하는 컴포넌트를 찾는다 (any-term, terms.orQuery).
    * - query 가 없거나 검색어가 하나도 추출되지 않으면 필터에 맞는 컴포넌트를
    *   카테고리·이름 순으로 돌려준다.
    *

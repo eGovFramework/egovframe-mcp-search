@@ -1159,6 +1159,172 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     });
   });
 
+  describe("query 에 OR 가 있을 때", () => {
+    const search = (query: string, filters = {}) => sqlite.queryCompatibleSoftware({ query, filters });
+
+    it("모든 검색어가 일치하는 행이 있어도 검색어 가운데 하나 이상이 일치하는 행을 돌려준다", () => {
+      // 'JEUS 4.3' 은 두 검색어가 모두 든 JEUS 21 한 행에서 끝난다
+      expect(versionsOf(search("JEUS 4.3").rows)).toEqual(["JEUS 21"]);
+      // OR 로 이으면 JEUS 가 든 행과 4.3 의 행을 모두 돌려준다. 둘 다 일치한 JEUS 21 이 맨 앞이다
+      const result = search("JEUS OR 4.3");
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "JEUS 8.5", "SampleCMS 1.0"]);
+      expect(result.total).toBe(3);
+      expect(result.matchMode).toBe("any-term");
+      expect(result.terms).toEqual({ used: ["JEUS", "4.3"], ignored: [], dropped: [], required: 1, orQuery: true });
+    });
+
+    it("OR 의 대소문자를 가리지 않는다", () => {
+      const expected = search("JEUS OR 4.3");
+      for (const query of ["JEUS or 4.3", "jeus Or 4.3", "JEUS oR 4.3", "(JEUS) OR '4.3'"]) {
+        const result = search(query);
+        expect(versionsOf(result.rows), `query=${query}`).toEqual(versionsOf(expected.rows));
+        expect(result.terms?.orQuery, `query=${query}`).toBe(true);
+      }
+    });
+
+    it("일치 기준은 처음부터 1 이다 (검색어의 절반이 아니다)", () => {
+      // 네 검색어 가운데 절반(2) 이상이 든 행은 JEUS 21 하나다 (JEUS 와 4.3). 대체 검색은 그 기준을 채운 행이 있으면
+      // 거기서 끝나지만, OR 가 있으면 처음부터 하나 이상이 일치하는 행을 찾는다
+      const result = search("JEUS OR Tibero OR WebLogic OR 4.3");
+      expect(result.terms).toEqual({
+        used: ["JEUS", "Tibero", "WebLogic", "4.3"],
+        ignored: [],
+        dropped: [],
+        required: 1,
+        orQuery: true,
+      });
+      // 절반(2) 이상이 일치한 행(JEUS 21: JEUS 와 4.3)이 있어도 하나만 일치한 행을 함께 돌려준다
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "Tibero 7", "JEUS 8.5", "WebLogic 12c", "SampleCMS 1.0"]);
+      // OR 가 없으면 절반 이상이 일치한 행에서 끝난다
+      expect(versionsOf(search("JEUS Tibero WebLogic 4.3").rows)).toEqual(["JEUS 21"]);
+    });
+
+    it("흔한 검색어만 일치한 행도 돌려준다", () => {
+      // '호환' 은 여섯 행 모두에 든 흔한 검색어다. 대체 검색은 가려 주는 검색어(JEUS)가 일치한 행만 돌려주지만
+      expect(versionsOf(search("JEUS 호환 없는말").rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      // OR 로 이으면 '호환' 만 일치한 행도 돌려준다. 두 검색어가 모두 일치한 JEUS 두 행이 먼저다
+      const result = search("JEUS OR 호환");
+      expect(versionsOf(result.rows)).toEqual([
+        "JEUS 21",
+        "JEUS 8.5",
+        "SampleCMS 1.0",
+        "OtherCMS 2.0",
+        "Tibero 7",
+        "WebLogic 12c",
+      ]);
+      expect(result.total).toBe(CATALOGUE.length);
+      expect(result.terms).toEqual({ used: ["JEUS", "호환"], ignored: [], dropped: [], required: 1, orQuery: true });
+    });
+
+    it("일치하는 행이 없는 검색어는 쓰지 않은 검색어로 돌려준다", () => {
+      const result = search("JEUS OR 없는말");
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(result.matchMode).toBe("any-term");
+      expect(result.terms).toEqual({ used: ["JEUS"], ignored: ["없는말"], dropped: [], required: 1, orQuery: true });
+    });
+
+    it("쓸 수 있는 검색어가 하나도 없으면 빈 결과이고 일치 기준은 0 이다", () => {
+      expect(search("없는말 OR 다른말")).toEqual({
+        rows: [],
+        total: 0,
+        matchMode: "any-term",
+        terms: { used: [], ignored: ["없는말", "다른말"], dropped: [], required: 0, orQuery: true },
+      });
+    });
+
+    it("한 글자 검색어는 두 글자 이상인 검색어가 있으면 쓰지 않는다", () => {
+      // '8' 을 쓰면 JEUS 8.5 가 두 검색어와 일치해 맨 앞에 온다. 쓰지 않으므로 JEUS 두 행이 확인일자 순이다
+      const result = search("JEUS OR 8");
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(result.terms).toEqual({ used: ["JEUS"], ignored: [], dropped: ["8"], required: 1, orQuery: true });
+      // 모든 검색어가 한 글자이면 그대로 쓴다
+      expect(search("T OR 9").terms).toEqual({ used: ["T"], ignored: ["9"], dropped: [], required: 1, orQuery: true });
+    });
+
+    it("가려 주지 못하는 낱말은 OR 가 있어도 쓰지 않는다", () => {
+      const result = search("eGovFrame OR JEUS OR with");
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(result.terms).toEqual({
+        used: ["JEUS"],
+        ignored: [],
+        dropped: ["eGovFrame", "with"],
+        required: 1,
+        orQuery: true,
+      });
+    });
+
+    it("조사를 뗀 꼴과 기호에서 나눈 조각도 대체 검색과 같이 쓴다", () => {
+      const result = search("JEUS는 OR Tibero를 OR Web-Logic");
+      expect(result.terms).toEqual({
+        used: ["JEUS", "Tibero", "Web", "Logic"],
+        ignored: [],
+        dropped: [],
+        required: 1,
+        orQuery: true,
+      });
+      // WebLogic 은 조각 둘이 일치해 맨 앞이다
+      expect(versionsOf(result.rows)).toEqual(["WebLogic 12c", "JEUS 21", "Tibero 7", "JEUS 8.5"]);
+    });
+
+    it("필터를 함께 주면 필터를 적용한 대상 안에서 찾는다", () => {
+      const result = search("JEUS OR Tibero", { category: "WAS" });
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(result.terms).toEqual({ used: ["JEUS"], ignored: ["Tibero"], dropped: [], required: 1, orQuery: true });
+    });
+
+    it("limit 과 offset 은 그 결과에 적용하고, 끝을 넘은 offset 에서도 total 과 matchMode 는 같다", () => {
+      const page = sqlite.queryCompatibleSoftware({ query: "JEUS OR 호환", limit: 2, offset: 1 });
+      expect(versionsOf(page.rows)).toEqual(["JEUS 8.5", "SampleCMS 1.0"]);
+      expect(page.total).toBe(CATALOGUE.length);
+      const beyond = sqlite.queryCompatibleSoftware({ query: "JEUS OR 호환", limit: 2, offset: 100 });
+      expect(beyond.rows).toEqual([]);
+      expect(beyond.total).toBe(CATALOGUE.length);
+      expect(beyond.matchMode).toBe("any-term");
+    });
+
+    it("OR 뒤에 검색어가 없어도 OR 가 적힌 query 로 다룬다", () => {
+      const result = search("JEUS OR");
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(result.matchMode).toBe("any-term");
+      expect(result.terms).toEqual({ used: ["JEUS"], ignored: [], dropped: [], required: 1, orQuery: true });
+    });
+
+    it("OR 뿐인 query 에서는 검색어가 추출되지 않아 필터만 적용한 목록을 돌려준다", () => {
+      const result = search("OR");
+      expect(result.total).toBe(CATALOGUE.length);
+      expect(result.matchMode).toBeUndefined();
+      expect(result.terms).toBeUndefined();
+    });
+
+    it("AND, NOT, NEAR 는 검색어에서 빼기만 한다 (부정 검색과 근접 검색은 하지 않는다)", () => {
+      for (const query of ["JEUS AND 4.3", "JEUS NOT 4.3", "JEUS NEAR 4.3", "jeus and 4.3"]) {
+        const result = search(query);
+        expect(versionsOf(result.rows), `query=${query}`).toEqual(["JEUS 21"]);
+        expect(result.matchMode, `query=${query}`).toBe("all-terms");
+        expect(result.terms, `query=${query}`).not.toHaveProperty("orQuery");
+      }
+    });
+
+    it("OR 가 다른 낱말의 일부이면 해당하지 않는다", () => {
+      // '오라클' 이 든 행은 WebLogic 하나다. 'Oracle', 'portal' 의 'or' 는 연산자가 아니다
+      const result = search("Oracle 오라클");
+      expect(result.terms).toEqual({ used: ["오라클"], ignored: ["Oracle"], dropped: [], required: 1 });
+    });
+
+    it("OR 가 없는 query 의 결과에는 orQuery 를 싣지 않는다", () => {
+      for (const query of ["JEUS", "JEUS 4.3", "JEUS Tibero", "JEUS 호환 없는말", "없는말"]) {
+        expect(search(query).terms, `query=${query}`).not.toHaveProperty("orQuery");
+      }
+    });
+
+    it("배열을 돌려주는 메서드는 OR 를 따르지 않고 모든 검색어가 일치하는 행만 돌려준다", () => {
+      // 이 메서드들의 결과는 찾은 방식의 표시 없이 쓰인다 (queryCompatibleSoftwareAllTerms 의 주석)
+      expect(sqlite.queryCompatibleSoftwareAllTerms("JEUS OR 4.3")).toMatchObject({ total: 1 });
+      expect(versionsOf(sqlite.fullTextSearchCompatibility("JEUS OR 4.3"))).toEqual(["JEUS 21"]);
+      expect(sqlite.fullTextSearchCompatibility("JEUS OR Tibero")).toEqual([]);
+    });
+  });
+
   describe("쓴 검색어와 쓰지 않은 검색어 (terms)", () => {
     const termsOf = (query: string, filters = {}) => sqlite.queryCompatibleSoftware({ query, filters }).terms;
 

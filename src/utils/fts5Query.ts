@@ -5,7 +5,7 @@
  * 검색어를 추출해 LIKE 부분 문자열 일치로 찾는다. 파일 이름은 검색어로 FTS5 MATCH 식을 조립하던 때의
  * 것이고, 지금은 MATCH 식을 만들지 않는다.
  *
- * - 검색어 추출: extractSearchTerms, joinedTermKeys, parseKeywordQuery
+ * - 검색어 추출: extractSearchTerms, joinedTermKeys, hasOrOperator, parseKeywordQuery
  * - 검색어로 쓰지 않는 낱말의 목록과 판정: ENGLISH_FUNCTION_WORDS, COMPATIBILITY_GENERIC_WORDS,
  *   COMPONENT_GENERIC_WORDS, isGenericTerm, dropGenericTerms
  * - 조사가 붙은 검색어를 조사 없는 꼴로 바꿔 보는 후보: particleStrippedForms
@@ -26,6 +26,7 @@ export const MAX_KEYWORD_QUERY_LENGTH = 2000;
  * 검색어로 쓰지 않는 영문 접속사 (소문자로 비교한다).
  * 검색 연산자처럼 적은 "JEUS OR Tibero", "JEUS and Tibero" 의 접속사를 검색어로 세면,
  * 그 낱말까지 일치하는 행을 찾느라 제품명이 일치하는 행을 놓친다.
+ * 이 가운데 OR 만 검색 방식을 바꾼다 (hasOrOperator). 나머지는 검색어에서 빠질 뿐이다.
  */
 const CONNECTIVE_WORDS: ReadonlySet<string> = new Set(['and', 'or', 'not', 'near']);
 
@@ -38,6 +39,7 @@ const CONNECTIVE_WORDS: ReadonlySet<string> = new Set(['and', 'or', 'not', 'near
  * - 문자·숫자와 검색어 안쪽의 `.` `-` `_` 만 남기고, 그 밖의 문장부호와 공백은 구분자로 본다.
  *   (`4.3`, `egovframework.com.cop.bbs`, `spring-boot` 같은 식별자는 한 검색어로 유지된다.)
  * - 단독 낱말 AND, OR, NOT, NEAR 는 대소문자와 관계없이 검색어에서 뺀다 (`Android` 처럼 낱말의 일부인 것은 남긴다).
+ *   OR 가 있었는지는 hasOrOperator 가 따로 알려 준다.
  * - 대소문자만 다른 중복은 처음 것만 남기고, 최대 maxTerms 개까지만 돌려준다.
  */
 export function extractSearchTerms(raw: string, maxTerms: number = MAX_SEARCH_TERMS): string[] {
@@ -77,17 +79,34 @@ export function joinedTermKeys(raw: string): Set<string> {
   return keys;
 }
 
+/**
+ * query 에 단독 낱말 OR 가 있는지 (대소문자를 가리지 않는다).
+ *
+ * extractSearchTerms 는 접속사를 검색어에서 빼기만 하므로, 추출된 검색어만으로는 'A OR B' 와 'A B' 를 가릴 수 없다.
+ * 키워드 검색은 OR 가 있으면 모든 검색어가 일치하는 행을 먼저 찾지 않고, 검색어 가운데 하나 이상이 일치하는 행을
+ * 찾는다 (database/sqliteManager 의 keywordSearch). AND, NOT, NEAR 는 검색어에서 빼기만 하고 따로 알리지 않는다:
+ * 부정 검색과 근접 검색은 하지 않는다.
+ *
+ * 읽는 범위와 정규화는 extractSearchTerms 와 같다 (앞 MAX_KEYWORD_QUERY_LENGTH 자, 전각 'ＯＲ' 도 같다).
+ * 'Oracle', 'and-or' 처럼 다른 낱말의 일부인 것은 해당하지 않는다. OR 의 앞이나 뒤에 검색어가 없어도 적혀 있으면 true 다.
+ */
+export function hasOrOperator(raw: string): boolean {
+  return queryWords(raw).some((word) => word.text.toLowerCase() === 'or');
+}
+
 /** query 에서 읽어 낸 키워드 검색의 입력 */
 export interface KeywordQuery {
   /** 검색어 (extractSearchTerms 의 결과) */
   terms: string[];
   /** 다른 낱말과 공백 없이 기호로 이어 적힌 낱말, 소문자 (joinedTermKeys 의 결과) */
   joinedTerms: ReadonlySet<string>;
+  /** query 에 단독 낱말 OR 가 있는지 (hasOrOperator 의 결과) */
+  orQuery: boolean;
 }
 
 /** query 에서 키워드 검색(database/sqliteManager 의 keywordSearch)에 필요한 것을 한 번에 읽어 낸다. */
 export function parseKeywordQuery(raw: string): KeywordQuery {
-  return { terms: extractSearchTerms(raw), joinedTerms: joinedTermKeys(raw) };
+  return { terms: extractSearchTerms(raw), joinedTerms: joinedTermKeys(raw), orQuery: hasOrOperator(raw) };
 }
 
 /** query 에서 읽어 낸 낱말 하나 */

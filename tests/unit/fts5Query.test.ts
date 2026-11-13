@@ -15,9 +15,11 @@ import {
   MAX_SEARCH_TERMS,
   dropGenericTerms,
   extractSearchTerms,
+  hasOrOperator,
   isAsciiAlphanumericTerm,
   isGenericTerm,
   joinedTermKeys,
+  parseKeywordQuery,
   particleStrippedForms,
   splitAtSeparators,
   trimEdgeSeparators,
@@ -151,6 +153,56 @@ describe("extractSearchTerms 가 빼는 접속사", () => {
 
   it("뺀 접속사는 검색어 수 상한에 세지 않는다", () => {
     expect(extractSearchTerms("a AND b OR c NOT d", 3)).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("hasOrOperator", () => {
+  it("query 에 단독 낱말 OR 가 있으면 true 다 (대소문자를 가리지 않는다)", () => {
+    for (const query of ["게시판 OR 댓글", "JEUS or Tibero", "CMS Or Portal", "a oR b", "(JEUS) OR, 'Tibero'", "A/OR/B"]) {
+      expect(hasOrOperator(query), query).toBe(true);
+    }
+  });
+
+  it("앞이나 뒤에 검색어가 없어도 OR 가 적혀 있으면 true 다", () => {
+    for (const query of ["OR", "OR JEUS", "JEUS OR", "and or NOT near"]) {
+      expect(hasOrOperator(query), query).toBe(true);
+    }
+  });
+
+  it("다른 낱말의 일부인 OR 는 해당하지 않는다", () => {
+    for (const query of ["ORACLE", "Oracle 호환", "portal for", "ORM color", "and-or", "x.or.y", "or_else", "오어"]) {
+      expect(hasOrOperator(query), query).toBe(false);
+    }
+  });
+
+  it("AND, NOT, NEAR 만 있으면 false 다", () => {
+    for (const query of ["JEUS AND Tibero", "JEUS NOT Tibero", "JEUS NEAR Tibero", "게시판 댓글", ""]) {
+      expect(hasOrOperator(query), JSON.stringify(query)).toBe(false);
+    }
+  });
+
+  it("전각으로 적은 OR 도 같다", () => {
+    expect(hasOrOperator("게시판 ＯＲ 댓글")).toBe(true);
+    expect(hasOrOperator("게시판　or　댓글")).toBe(true);
+  });
+
+  it("extractSearchTerms 와 같이 query 의 앞 2,000자만 읽는다", () => {
+    expect(hasOrOperator(`${"x ".repeat(999)}OR y`)).toBe(true);
+    expect(hasOrOperator(`${"x ".repeat(1000)}OR y`)).toBe(false);
+  });
+
+  it("아주 긴 입력도 100ms 안에 끝난다", () => {
+    expect(elapsedMs(() => hasOrOperator(`a${".".repeat(80000)}a OR b`))).toBeLessThan(100);
+    expect(elapsedMs(() => hasOrOperator("or ".repeat(50000)))).toBeLessThan(100);
+  });
+});
+
+describe("parseKeywordQuery", () => {
+  it("검색어, 이어 적힌 낱말, OR 가 있었는지를 한 번에 읽어 낸다", () => {
+    expect(parseKeywordQuery("게시판 OR 댓글")).toEqual({ terms: ["게시판", "댓글"], joinedTerms: new Set(), orQuery: true });
+    expect(parseKeywordQuery("Q&A 관리")).toEqual({ terms: ["Q", "A", "관리"], joinedTerms: new Set(["q", "a"]), orQuery: false });
+    expect(parseKeywordQuery("JEUS and Tibero")).toEqual({ terms: ["JEUS", "Tibero"], joinedTerms: new Set(), orQuery: false });
+    expect(parseKeywordQuery("")).toEqual({ terms: [], joinedTerms: new Set(), orQuery: false });
   });
 });
 
