@@ -427,6 +427,16 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       expect((await searchCompatibleSoftware({ minLevel: 1 })).total).toBe(CATALOGUE.length);
     });
 
+    it("숫자가 아닌 level 과 minLevel 은 지정하지 않은 것으로 보고 filters 에 싣지 않는다", async () => {
+      // 조회에는 적용하지 않으면서 응답의 filters 에만 실으면, 호출자는 걸러진 결과라고 읽는다
+      const all = await searchCompatibleSoftware({});
+      for (const value of ["1", null, true]) {
+        const response = await searchCompatibleSoftware({ level: value as never, minLevel: value as never });
+        expect(response.filters, String(value)).toEqual({});
+        expect(response.total, String(value)).toBe(all.total);
+      }
+    });
+
     it("level 과 minLevel 을 함께 주면 둘 다 적용하고 둘 다 filters 에 싣는다", async () => {
       const response = await searchCompatibleSoftware({ level: 1, minLevel: 2 });
       expect(response).toMatchObject({ total: 0, count: 0, software: [] });
@@ -795,6 +805,22 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
 
       expect(hybrid.searchKnowledge).toHaveBeenCalledTimes(2);
       expect(response.knowledgeWarning).toBe(`${WARNING} 원인: ${MODEL_MISSING}`);
+    });
+
+    it("조치할 수 있는 오류 뒤에 내부 오류가 나도 먼저 얻은 원인을 그대로 적는다", async () => {
+      hybrid.searchKnowledge.mockImplementation(async (productName: string) => {
+        if (productName === "JEUS") {
+          throw new UserFacingError(MODEL_MISSING);
+        }
+        throw new Error("lance error: LanceError(IO): /Users/someone/secret");
+      });
+
+      const response = await searchCompatibleSoftware({ query: "티맥스", includeKnowledge: true });
+
+      expect(hybrid.searchKnowledge.mock.calls[0]?.[0]).toBe("JEUS");
+      expect(hybrid.searchKnowledge.mock.calls.length).toBeGreaterThan(1);
+      expect(response.knowledgeWarning).toBe(`${WARNING} 원인: ${MODEL_MISSING}`);
+      expect(JSON.stringify(response)).not.toContain("/Users/someone");
     });
 
     it("내부 오류와 조치할 수 있는 오류가 섞여 있으면 조치할 수 있는 오류의 문구만 원인으로 적는다", async () => {

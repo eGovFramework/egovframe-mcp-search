@@ -40,10 +40,11 @@ function normalizeFilters(args: {
   if (category) {
     filters.category = category;
   }
-  if (args.level !== undefined) {
+  // 숫자가 아닌 값은 조회에 적용되지 않으므로 응답의 filters 에도 싣지 않는다
+  if (typeof args.level === 'number') {
     filters.level = args.level;
   }
-  if (args.minLevel !== undefined) {
+  if (typeof args.minLevel === 'number') {
     filters.minLevel = args.minLevel;
   }
   const vendor = cleanFilter(args.vendor);
