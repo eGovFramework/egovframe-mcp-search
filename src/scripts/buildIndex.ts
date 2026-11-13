@@ -795,6 +795,15 @@ function chunkPdfText(text: string, maxChars = 1800): string[] {
   return chunks;
 }
 
+/**
+ * 적용가이드 PDF 청크의 제목: 파일 이름(확장자 제외)에 청크 번호를 붙인다.
+ * macOS 의 파일 시스템은 한글 파일 이름을 자모가 분리된 NFD 로 돌려주므로 NFC 로 정규화한다.
+ */
+export function pdfChunkTitle(filePath: string, index: number, chunkCount: number): string {
+  const baseTitle = path.basename(filePath, path.extname(filePath)).normalize('NFC');
+  return `${baseTitle} (${index + 1}/${chunkCount})`;
+}
+
 async function readPdfKnowledge(filePath: string): Promise<AddKnowledgeInput[]> {
   const data = await fs.readFile(filePath);
   const parser = new PDFParse({ data });
@@ -802,12 +811,11 @@ async function readPdfKnowledge(filePath: string): Promise<AddKnowledgeInput[]> 
   try {
     const result = await parser.getText();
     const chunks = chunkPdfText(result.text);
-    const sourceFile = path.relative(PROJECT_ROOT, filePath);
-    const baseTitle = path.basename(filePath, path.extname(filePath));
+    const sourceFile = path.relative(PROJECT_ROOT, filePath).normalize('NFC');
 
     return chunks.map((content, idx) => ({
       type: 'best-practice',
-      title: `${baseTitle} (${idx + 1}/${chunks.length})`,
+      title: pdfChunkTitle(filePath, idx, chunks.length),
       content,
       context: '표준프레임워크 적용가이드 PDF',
       tags: ['egovframe', 'developer_knowledge', 'guide', 'pdf'],
