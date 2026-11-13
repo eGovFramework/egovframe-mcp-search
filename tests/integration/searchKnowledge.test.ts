@@ -358,6 +358,26 @@ describe("integration — egov_search_knowledge scope 추론", () => {
     expect(res.text).not.toContain(ALL_MARKER);
   });
 
+  it("효과가 없는 기본값을 채운 필터는 출처를 정하지 않는다", async () => {
+    // 쓰지 않는 필터를 기본값으로 채워 보내는 클라이언트: 필터를 주지 않은 호출과 같은 출처로 가야 한다
+    const res = await search({
+      filters: { includeKnowledge: false, verifiedOnly: false, sort: "relevance", minImportance: 1 },
+    });
+    expect(res.isError).toBe(false);
+    expect(res.text).toContain(OVERVIEW_MARKER);
+    expect(res.text).not.toContain(COMPAT_MARKER);
+  });
+
+  it("문자나 숫자가 하나도 없는 query 는 없는 것으로 처리한다", async () => {
+    const guide = await search({ scope: "guide", query: "???" });
+    expect(guide.isError).toBe(true);
+    expect(guide.text).toBe("query is required for guide search");
+
+    const auto = await search({ query: "?!" });
+    expect(auto.isError).toBe(false);
+    expect(auto.text).toContain(OVERVIEW_MARKER);
+  });
+
   it("components 가 아닌 scope 에 action 을 주면 오류로 응답한다", async () => {
     for (const scope of ["guide", "knowledge", "compatibility", "all"]) {
       const res = await search({ scope, query: "게시판", action: "ddl", filters: { componentId: "bbs" } });
@@ -431,6 +451,53 @@ describe("integration — egov_search_knowledge 입력 검증", () => {
     const tags = await search({ scope: "knowledge", query: "설정", filters: { tags: "faq" } });
     expect(tags.isError).toBe(true);
     expect(tags.text).toContain("tags");
+  });
+
+  it("값이 null 이거나 빈 문자열인 선택 파라미터와 필터는 지정하지 않은 것으로 받는다", async () => {
+    const compatibility = await search({
+      scope: "compatibility",
+      query: null,
+      action: null,
+      limit: null,
+      strictScope: null,
+      filters: { frameworkVersion: "4.3", vendor: null, category: null, productName: "", minLevel: null },
+    });
+    expect(compatibility.isError).toBe(false);
+    expect(parseJsonBlock(compatibility.text).filters).toEqual({ frameworkVersion: "4.3" });
+
+    const knowledge = await search({
+      scope: "knowledge",
+      filters: { sort: "recent", type: "", knowledgeScope: "", tags: null },
+      limit: 1,
+    });
+    expect(knowledge.isError).toBe(false);
+    expect(parseJsonBlock(knowledge.text).count).toBe(1);
+
+    const emptyScope = await search({ scope: "", filters: { componentId: "uia" } });
+    expect(emptyScope.isError).toBe(false);
+    expect(emptyScope.text).toContain("### 기본 정보");
+
+    const nullFilters = await search({ scope: "components", filters: null });
+    expect(nullFilters.isError).toBe(false);
+    expect(nullFilters.text).toContain("공통컴포넌트 카테고리");
+  });
+
+  it("지나치게 긴 값은 입력 검증 오류로 거부한다", async () => {
+    const longQuery = await search({ scope: "components", query: "가".repeat(10_001) });
+    expect(longQuery.isError).toBe(true);
+    expect(longQuery.text).toContain("query");
+
+    const longFilter = await search({ scope: "compatibility", filters: { vendor: "a".repeat(501) } });
+    expect(longFilter.isError).toBe(true);
+    expect(longFilter.text).toContain("vendor");
+
+    const manyTags = await search({
+      scope: "knowledge",
+      query: "설정",
+      filters: { tags: Array.from({ length: 21 }, (_, i) => `t${i}`) },
+    });
+    expect(manyTags.isError).toBe(true);
+    expect(manyTags.text).toContain("tags");
   });
 
   it("범위별 최댓값을 넘는 limit 은 최댓값으로 줄이고 그 사실을 알린다", async () => {
@@ -545,6 +612,31 @@ describe("integration — egov_search_knowledge 공통컴포넌트 조회", () =
     const res = await search({ scope: "components" });
     expect(res.isError).toBe(false);
     expect(res.text).toContain(`- **총 컴포넌트**: ${meta.totalComponents}개`);
+  });
+
+  it("action 과 함께 써야 하는 필터만 주면 개요 대신 필요한 action 을 알려 준다", async () => {
+    const dependencies = await search({ scope: "components", filters: { componentIds: ["bbs", "cmy"] } });
+    expect(dependencies.isError).toBe(true);
+    expect(dependencies.text).toContain("filters.componentIds");
+    expect(dependencies.text).toContain('"dependencies"');
+
+    const readSource = await search({ filters: { filePath: "pom.xml" } });
+    expect(readSource.isError).toBe(true);
+    expect(readSource.text).toContain('"readSource"');
+
+    const script = await search({ query: "게시판", filters: { dbType: "oracle" } });
+    expect(script.isError).toBe(true);
+    expect(script.text).toContain('"ddl"');
+    expect(script.text).toContain('"dml"');
+  });
+
+  it("상세 조회에 쓰이지 않은 action 전용 필터는 어느 action 에서 쓰는지 함께 알린다", async () => {
+    const res = await search({ scope: "components", filters: { componentId: "uia", dbType: "oracle" } });
+    expect(res.isError).toBe(false);
+    expect(res.text).toContain("### 기본 정보");
+    const note = res.text.split("\n").find((line) => line.includes("적용되지 않아 무시한 필터")) ?? "";
+    expect(note).toContain("dbType");
+    expect(note).toContain('"ddl"');
   });
 
   it("query 와 목록 필터를 함께 주면 두 조건을 모두 적용한다", async () => {

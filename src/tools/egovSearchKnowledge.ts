@@ -154,6 +154,25 @@ const COMPATIBILITY_FILTER_KEYS = ["frameworkVersion", "vendor", "productName", 
 const GUIDE_FILTER_KEYS = ["layer"] as const;
 const KNOWLEDGE_FILTER_KEYS = ["type", "tags", "minImportance", "verifiedOnly", "sort"] as const;
 
+/** action 과 함께 써야만 뜻이 있는 필터와 그 필터를 쓰는 action. */
+const ACTION_ONLY_FILTERS: ReadonlyArray<{ key: string; actions: readonly ComponentAction[] }> = [
+  { key: "componentIds", actions: ["dependencies"] },
+  { key: "filePath", actions: ["readSource"] },
+  { key: "dbType", actions: ["ddl", "dml"] },
+  { key: "table", actions: ["dml"] },
+];
+
+/**
+ * 값이 기본값과 같아서 조회 결과를 바꾸지 않는 필터.
+ * 쓰지 않는 필터를 기본값으로 채워 보내는 클라이언트가 있으므로, scope 를 추론할 때는 지정하지 않은 것으로 본다.
+ */
+const NO_EFFECT_FILTER_VALUES: Readonly<Record<string, unknown>> = {
+  includeKnowledge: false,
+  verifiedOnly: false,
+  sort: "relevance",
+  minImportance: 1,
+};
+
 /** 문자열 필터와 query 는 NFC 로 정규화하고 앞뒤 공백을 뗀다. 빈 값은 지정하지 않은 것으로 본다. */
 function asString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -200,6 +219,16 @@ function hasFilterValue(filters: Record<string, unknown>, key: string): boolean 
 
 function hasAnyFilter(filters: Record<string, unknown>, keys: readonly string[]): boolean {
   return keys.some((key) => hasFilterValue(filters, key));
+}
+
+/** 조회 결과를 바꾸는 값이 들어 있는 필터가 있는지 (기본값과 같은 값은 세지 않는다). */
+function hasAnyEffectiveFilter(filters: Record<string, unknown>, keys: readonly string[]): boolean {
+  return keys.some((key) => hasFilterValue(filters, key) && filters[key] !== NO_EFFECT_FILTER_VALUES[key]);
+}
+
+/** action 이름을 안내 문구에 넣을 표기로 바꾼다: "ddl" 또는 "dml". */
+function quoteActions(actions: readonly ComponentAction[]): string {
+  return actions.map((action) => `"${action}"`).join(" 또는 ");
 }
 
 function pickFilters(filters: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
@@ -265,7 +294,15 @@ function withNotes(text: string, ...notes: Array<string | undefined>): string {
  */
 function ignoredFiltersNote(filters: Record<string, unknown>, usedKeys: readonly string[]): string | undefined {
   const ignored = Object.keys(filters).filter((key) => hasFilterValue(filters, key) && !usedKeys.includes(key));
-  return ignored.length > 0 ? `> 이 조회에 적용되지 않아 무시한 필터: ${ignored.join(", ")}.` : undefined;
+  if (ignored.length === 0) {
+    return undefined;
+  }
+  // action 과 함께 써야 하는 필터는 어느 action 에서 쓰는지 알려 준다
+  const hints = ACTION_ONLY_FILTERS.filter(({ key }) => ignored.includes(key)).map(
+    ({ key, actions }) => `${key} 은(는) action ${quoteActions(actions)} 에서 씁니다.`,
+  );
+  const hint = hints.length > 0 ? ` (${hints.join(" ")})` : "";
+  return `> 이 조회에 적용되지 않아 무시한 필터: ${ignored.join(", ")}.${hint}`;
 }
 
 let compatibilityCategories: Set<string> | undefined;
@@ -677,9 +714,19 @@ function searchComponentsGateway(args: EgovSearchKnowledgeArgs, options: Section
   // action 이 있으면 componentId 는 그 action 의 대상일 뿐이므로 상세 조회로 가로채지 않는다.
   if (!action) {
     const componentId = getComponentId(filters);
-    return componentId
-      ? withNotes(formatComponentDetail(componentId), ignoredFiltersNote(filters, COMPONENT_ID_KEYS))
-      : formatComponentListLookup(args, filters, options);
+    if (componentId) {
+      return withNotes(formatComponentDetail(componentId), ignoredFiltersNote(filters, COMPONENT_ID_KEYS));
+    }
+    // action 과 함께 써야 하는 필터만 준 호출은 목록이나 개요로 답하지 않고, 필요한 action 을 알려 준다.
+    const actionOnly = ACTION_ONLY_FILTERS.filter(({ key }) => hasFilterValue(filters, key));
+    if (actionOnly.length > 0) {
+      throw new UserFacingError(
+        `action 을 지정하지 않아 다음 필터를 쓸 수 없습니다: ${actionOnly
+          .map(({ key, actions }) => `filters.${key} 은(는) action ${quoteActions(actions)} 와(과) 함께 씁니다`)
+          .join(", ")}.`,
+      );
+    }
+    return formatComponentListLookup(args, filters, options);
   }
 
   if (!isComponentAction(action)) {
@@ -811,7 +858,7 @@ async function inferScope(args: EgovSearchKnowledgeArgs): Promise<ResolvedScope>
   if (hasAnyFilter(filters, COMPONENT_FILTER_KEYS)) {
     return "components";
   }
-  if (hasAnyFilter(filters, COMPATIBILITY_FILTER_KEYS)) {
+  if (hasAnyEffectiveFilter(filters, COMPATIBILITY_FILTER_KEYS)) {
     return "compatibility";
   }
   const category = asString(filters.category);
@@ -824,17 +871,18 @@ async function inferScope(args: EgovSearchKnowledgeArgs): Promise<ResolvedScope>
   if (category !== undefined && (await isGuideCategory(category))) {
     return "guide";
   }
-  if (hasAnyFilter(filters, KNOWLEDGE_FILTER_KEYS)) {
+  if (hasAnyEffectiveFilter(filters, KNOWLEDGE_FILTER_KEYS)) {
     return "knowledge";
   }
   return args.query ? "all" : "components";
 }
 
 export async function egovSearchKnowledge(rawArgs: EgovSearchKnowledgeArgs): Promise<string> {
-  // 공백뿐인 query 와 빈 action 은 지정하지 않은 것으로 본다.
+  // 공백뿐이거나 문자·숫자가 하나도 없는 query("???" 등)와 빈 action 은 지정하지 않은 것으로 본다.
+  const query = asString(rawArgs.query);
   const args: EgovSearchKnowledgeArgs = {
     ...rawArgs,
-    query: asString(rawArgs.query),
+    query: query !== undefined && /[\p{L}\p{N}]/u.test(query) ? query : undefined,
     action: rawArgs.action || undefined,
   };
   const scope: ResolvedScope = args.scope && args.scope !== "auto" ? args.scope : await inferScope(args);
