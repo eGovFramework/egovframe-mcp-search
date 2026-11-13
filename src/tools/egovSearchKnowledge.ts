@@ -654,6 +654,9 @@ async function inferScope(args: EgovSearchKnowledgeArgs): Promise<ResolvedScope>
   if (hasAnyFilter(filters, GUIDE_FILTER_KEYS)) {
     return "guide";
   }
+  if (category !== undefined && (await isGuideCategory(category))) {
+    return "guide";
+  }
   if (hasAnyFilter(filters, KNOWLEDGE_FILTER_KEYS)) {
     return "knowledge";
   }

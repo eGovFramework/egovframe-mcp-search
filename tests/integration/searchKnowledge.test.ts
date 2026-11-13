@@ -274,6 +274,13 @@ describe("integration — egov_search_knowledge scope 추론", () => {
     expect(res.text).not.toContain(ALL_MARKER);
   });
 
+  it.skipIf(!hasEmbeddingModel())("가이드 분류 이름을 category 로 주면 가이드만 검색한다", async () => {
+    const res = await search({ query: "트랜잭션 설정", filters: { category: "persistence-layer" } });
+    expect(res.isError).toBe(false);
+    expect(res.text).toContain("eGovFrame 가이드 검색 결과");
+    expect(res.text).not.toContain(ALL_MARKER);
+  });
+
   it("components 가 아닌 scope 에 action 을 주면 오류로 응답한다", async () => {
     for (const scope of ["guide", "knowledge", "compatibility", "all"]) {
       const res = await search({ scope, query: "게시판", action: "ddl", filters: { componentId: "bbs" } });
