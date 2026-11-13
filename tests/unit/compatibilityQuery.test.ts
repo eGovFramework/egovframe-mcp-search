@@ -340,6 +340,21 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       }
     });
 
+    it("길이 한도는 값이 아니라 패턴('%값%')의 바이트 수로 따진다", () => {
+      // 패턴이 정확히 50,000바이트가 되는 값(49,998바이트)까지는 SQLite 가 비교할 수 있으므로 그대로 찾는다
+      const longest = "a".repeat(49998);
+      sqlite.addCompatibilitySoftwareBatch([
+        { ...CATALOGUE[0], product_name: "LongVendor", product_version: "LongVendor 1.0", vendor: longest },
+      ]);
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ filters: { vendor: longest } }).rows)).toEqual([
+        "LongVendor 1.0",
+      ]);
+      // 한 바이트만 넘어도 오류 없이 0건이다
+      expect(sqlite.queryCompatibleSoftware({ filters: { vendor: `${longest}a` } })).toEqual(NO_ROWS);
+      // 이스케이프로 늘어난 길이도 패턴에 들어간다 ('%' 25,000개 → 50,002바이트)
+      expect(sqlite.queryCompatibleSoftware({ filters: { vendor: "%".repeat(25000) } })).toEqual(NO_ROWS);
+    });
+
     it("배열을 돌려주는 searchCompatibleSoftware 도 같다", () => {
       expect(sqlite.searchCompatibleSoftware({ vendor: "\u0000티맥스" })).toEqual([]);
       expect(sqlite.searchCompatibleSoftware({ productName: TOO_LONG[0] })).toEqual([]);
