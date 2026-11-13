@@ -326,13 +326,13 @@ export class SQLiteManager {
     query: string,
     limit: number = 20,
   ): { rows: CompatibilitySoftware[]; total: number } {
-    const terms = dropSingleCharacterTerms(extractSearchTerms(query));
+    const terms = extractSearchTerms(query);
     if (terms.length === 0) {
       return { rows: [], total: 0 };
     }
     const page: SqlPage = { limit: toSqlLimit(limit), offset: 0 };
-    const found = this.allTermsSearch<CompatibilitySoftware>(COMPATIBILITY_SEARCH_ALL_COLUMNS, terms, NO_FILTER, page);
-    return found ?? { rows: [], total: 0 };
+    const found = this.allTermsStage<CompatibilitySoftware>(COMPATIBILITY_SEARCH_ALL_COLUMNS, terms, NO_FILTER, page);
+    return found ? { rows: found.rows, total: found.total } : { rows: [], total: 0 };
   }
 
   /**
@@ -445,17 +445,18 @@ export class SQLiteManager {
    * 부분 문자열로 견주면 안 되는 컬럼은 대상이 따로 정한 조건(termConditions)으로 견준다. 일치 판정은
    * 아래의 모든 단계가 termMatcher 가 만든 조건 하나를 쓴다.
    *
-   * 한 글자 검색어는 두 글자 이상인 검색어가 있으면 쓰지 않는다 (dropSingleCharacterTerms).
-   * 1) 모든 검색어가 일치하는 행을 찾는다 (allTermsSearch).
-   * 2) 필터까지 적용한 결과가 0건이면 대체 검색(anyTermSearch)으로 넘어간다: 일치하는 행이 있는 검색어만
-   *    남기고, 그 절반 이상이 일치하는 행을 찾는다. 그런 행이 없으면 일치 기준을 낮춰 가며 찾는다.
+   * 1) 모든 검색어가 일치하는 행을 찾는다 (allTermsStage). 한 글자 검색어도 쓰고, 그렇게 해서 찾은 행이 없을
+   *    때만 한 글자 검색어를 빼고 다시 찾는다.
+   * 2) 필터까지 적용한 결과가 0건이면 한 글자 검색어를 뺀 채로(dropSingleCharacterTerms) 대체 검색
+   *    (anyTermSearch)으로 넘어간다: 일치하는 행이 있는 검색어만 남기고, 그 절반 이상이 일치하는 행을 찾는다.
+   *    그런 행이 없으면 일치 기준을 낮춰 가며 찾는다.
    *    0건인지는 페이지가 아니라 전체 건수로 판단한다 (offset 이 끝을 넘었다고 검색 방식을 바꾸지 않는다).
    *
    * 두 단계 모두 일치한 검색어가 많은 행, 이름 컬럼(nameColumns)에 일치한 검색어가 많은 행, 대상의 기본 정렬,
    * rowid 순으로 돌려준다 (selectByMatchedTerms).
    *
-   * 결과의 terms 는 실제로 쓴 검색어(used), 일치하는 행이 없어 쓰지 않은 검색어(ignored), 결과의 행마다
-   * 일치한 검색어의 최소 수(required)다.
+   * 결과의 terms 는 실제로 쓴 검색어(used), 일치하는 행이 없어 쓰지 않은 검색어(ignored), 검색에서 뺀 한 글자
+   * 검색어(dropped), 결과의 행마다 일치한 검색어의 최소 수(required)다.
    */
   private keywordSearch<Row>(
     target: KeywordSearchTarget,
@@ -463,14 +464,50 @@ export class SQLiteManager {
     filter: SqlCondition,
     page: SqlPage,
   ): { rows: Row[]; total: number; matchMode: KeywordMatchMode; terms: KeywordTermUsage } {
-    const searchable = dropSingleCharacterTerms(terms);
+    /** 검색에 넘긴 검색어(searched)에 들지 못한, 검색에서 뺀 검색어. query 에 적힌 순서다 */
+    const droppedFrom = (searched: string[]): string[] => terms.filter((term) => !searched.includes(term));
 
-    const allTerms = this.allTermsSearch<Row>(target, searchable, filter, page);
+    const allTerms = this.allTermsStage<Row>(target, terms, filter, page);
     if (allTerms) {
-      const terms: KeywordTermUsage = { used: searchable, ignored: [], required: searchable.length };
-      return { ...allTerms, matchMode: 'all-terms', terms };
+      const { used, rows, total } = allTerms;
+      const usage: KeywordTermUsage = { used, ignored: [], dropped: droppedFrom(used), required: used.length };
+      return { rows, total, matchMode: 'all-terms', terms: usage };
     }
-    return { ...this.anyTermSearch<Row>(target, searchable, filter, page), matchMode: 'any-term' };
+
+    const searchable = dropSingleCharacterTerms(terms);
+    const fallback = this.anyTermSearch<Row>(target, searchable, filter, page);
+    return {
+      rows: fallback.rows,
+      total: fallback.total,
+      matchMode: 'any-term',
+      terms: { ...fallback.terms, dropped: droppedFrom(searchable) },
+    };
+  }
+
+  /**
+   * 1단계: 모든 검색어가 일치하는 행을 찾는다. 찾은 행과 실제로 쓴 검색어(used)를 돌려주고, 없으면 null 이다.
+   *
+   * 한 글자 검색어도 넣어 찾는다. 모든 검색어가 일치해야 하므로 검색어가 늘면 결과는 좁아질 뿐이고, 한 글자를
+   * 빼면 그 글자가 가려 주던 행을 잃는다 ('롤 관리' 에서 '롤' 을 빼면 '관리' 가 든 컴포넌트가 모두 나온다).
+   * 그렇게 해서 0건이고 두 글자 이상인 검색어가 함께 있으면, 한 글자 검색어를 빼고 한 번 더 찾는다.
+   * 부분 문자열로 견주는 한 글자는 어느 행에도 없거나 엉뚱한 행에만 있는 일이 흔해, 나머지 검색어가 모두
+   * 일치하는 행이 있는데도 그 한 글자 때문에 대체 검색으로 넘어가는 것을 막는다.
+   */
+  private allTermsStage<Row>(
+    target: KeywordSearchTarget,
+    terms: string[],
+    filter: SqlCondition,
+    page: SqlPage,
+  ): { rows: Row[]; total: number; used: string[] } | null {
+    const withoutSingles = dropSingleCharacterTerms(terms);
+    const attempts = withoutSingles.length < terms.length ? [terms, withoutSingles] : [terms];
+    for (const used of attempts) {
+      const found = this.allTermsSearch<Row>(target, used, filter, page);
+      if (found) {
+        return { ...found, used };
+      }
+    }
+    return null;
   }
 
   /**
@@ -556,14 +593,15 @@ export class SQLiteManager {
    * 정렬과 필터 적용은 selectByMatchedTerms 를 따른다.
    *
    * 결과의 terms.used 는 남은 검색어(조사를 떼어 쓴 것은 뗀 꼴), terms.ignored 는 쓰지 않은 검색어,
-   * terms.required 는 실제로 적용한 일치 기준이다 (k 가 0 이면 0).
+   * terms.required 는 실제로 적용한 일치 기준이다 (k 가 0 이면 0). 검색에서 뺀 검색어(dropped)는 이 단계에
+   * 넘어오지 않으므로 호출부가 채운다.
    */
   private anyTermSearch<Row>(
     target: KeywordSearchTarget,
     terms: string[],
     filter: SqlCondition,
     page: SqlPage,
-  ): { rows: Row[]; total: number; terms: KeywordTermUsage } {
+  ): { rows: Row[]; total: number; terms: Omit<KeywordTermUsage, 'dropped'> } {
     /** forms 가운데 필터를 적용한 대상 안에 일치하는 행이 있는 첫 꼴과 그 꼴을 견주는 조건. 없으면 null */
     const firstMatching = (forms: string[]): { form: string; matcher: TermMatcher } | null => {
       for (const form of forms) {
@@ -1426,8 +1464,10 @@ function toSqlOffset(offset: number | undefined): number {
 }
 
 /**
- * 한 글자 검색어 규칙: 두 글자 이상인 검색어가 하나라도 있으면 한 글자 검색어를 뺀다.
- * 부분 문자열로 찾으면 한 글자는 너무 많은 행과 일치한다 ('JEUS 8' 의 '8' 은 날짜나 다른 버전의 8 과도 일치한다).
+ * 한 글자 검색어를 뺀 검색어 목록: 두 글자 이상인 검색어가 하나라도 있으면 한 글자 검색어를 뺀다.
+ * 부분 문자열로 찾으면 한 글자는 너무 많은 행과 일치한다 ('JEUS 8' 의 '8' 은 다른 버전의 8 과도 일치한다).
+ * 모든 검색어가 일치하는 행을 찾을 때는 한 글자가 결과를 좁히기만 하므로 빼지 않고, 그렇게 해서 찾은 행이
+ * 없을 때와 일부 검색어만 일치해도 되는 대체 검색에서 이 목록을 쓴다 (keywordSearch, allTermsStage).
  * 모든 검색어가 한 글자이면 그대로 돌려준다. 글자 수는 코드 포인트로 센다.
  */
 function dropSingleCharacterTerms(terms: string[]): string[] {

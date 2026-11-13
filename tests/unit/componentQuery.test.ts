@@ -113,12 +113,31 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
       expect(idsOf(sqlite.queryComponents({ query: "EGOVFRAMEWORK.COM.COP.BBS" }).rows)).toEqual(["bbs"]);
     });
 
-    it("두 글자 이상인 검색어가 있으면 한 글자 검색어는 쓰지 않는다", () => {
-      // 'y' 는 영문명 'Authority Management' 를 쓰는 두 컴포넌트(ram, drm)에만 들어 있다.
-      // 검색어로 쓰면 '증서' 와 함께 든 컴포넌트가 없어 결과가 달라진다
+    it("모든 검색어가 일치하는 컴포넌트를 찾을 때는 한 글자 검색어도 쓴다", () => {
+      // '로그인' 은 uia 와 sec 에, '서' 는 그 가운데 sec('인증서로그인', '공인인증서로')에만 들어 있다.
+      // 한 글자라고 빼면 uia 가 함께 나온다
+      const result = sqlite.queryComponents({ query: "로그인 서" });
+      expect(idsOf(result.rows)).toEqual(["sec"]);
+      expect(result.total).toBe(1);
+      expect(result.matchMode).toBe("all-terms");
+      expect(result.terms).toEqual({ used: ["로그인", "서"], ignored: [], dropped: [], required: 2 });
+    });
+
+    it("한 글자 검색어까지 일치하는 컴포넌트가 없으면 한 글자 검색어를 빼고 다시 찾는다", () => {
+      // 'y' 는 영문명 'Authority Management' 를 쓰는 두 컴포넌트(ram, drm)에만 들어 있고, 'x' 는 어디에도 없다.
+      // 둘 다 '증서' 와 함께 든 컴포넌트가 없어, 한 글자 검색어를 뺀 '증서' 로 찾는다
       const result = sqlite.queryComponents({ query: "x y 증서" });
       expect(idsOf(result.rows)).toEqual(["sec"]);
       expect(result.matchMode).toBe("all-terms");
+      expect(result.terms).toEqual({ used: ["증서"], ignored: [], dropped: ["x", "y"], required: 1 });
+    });
+
+    it("그래도 없으면 한 글자 검색어를 뺀 채로 대체 검색으로 넘어간다", () => {
+      // 증서(sec)와 없는말(0행)이 함께 든 컴포넌트는 없다. 'y' 를 대체 검색에 쓰면 ram 과 drm 이 섞여 나온다
+      const result = sqlite.queryComponents({ query: "y 증서 없는말" });
+      expect(idsOf(result.rows)).toEqual(["sec"]);
+      expect(result.matchMode).toBe("any-term");
+      expect(result.terms).toEqual({ used: ["증서"], ignored: ["없는말"], dropped: ["y"], required: 1 });
     });
 
     it("모든 검색어가 한 글자이면 그대로 쓴다", () => {
@@ -249,7 +268,7 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
       expect(idsOf(result.rows)).toEqual(["ram", "bst", "drm", "sec"]);
       expect(result.total).toBe(4);
       expect(result.matchMode).toBe("any-term");
-      expect(result.terms).toEqual({ used: ["증서", "통계", "권한관리"], ignored: [], required: 1 });
+      expect(result.terms).toEqual({ used: ["증서", "통계", "권한관리"], ignored: [], dropped: [], required: 1 });
     });
 
     it("일치한 검색어 수가 많은 컴포넌트를 먼저 돌려준다 (이름의 길이보다 앞선 기준이다)", () => {
@@ -309,34 +328,39 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     const termsOf = (query: string, filters = {}) => sqlite.queryComponents({ query, filters }).terms;
 
     it("모든 검색어가 일치하는 컴포넌트를 찾았으면 검색어를 모두 used 로 돌려준다", () => {
-      expect(termsOf("게시판 템플릿")).toEqual({ used: ["게시판", "템플릿"], ignored: [], required: 2 });
+      expect(termsOf("게시판 템플릿")).toEqual({ used: ["게시판", "템플릿"], ignored: [], dropped: [], required: 2 });
     });
 
     it("대체 검색에서는 일치하는 컴포넌트가 없어 쓰지 않은 검색어를 ignored 로 돌려준다", () => {
       expect(termsOf("게시판 컴포넌트 DDL 보여줘")).toEqual({
         used: ["게시판"],
         ignored: ["컴포넌트", "DDL", "보여줘"],
+        dropped: [],
         required: 1,
       });
-      expect(termsOf("만들기 방법")).toEqual({ used: [], ignored: ["만들기", "방법"], required: 0 });
+      expect(termsOf("만들기 방법")).toEqual({ used: [], ignored: ["만들기", "방법"], dropped: [], required: 0 });
     });
 
     it("조사를 떼어 쓴 검색어는 used 에 뗀 꼴로 싣는다", () => {
-      expect(termsOf("게시판을 만들고")).toEqual({ used: ["게시판"], ignored: ["만들고"], required: 1 });
-      expect(termsOf("BBS는")).toEqual({ used: ["BBS"], ignored: [], required: 1 });
+      expect(termsOf("게시판을 만들고")).toEqual({ used: ["게시판"], ignored: ["만들고"], dropped: [], required: 1 });
+      expect(termsOf("BBS는")).toEqual({ used: ["BBS"], ignored: [], dropped: [], required: 1 });
     });
 
     it("필터를 적용한 대상 안에서 일치하는 컴포넌트가 없는 검색어도 ignored 다", () => {
       expect(termsOf("증서 게시판 관리", { categoryId: "로그인" })).toEqual({
         used: ["증서"],
         ignored: ["게시판", "관리"],
+        dropped: [],
         required: 1,
       });
     });
 
-    it("두 글자 이상인 검색어가 있어 뺀 한 글자 검색어는 used 에도 ignored 에도 싣지 않는다", () => {
-      expect(termsOf("x y 증서")).toEqual({ used: ["증서"], ignored: [], required: 1 });
-      expect(termsOf("y")).toEqual({ used: ["y"], ignored: [], required: 1 });
+    it("한 글자라서 뺀 검색어는 used 와 ignored 가 아니라 dropped 로 돌려준다", () => {
+      expect(termsOf("x y 증서")).toEqual({ used: ["증서"], ignored: [], dropped: ["x", "y"], required: 1 });
+      expect(termsOf("y 증서 없는말")).toEqual({ used: ["증서"], ignored: ["없는말"], dropped: ["y"], required: 1 });
+      // 한 글자 검색어까지 모두 일치했거나 모든 검색어가 한 글자이면 뺀 것이 없다
+      expect(termsOf("로그인 서")).toEqual({ used: ["로그인", "서"], ignored: [], dropped: [], required: 2 });
+      expect(termsOf("y")).toEqual({ used: ["y"], ignored: [], dropped: [], required: 1 });
     });
 
     it("검색어가 추출되지 않은 조회에는 terms 를 넣지 않는다", () => {
@@ -442,7 +466,7 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
       expect(sqlite.queryComponents({ query: "게시", filters: { keyword: "\u0000템플릿" } })).toEqual({
         ...NO_ROWS,
         matchMode: "any-term",
-        terms: { used: [], ignored: ["게시"], required: 0 },
+        terms: { used: [], ignored: ["게시"], dropped: [], required: 0 },
       });
       // 다른 검색어로 물어도 같다
       expect(sqlite.queryComponents({ query: "증서", filters: { keyword: "\u0000" } }).total).toBe(0);

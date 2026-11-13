@@ -9,6 +9,7 @@
  * - 프레임워크 버전과 확인일자가 검색 대상이 아니었다 (설명에 버전이 적히지 않은 행, "2025", "2024-11").
  * - 제품명을 여럿 나열하거나 영어 문장으로 물으면 0건이었다 ("JEUS Tibero WebLogic").
  * - vendor 필터가 법인 표기까지 같은 행만 돌려줬다 ("(주)아이액츠", "㈜아이액츠", "주식회사 아이액츠").
+ * - 한 글자 낱말을 검색어에서 빼, 그 낱말이 가려 주던 행이 나머지 낱말만의 결과에 묻혔다 ("롤 관리", "JEUS 8").
  *
  * DB 는 읽기 전용으로 열고, 조회가 파일을 바꾸지 않았는지 마지막에 확인한다.
  * 동봉 데이터는 갱신될 수 있으므로 건수를 숫자로 고정하지 않고, 같은 뜻의 두 조회가 같은 결과를 내는지와
@@ -71,6 +72,22 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       expect(idsOf(result.rows)).toContain("sec");
     });
 
+    it('"롤 관리", "웹 로그" 는 한 글자 낱말까지 든 컴포넌트만 돌려준다', () => {
+      // 두 글자 이상인 검색어가 있으면 한 글자 검색어를 빼던 때에는 '관리' 가 든 컴포넌트, '로그' 가 든 컴포넌트가
+      // 모두 나와, 찾는 컴포넌트(롤관리, 웹로그관리)가 첫 페이지 밖으로 밀렸다
+      const cases: Array<[string, string, string]> = [
+        ["롤 관리", "관리", "rmt"],
+        ["웹 로그", "로그", "wlg"],
+      ];
+      for (const [query, longerTerm, id] of cases) {
+        const result = sqlite.queryComponents({ query });
+        expect(idsOf(result.rows), `query=${query}`).toEqual([id]);
+        expect(result.matchMode, `query=${query}`).toBe("all-terms");
+        expect(result.terms?.dropped, `query=${query}`).toEqual([]);
+        expect(result.total, `query=${query}`).toBeLessThan(sqlite.queryComponents({ query: longerTerm }).total);
+      }
+    });
+
     it("컴포넌트 ID 로도 찾는다 (패키지명과 다른 ID)", () => {
       // 'uss-cmt' 의 패키지명은 egovframework.com.uss.cmt 다. ID 에만 'uss-cmt' 가 있다
       expect(idsOf(sqlite.queryComponents({ query: "uss-cmt" }).rows)).toEqual(["uss-cmt"]);
@@ -96,7 +113,7 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       // 한 행에 두 제품명이 함께 들 수 없다. 검색어의 절반 이상이 일치하는 행만 찾던 때에는 0건이었다
       const result = compatible("JEUS Tibero WebLogic");
       expect(result.matchMode).toBe("any-term");
-      expect(result.terms).toEqual({ used: ["JEUS", "Tibero", "WebLogic"], ignored: [], required: 1 });
+      expect(result.terms).toEqual({ used: ["JEUS", "Tibero", "WebLogic"], ignored: [], dropped: [], required: 1 });
       // 제품명 하나씩으로 찾은 행을 합친 것과 같다
       const each = ["JEUS", "Tibero", "WebLogic"].map((name) => rowKeys(compatible(name)));
       expect(each.every((keys) => keys.length > 0)).toBe(true);
@@ -139,15 +156,22 @@ describe("동봉 지식베이스의 키워드 검색", () => {
         const result = compatible(withParticle);
         expect(expected.total, `query=${bare}`).toBeGreaterThan(0);
         expect(rowSet(result), `query=${withParticle}`).toEqual(rowSet(expected));
-        expect(result.terms, `query=${withParticle}`).toEqual({ used: [bare], ignored: [], required: 1 });
+        expect(result.terms, `query=${withParticle}`).toEqual({ used: [bare], ignored: [], dropped: [], required: 1 });
       }
     });
 
     it('"JEUS 8" 은 제품 버전 표기가 "JEUS 8" 인 행을 돌려준다', () => {
       const result = compatible("JEUS 8");
-      expect(result.rows.map((row) => row.product_version)).toContain("JEUS 8");
+      const versions = result.rows.map((row) => row.product_version);
+      expect(versions).toContain("JEUS 8");
       // 설명에 '8' 이 없는 행이라 제품 버전 표기를 검색하지 않으면 찾지 못한다
       expect(result.rows.every((row) => row.product_name === "JEUS")).toBe(true);
+      // 한 글자 검색어 '8' 도 쓴다. 빼던 때에는 'JEUS' 만 일치하는 JEUS 21 이 맨 앞에 함께 나왔다
+      expect(result.matchMode).toBe("all-terms");
+      expect(result.terms).toEqual({ used: ["JEUS", "8"], ignored: [], dropped: [], required: 2 });
+      expect(versions).toContain("JEUS 8.5");
+      expect(versions).not.toContain("JEUS 21");
+      expect(result.total).toBeLessThan(compatible("JEUS").total);
     });
 
     it('전각으로 입력한 "ＣＭＳ" 는 "CMS" 와 같은 건수를 돌려준다', () => {

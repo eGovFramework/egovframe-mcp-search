@@ -290,6 +290,12 @@ export interface CompatibilitySearchResponse {
   /** 일치하는 행이 없어 검색에 쓰지 않은 검색어 (query 에 적힌 꼴). 그런 검색어가 없으면 없다 */
   ignoredTerms?: string[];
   /**
+   * 일치하는 행이 있는지와 관계없이 검색에서 뺀 검색어 (query 에 적힌 꼴). 한 글자 검색어가 여기에 든다:
+   * 한 글자 검색어까지 일치하는 행이 없으면 두 글자 이상인 검색어만으로 찾는다. matchMode 가 all-terms 여도
+   * 싣는다 (나머지 검색어는 모두 일치했다는 뜻이다). 뺀 검색어가 없으면 없다
+   */
+  droppedTerms?: string[];
+  /**
    * 키워드 검색 결과가 0건인데 같은 필터만 적용하면 행이 있을 때: 필터만 적용한 건수.
    * 0건의 원인이 필터가 아니라 query 임을 알 수 있다 (query 의 어느 검색어도 그 행들과 일치하지 않았다)
    */
@@ -374,6 +380,8 @@ export async function searchCompatibleSoftware(args: {
     // 대체 검색 결과는 일부 검색어만 일치한 행이다. 어떤 검색어 가운데 몇 개가 일치했는지 함께 알린다
     ...(matchMode === 'any-term' && terms ? { usedTerms: terms.used, requiredMatches: terms.required } : {}),
     ...(terms && terms.ignored.length > 0 ? { ignoredTerms: terms.ignored } : {}),
+    // 검색에서 뺀 검색어는 결과를 찾은 방식과 관계없이 알린다 (all-terms 는 나머지 검색어가 모두 일치했다는 뜻이다)
+    ...(terms && terms.dropped.length > 0 ? { droppedTerms: terms.dropped } : {}),
     ...(totalWithoutQuery > 0 ? { totalWithoutQuery } : {}),
     ...(available ? { available } : {}),
     software: results,

@@ -235,6 +235,27 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
       expect(searchComponents("?!")).not.toHaveProperty("ignoredTerms");
     });
 
+    it("한 글자라서 뺀 검색어를 droppedTerms 로 알린다", () => {
+      // 'x', 'y' 까지 든 컴포넌트는 없어, 두 글자를 빼고 '증서' 로 찾았다 (모든 검색어가 일치한 결과에도 싣는다)
+      const retried = searchComponents("x y 증서");
+      expect(idsOf(retried.results)).toEqual(["sec"]);
+      expect(retried).toMatchObject({ matchMode: "all-terms", droppedTerms: ["x", "y"] });
+      expect(retried).not.toHaveProperty("ignoredTerms");
+
+      // 대체 검색 결과에서는 일치하는 컴포넌트가 없는 검색어와 구분해 싣는다
+      expect(searchComponents("y 증서 없는말")).toMatchObject({
+        matchMode: "any-term",
+        usedTerms: ["증서"],
+        ignoredTerms: ["없는말"],
+        droppedTerms: ["y"],
+      });
+
+      // 뺀 검색어가 없으면 싣지 않는다
+      for (const query of ["로그인 서", "게시판 템플릿", "게시판을 만들고", "?!"]) {
+        expect(searchComponents(query), `query=${query}`).not.toHaveProperty("droppedTerms");
+      }
+    });
+
     it("예상하지 못한 오류는 다른 검색으로 바꾸지 않고 그대로 던진다", () => {
       // 키워드 조회만 실패하게 한다. 예전에는 이 오류를 삼키고 keyword 필터 목록으로 대신 응답했다
       const original = SQLiteManager.prototype.queryComponents;
@@ -616,6 +637,72 @@ describe("공통컴포넌트 도구 — 결과 포맷", () => {
       expect(formatComponentList([uia, sec], false, { matchMode: "any-term", ignoredTerms: [] })).not.toContain(
         "검색에 쓰지 않은 낱말",
       );
+    });
+
+    const DROPPED_NOTE = "> 한 글자라서 검색에 쓰지 않은 낱말: x, y.";
+
+    it("한 글자라서 뺀 낱말(droppedTerms)은 일치하는 항목이 없어 쓰지 않은 낱말 다음 줄에 따로 적는다", () => {
+      const lines = formatComponentList([uia], false, {
+        matchMode: "any-term",
+        usedTerms: ["로그인"],
+        requiredMatches: 1,
+        ignoredTerms: ["보여줘"],
+        droppedTerms: ["x", "y"],
+      }).split("\n");
+      expect(lines.slice(0, 8)).toEqual([
+        "## 공통컴포넌트 목록 (1개)",
+        "",
+        "> 모든 검색어가 들어 있는 항목이 없어, 검색어 1개 가운데 1개 이상이 들어 있는 항목을 표시합니다 (검색어: 로그인).",
+        "",
+        "> 일치하는 항목이 없어 검색에 쓰지 않은 낱말: 보여줘.",
+        "",
+        DROPPED_NOTE,
+        "",
+      ]);
+    });
+
+    it("모든 검색어가 일치한 결과에도 뺀 낱말을 적는다", () => {
+      for (const groupByCategory of [true, false]) {
+        const lines = formatComponentList([sec], groupByCategory, {
+          matchMode: "all-terms",
+          droppedTerms: ["x", "y"],
+        }).split("\n");
+        expect(lines.slice(0, 4), `groupByCategory=${groupByCategory}`).toEqual([
+          "## 공통컴포넌트 목록 (1개)",
+          "",
+          DROPPED_NOTE,
+          "",
+        ]);
+        // 안내 다음에 표가 이어진다
+        expect(lines[4].startsWith(groupByCategory ? "### " : "| 컴포넌트 ID |")).toBe(true);
+      }
+    });
+
+    it("결과가 없어도 뺀 낱말을 적는다", () => {
+      const text = formatComponentList([], false, {
+        total: 0,
+        matchMode: "any-term",
+        usedTerms: [],
+        requiredMatches: 0,
+        ignoredTerms: ["없는말"],
+        droppedTerms: ["x", "y"],
+      });
+      expect(text.split("\n")).toEqual([
+        "## 공통컴포넌트 목록 (0개)",
+        "",
+        "> 일치하는 항목이 없어 검색에 쓰지 않은 낱말: 없는말.",
+        "",
+        DROPPED_NOTE,
+        "",
+        "검색 결과가 없습니다.",
+        "",
+      ]);
+    });
+
+    it("droppedTerms 가 비어 있거나 없으면 적지 않는다", () => {
+      for (const options of [{ matchMode: "all-terms" as const, droppedTerms: [] }, { matchMode: "all-terms" as const }]) {
+        expect(formatComponentList([uia, sec], false, options)).not.toContain("검색에 쓰지 않은 낱말");
+      }
     });
 
     it("결과가 없으면 쓰지 않은 낱말만 적고, 항목을 표시한다는 any-term 안내는 적지 않는다", () => {

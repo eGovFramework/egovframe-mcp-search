@@ -277,15 +277,36 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
   });
 
   describe("한 글자 검색어", () => {
-    it("두 글자 이상인 검색어가 있으면 한 글자 검색어는 쓰지 않는다", () => {
-      // '8' 을 쓰면 설명이나 버전 표기에 8 이 든 JEUS 8.5 만 남는다
+    it("모든 검색어가 일치하는 행을 찾을 때는 한 글자 검색어도 쓴다", () => {
+      // '8' 은 JEUS 8.5 의 버전 표기와 설명에만 있다. 한 글자라고 빼면 'JEUS' 만 일치하는 JEUS 21 이 함께 나온다
       const versioned = sqlite.queryCompatibleSoftware({ query: "JEUS 8" });
-      expect(versionsOf(versioned.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(versionsOf(versioned.rows)).toEqual(["JEUS 8.5"]);
+      expect(versioned.total).toBe(1);
       expect(versioned.matchMode).toBe("all-terms");
-      // T 와 M 은 각각 세 행(Tibero, SampleCMS, OtherCMS)에 들어 있지만 WebLogic 에는 없다
+      expect(versioned.terms).toEqual({ used: ["JEUS", "8"], ignored: [], dropped: [], required: 2 });
+    });
+
+    it("한 글자 검색어까지 일치하는 행이 없으면 한 글자 검색어를 빼고 다시 찾는다", () => {
+      // T 와 M 은 각각 세 행(Tibero, SampleCMS, OtherCMS)에 들어 있지만 '오라클' 이 든 WebLogic 에는 없다.
+      // 나머지 검색어('오라클')가 모두 일치하는 행을 찾았으므로 all-terms 다
       const mixed = sqlite.queryCompatibleSoftware({ query: "T M 오라클" });
       expect(versionsOf(mixed.rows)).toEqual(["WebLogic 12c"]);
       expect(mixed.matchMode).toBe("all-terms");
+      expect(mixed.terms).toEqual({ used: ["오라클"], ignored: [], dropped: ["T", "M"], required: 1 });
+      // 어느 행에도 없는 한 글자 검색어도 같다 ('9' 가 든 행은 없다)
+      const absent = sqlite.queryCompatibleSoftware({ query: "JEUS 9" });
+      expect(versionsOf(absent.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(absent.matchMode).toBe("all-terms");
+      expect(absent.terms).toEqual({ used: ["JEUS"], ignored: [], dropped: ["9"], required: 1 });
+    });
+
+    it("그래도 없으면 한 글자 검색어를 뺀 채로 대체 검색으로 넘어간다", () => {
+      // 오라클(1행)과 없는말(0행)이 함께 든 행은 없다. T 와 M 을 대체 검색에 쓰면 그 글자가 든 세 행이 섞여 나온다
+      const result = sqlite.queryCompatibleSoftware({ query: "T M 오라클 없는말" });
+      expect(versionsOf(result.rows)).toEqual(["WebLogic 12c"]);
+      expect(result.total).toBe(1);
+      expect(result.matchMode).toBe("any-term");
+      expect(result.terms).toEqual({ used: ["오라클"], ignored: ["없는말"], dropped: ["T", "M"], required: 1 });
     });
 
     it("모든 검색어가 한 글자이면 그대로 쓴다", () => {
@@ -393,7 +414,7 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(versionsOf(result.rows)).toEqual(["JEUS 21", "Tibero 7", "JEUS 8.5", "WebLogic 12c"]);
       expect(result.total).toBe(4);
       expect(result.matchMode).toBe("any-term");
-      expect(result.terms).toEqual({ used: ["JEUS", "Tibero", "WebLogic"], ignored: [], required: 1 });
+      expect(result.terms).toEqual({ used: ["JEUS", "Tibero", "WebLogic"], ignored: [], dropped: [], required: 1 });
     });
 
     it("일치 기준은 행이 나오는 데까지만 낮춘다", () => {
@@ -405,6 +426,7 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(result.terms).toEqual({
         used: ["JEUS", "8.5", "Tibero", "WebLogic", "OtherCMS"],
         ignored: [],
+        dropped: [],
         required: 2,
       });
 
@@ -640,34 +662,36 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     const termsOf = (query: string, filters = {}) => sqlite.queryCompatibleSoftware({ query, filters }).terms;
 
     it("모든 검색어가 일치하는 행을 찾았으면 검색어를 모두 used 로 돌려준다", () => {
-      expect(termsOf("JEUS")).toEqual({ used: ["JEUS"], ignored: [], required: 1 });
-      expect(termsOf("맥스 jeus")).toEqual({ used: ["맥스", "jeus"], ignored: [], required: 2 });
+      expect(termsOf("JEUS")).toEqual({ used: ["JEUS"], ignored: [], dropped: [], required: 1 });
+      expect(termsOf("맥스 jeus")).toEqual({ used: ["맥스", "jeus"], ignored: [], dropped: [], required: 2 });
     });
 
     it("대체 검색에서는 일치하는 행이 없어 쓰지 않은 검색어를 ignored 로 돌려준다", () => {
-      expect(termsOf("JEUS 호환 여부")).toEqual({ used: ["JEUS", "호환"], ignored: ["여부"], required: 1 });
+      expect(termsOf("JEUS 호환 여부")).toEqual({ used: ["JEUS", "호환"], ignored: ["여부"], dropped: [], required: 1 });
       // query 에 적힌 순서를 지킨다
       expect(termsOf("추천 JEUS 문의 Tibero 여부")).toEqual({
         used: ["JEUS", "Tibero"],
         ignored: ["추천", "문의", "여부"],
+        dropped: [],
         required: 1,
       });
     });
 
     it("조사를 떼어 쓴 검색어는 used 에 뗀 꼴로, 쓰지 않은 검색어는 ignored 에 적힌 꼴로 싣는다", () => {
-      expect(termsOf("JEUS는")).toEqual({ used: ["JEUS"], ignored: [], required: 1 });
+      expect(termsOf("JEUS는")).toEqual({ used: ["JEUS"], ignored: [], dropped: [], required: 1 });
       expect(termsOf("JEUS는 티맥스는 없는말은")).toEqual({
         used: ["JEUS", "티맥스"],
         ignored: ["없는말은"],
+        dropped: [],
         required: 1,
       });
       // 검색어 그대로 일치하는 행이 있으면 떼지 않는다 ('티베로' 는 '로' 로 끝난다)
-      expect(termsOf("티베로 없는말")).toEqual({ used: ["티베로"], ignored: ["없는말"], required: 1 });
+      expect(termsOf("티베로 없는말")).toEqual({ used: ["티베로"], ignored: ["없는말"], dropped: [], required: 1 });
     });
 
     it("뗀 꼴이 다른 검색어와 같으면 used 에 한 번만 싣는다", () => {
-      expect(termsOf("JEUS JEUS는 Tibero")).toEqual({ used: ["JEUS", "Tibero"], ignored: [], required: 1 });
-      expect(termsOf("jeus는 JEUS Tibero")).toEqual({ used: ["jeus", "Tibero"], ignored: [], required: 1 });
+      expect(termsOf("JEUS JEUS는 Tibero")).toEqual({ used: ["JEUS", "Tibero"], ignored: [], dropped: [], required: 1 });
+      expect(termsOf("jeus는 JEUS Tibero")).toEqual({ used: ["jeus", "Tibero"], ignored: [], dropped: [], required: 1 });
     });
 
     it("쓸 검색어가 하나도 남지 않으면 used 는 비고 결과는 0건이다", () => {
@@ -675,7 +699,7 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
         rows: [],
         total: 0,
         matchMode: "any-term",
-        terms: { used: [], ignored: ["없는말", "다른말"], required: 0 },
+        terms: { used: [], ignored: ["없는말", "다른말"], dropped: [], required: 0 },
       });
     });
 
@@ -683,23 +707,34 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(termsOf("JEUS WebLogic 맥스", { category: "DBMS" })).toEqual({
         used: ["맥스"],
         ignored: ["JEUS", "WebLogic"],
+        dropped: [],
         required: 1,
       });
       // 필터가 없으면 세 검색어 모두 일치하는 행이 있다 (둘 이상 일치하는 행은 JEUS 두 행이다)
       expect(termsOf("JEUS WebLogic 맥스")).toEqual({
         used: ["JEUS", "WebLogic", "맥스"],
         ignored: [],
+        dropped: [],
         required: 2,
       });
     });
 
-    it("두 글자 이상인 검색어가 있어 뺀 한 글자 검색어는 used 에도 ignored 에도 싣지 않는다", () => {
-      // ignored 는 '일치하는 행이 없어' 쓰지 않은 검색어다. '8' 은 일치하는 행이 있지만 한 글자라서 뺐다
-      expect(termsOf("JEUS 8")).toEqual({ used: ["JEUS"], ignored: [], required: 1 });
-      expect(termsOf("T M 오라클 없는말")).toEqual({ used: ["오라클"], ignored: ["없는말"], required: 1 });
+    it("한 글자라서 뺀 검색어는 used 와 ignored 가 아니라 dropped 로 돌려준다", () => {
+      // ignored 는 '일치하는 행이 없어' 쓰지 않은 검색어다. T 와 M 은 일치하는 행이 있지만 한 글자라서 뺐다
+      expect(termsOf("T M 오라클")).toEqual({ used: ["오라클"], ignored: [], dropped: ["T", "M"], required: 1 });
+      expect(termsOf("T M 오라클 없는말")).toEqual({
+        used: ["오라클"],
+        ignored: ["없는말"],
+        dropped: ["T", "M"],
+        required: 1,
+      });
+      // query 에 적힌 순서를 지킨다
+      expect(termsOf("M 오라클 T")?.dropped).toEqual(["M", "T"]);
+      // 한 글자 검색어까지 모두 일치한 행을 찾았으면 뺀 것이 없다
+      expect(termsOf("JEUS 8")).toEqual({ used: ["JEUS", "8"], ignored: [], dropped: [], required: 2 });
       // 모든 검색어가 한 글자이면 그대로 쓰고, 일치하는 행이 없는 것은 ignored 다
-      expect(termsOf("T M")).toEqual({ used: ["T", "M"], ignored: [], required: 2 });
-      expect(termsOf("T 9")).toEqual({ used: ["T"], ignored: ["9"], required: 1 });
+      expect(termsOf("T M")).toEqual({ used: ["T", "M"], ignored: [], dropped: [], required: 2 });
+      expect(termsOf("T 9")).toEqual({ used: ["T"], ignored: ["9"], dropped: [], required: 1 });
     });
 
     it("required 는 all-terms 에서는 쓴 검색어의 수, any-term 에서는 실제로 적용한 일치 기준이다", () => {
@@ -772,7 +807,7 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       // 대체 검색의 대상도 level 로 좁힌다: 'JEUS' 는 레벨 1 안에 없다
       const fallback = sqlite.queryCompatibleSoftware({ query: "JEUS CMS", filters: { level: 1 } });
       expect(versionsOf(fallback.rows)).toEqual(["SampleCMS 1.0"]);
-      expect(fallback.terms).toEqual({ used: ["CMS"], ignored: ["JEUS"], required: 1 });
+      expect(fallback.terms).toEqual({ used: ["CMS"], ignored: ["JEUS"], dropped: [], required: 1 });
     });
 
     it("필터는 LIMIT 보다 먼저 적용한다", () => {
@@ -827,7 +862,7 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       // 레벨 2 인 다섯 행 안에서: JEUS(2행), Tibero(1행), WebLogic(1행) → k=3, 기준 2 를 채운 행이 없어 1 로 낮춘다
       const lowered = sqlite.queryCompatibleSoftware({ query: "JEUS Tibero WebLogic", filters: { minLevel: 2 } });
       expect(versionsOf(lowered.rows)).toEqual(["JEUS 21", "Tibero 7", "JEUS 8.5", "WebLogic 12c"]);
-      expect(lowered.terms).toEqual({ used: ["JEUS", "Tibero", "WebLogic"], ignored: [], required: 1 });
+      expect(lowered.terms).toEqual({ used: ["JEUS", "Tibero", "WebLogic"], ignored: [], dropped: [], required: 1 });
 
       // 프레임워크 4.0 안에는 WebLogic 이 없다 → k=2(JEUS, Tibero), 기준 1
       const scoped = sqlite.queryCompatibleSoftware({
@@ -835,7 +870,7 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
         filters: { frameworkVersion: "4.0" },
       });
       expect(versionsOf(scoped.rows)).toEqual(["Tibero 7", "JEUS 8.5"]);
-      expect(scoped.terms).toEqual({ used: ["JEUS", "Tibero"], ignored: ["WebLogic"], required: 1 });
+      expect(scoped.terms).toEqual({ used: ["JEUS", "Tibero"], ignored: ["WebLogic"], dropped: [], required: 1 });
     });
 
     it("대상 안에서 일치하는 검색어가 하나도 남지 않으면 빈 결과를 돌려준다", () => {
@@ -845,7 +880,7 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
         rows: [],
         total: 0,
         matchMode: "any-term",
-        terms: { used: [], ignored: ["JEUS", "WebLogic"], required: 0 },
+        terms: { used: [], ignored: ["JEUS", "WebLogic"], dropped: [], required: 0 },
       });
     });
 
@@ -1027,7 +1062,7 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(sqlite.queryCompatibleSoftware({ query: "JEUS", filters: { vendor: "\u0000티맥스" } })).toEqual({
         ...NO_ROWS,
         matchMode: "any-term",
-        terms: { used: [], ignored: ["JEUS"], required: 0 },
+        terms: { used: [], ignored: ["JEUS"], dropped: [], required: 0 },
       });
       expect(sqlite.queryCompatibleSoftware({ query: "티맥스", filters: { productName: "\u0000" } }).total).toBe(0);
       // 다른 검색어로 물어도 같다
@@ -1348,7 +1383,10 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     it("조회와 같은 규칙으로 찾는다 (낱말의 가운데, 제품 버전 표기, 한 글자 검색어)", () => {
       expect(versionsOf(sqlite.fullTextSearchCompatibility("오라클"))).toEqual(["WebLogic 12c"]);
       expect(versionsOf(sqlite.fullTextSearchCompatibility("JEUS 21"))).toEqual(["JEUS 21"]);
-      expect(versionsOf(sqlite.fullTextSearchCompatibility("JEUS 8"))).toEqual(["JEUS 21", "JEUS 8.5"]);
+      // 한 글자 검색어도 쓰고, 그렇게 해서 일치하는 행이 없을 때만 뺀다
+      expect(versionsOf(sqlite.fullTextSearchCompatibility("JEUS 8"))).toEqual(["JEUS 8.5"]);
+      expect(versionsOf(sqlite.fullTextSearchCompatibility("T M 오라클"))).toEqual(["WebLogic 12c"]);
+      expect(sqlite.queryCompatibleSoftwareAllTerms("JEUS 9")).toMatchObject({ total: 2 });
     });
 
     it("모든 검색어가 일치하는 행이 없으면 대체 검색 결과를 돌려주지 않는다", () => {

@@ -300,6 +300,43 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
     });
   });
 
+  describe("검색에서 뺀 검색어 (droppedTerms)", () => {
+    useCatalogue(CATALOGUE);
+
+    it("한 글자라서 뺀 검색어를 알린다 (모든 검색어가 일치한 결과에도 싣는다)", async () => {
+      // T 와 M 까지 든 행은 없어, 두 글자를 빼고 '오라클' 로 찾았다
+      const response = await searchCompatibleSoftware({ query: "T M 오라클" });
+      expect(versionsOf(response.software)).toEqual(["WebLogic 12c"]);
+      expect(response).toMatchObject({ matchMode: "all-terms", droppedTerms: ["T", "M"] });
+      expect(response).not.toHaveProperty("usedTerms");
+      expect(response).not.toHaveProperty("ignoredTerms");
+    });
+
+    it("대체 검색 결과에서는 쓴 검색어, 일치하는 행이 없는 검색어와 구분해 싣는다", async () => {
+      const response = await searchCompatibleSoftware({ query: "T M 오라클 없는말" });
+      expect(response).toMatchObject({
+        matchMode: "any-term",
+        usedTerms: ["오라클"],
+        requiredMatches: 1,
+        ignoredTerms: ["없는말"],
+        droppedTerms: ["T", "M"],
+      });
+    });
+
+    it("뺀 검색어가 없으면 싣지 않는다", async () => {
+      for (const response of [
+        // 한 글자 검색어까지 모두 일치한 행을 찾았다
+        await searchCompatibleSoftware({ query: "JEUS 8" }),
+        await searchCompatibleSoftware({ query: "JEUS" }),
+        await searchCompatibleSoftware({ query: "JEUS 호환 여부" }),
+        await searchCompatibleSoftware({ frameworkVersion: "4.3" }),
+        await searchCompatibleSoftware({ query: "*" }),
+      ]) {
+        expect(response).not.toHaveProperty("droppedTerms");
+      }
+    });
+  });
+
   describe("query 때문에 0건일 때의 안내 (totalWithoutQuery)", () => {
     useCatalogue(CATALOGUE);
 

@@ -132,6 +132,9 @@ export function getComponentInfo(componentId: string): {
  *   검색어는 뗀 꼴)와, 결과의 컴포넌트마다 일치한 검색어의 최소 수다 (쓴 검색어의 절반을 올림한 수에서 시작해,
  *   그 기준을 채운 컴포넌트가 없으면 1 까지 낮춘 값. 쓴 검색어가 없으면 0).
  * - ignoredTerms: 일치하는 컴포넌트가 없어 검색에 쓰지 않은 검색어 (query 에 적힌 꼴). 그런 검색어가 없으면 없다.
+ * - droppedTerms: 일치하는 컴포넌트가 있는지와 관계없이 검색에서 뺀 검색어 (query 에 적힌 꼴). 한 글자 검색어가
+ *   여기에 든다: 한 글자 검색어까지 일치하는 컴포넌트가 없으면 두 글자 이상인 검색어만으로 찾는다.
+ *   matchMode 가 all-terms 여도 싣고, 뺀 검색어가 없으면 없다.
  */
 export function searchComponents(
   query: string,
@@ -145,6 +148,7 @@ export function searchComponents(
   usedTerms?: string[];
   requiredMatches?: number;
   ignoredTerms?: string[];
+  droppedTerms?: string[];
 } {
   // 검색어가 하나도 없으면 찾을 것이 없다 (필터만으로 목록을 보려면 listCommonComponents 를 쓴다)
   if (extractSearchTerms(query).length === 0) {
@@ -164,6 +168,7 @@ export function searchComponents(
       ? { usedTerms: found.terms.used, requiredMatches: found.terms.required }
       : {}),
     ...(found.terms && found.terms.ignored.length > 0 ? { ignoredTerms: found.terms.ignored } : {}),
+    ...(found.terms && found.terms.dropped.length > 0 ? { droppedTerms: found.terms.dropped } : {}),
   };
 }
 
@@ -246,6 +251,8 @@ function anyTermNote(usedTerms: string[] | undefined, requiredMatches: number | 
  *   any-term 안내에 검색어 몇 개 가운데 몇 개 이상이 든 항목인지와 그 검색어를 적는다. 받지 못하면
  *   (쓴 검색어가 비어 있을 때도) 지금까지의 문구("절반 이상")를 그대로 쓴다.
  * - options.ignoredTerms: 일치하는 항목이 없어 검색에 쓰지 않은 낱말. 비어 있지 않으면 any-term 안내 다음에 적는다.
+ * - options.droppedTerms: 한 글자라서 검색에서 뺀 낱말. 비어 있지 않으면 위의 안내 다음에 따로 적는다.
+ *   모든 검색어가 일치한 결과(all-terms)에도, 결과가 없을 때도 적는다.
  */
 export function formatComponentList(
   components: CommonComponent[],
@@ -256,6 +263,7 @@ export function formatComponentList(
     usedTerms?: string[];
     requiredMatches?: number;
     ignoredTerms?: string[];
+    droppedTerms?: string[];
   } = {}
 ): string {
   const shown = components.length;
@@ -270,6 +278,10 @@ export function formatComponentList(
   }
   if (options.ignoredTerms && options.ignoredTerms.length > 0) {
     output += `> 일치하는 항목이 없어 검색에 쓰지 않은 낱말: ${options.ignoredTerms.join(', ')}.\n\n`;
+  }
+  // 일치하는 항목이 있는지와 관계없이 뺀 낱말은 따로 적는다 (위의 낱말과 뺀 이유가 다르다)
+  if (options.droppedTerms && options.droppedTerms.length > 0) {
+    output += `> 한 글자라서 검색에 쓰지 않은 낱말: ${options.droppedTerms.join(', ')}.\n\n`;
   }
 
   // 결과가 없어도 제목은 출력한다 (통합 검색 결과에서 어느 섹션인지 알 수 있어야 한다)
