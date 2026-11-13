@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { DeveloperKnowledgeManager } from "../../src/rag/knowledgeManager.js";
 import { getEmbedder } from "../../src/rag/embedder.js";
-import { searchKnowledge } from "../../src/tools/knowledge.js";
+import { formatProductLabel, searchKnowledge, smartSearch } from "../../src/tools/knowledge.js";
 import { UserFacingError } from "../../src/utils/errors.js";
 import {
   BUNDLED_KB,
@@ -210,6 +210,64 @@ describe("searchKnowledge 도구 — 통합 검색(scope=all)의 지식 미리�
     expect(preview).toContain("\n\n답변:\n안녕하세요.");
 
     expect((await previewOf(80)).length).toBeLessThanOrEqual(80);
+  });
+});
+
+describe("formatProductLabel", () => {
+  it("버전 표기가 제품명으로 시작하면 버전 표기만 쓴다", () => {
+    expect(formatProductLabel("JEUS", "JEUS 21")).toBe("JEUS 21");
+    expect(formatProductLabel("Tibero", "Tibero v7")).toBe("Tibero v7");
+    expect(formatProductLabel("그린나래CMS", "그린나래CMS1.0")).toBe("그린나래CMS1.0");
+    expect(formatProductLabel("DevOnFrame", "DevOnFrame")).toBe("DevOnFrame");
+  });
+
+  it("버전 표기가 제품명으로 시작하지 않으면 제품명과 버전을 잇는다", () => {
+    expect(formatProductLabel("BXM Framework", "v4.0")).toBe("BXM Framework v4.0");
+    expect(formatProductLabel("JAMMY CMS", "v1.0")).toBe("JAMMY CMS v1.0");
+  });
+
+  it("버전이 비어 있으면 제품명만 쓴다", () => {
+    expect(formatProductLabel("JEUS", "")).toBe("JEUS");
+    expect(formatProductLabel("JEUS", null)).toBe("JEUS");
+    expect(formatProductLabel("JEUS", undefined)).toBe("JEUS");
+    expect(formatProductLabel("JEUS", "   ")).toBe("JEUS");
+  });
+});
+
+describe("통합 검색의 호환 제품 표기", () => {
+  const compatibilityRow = (product_name: string, product_version: string) => ({
+    id: 1,
+    product_name,
+    product_version,
+    framework_version: "4.3",
+    category: "WAS",
+    compatibility_level: 1,
+    vendor: "벤더",
+    description: null,
+  });
+
+  beforeAll(() => {
+    hybrid.current = {
+      getKnowledge: () => ({}),
+      smartSearch: async () => ({
+        compatibility: [compatibilityRow("JEUS", "JEUS 21"), compatibilityRow("BXM Framework", "v4.0")],
+        knowledge: [],
+        totalResults: 2,
+      }),
+    };
+  });
+
+  it("searchKnowledge(scope=all) 은 제품명을 두 번 쓰지 않는다", async () => {
+    const output = (await searchKnowledge({ query: "JEUS", scope: "all" })) as {
+      compatibility: Array<{ product: string; framework: string }>;
+    };
+    expect(output.compatibility.map((c) => c.product)).toEqual(["JEUS 21", "BXM Framework v4.0"]);
+    expect(output.compatibility[0].framework).toBe("4.3");
+  });
+
+  it("smartSearch 도 같은 표기를 쓴다", async () => {
+    const output = await smartSearch({ query: "JEUS" });
+    expect(output.compatibility.map((c) => c.product)).toEqual(["JEUS 21", "BXM Framework v4.0"]);
   });
 });
 

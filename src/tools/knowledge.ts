@@ -29,6 +29,22 @@ function requireQuery(query: string | undefined): string {
   return query;
 }
 
+/**
+ * 호환 제품의 표기를 만든다.
+ *
+ * 호환성 목록의 product_version 은 대부분 제품명을 이미 담고 있다 (예: 제품명 "JEUS",
+ * 버전 "JEUS 21"). 둘을 그대로 이으면 "JEUS JEUS 21" 이 되므로, 버전 표기가 제품명으로
+ * 시작하면 버전 표기만 쓴다.
+ */
+export function formatProductLabel(productName: string, productVersion?: string | null): string {
+  const name = (productName ?? '').trim();
+  const version = (productVersion ?? '').trim();
+  if (!version) {
+    return name;
+  }
+  return version.startsWith(name) ? version : `${name} ${version}`;
+}
+
 /** 통합 검색(scope="all")의 지식 미리보기 길이 — excerptLength 를 주지 않았을 때 */
 const DEFAULT_PREVIEW_LENGTH = 200;
 
@@ -103,7 +119,7 @@ export async function searchKnowledge(args: {
       query,
       totalResults: results.totalResults,
       compatibility: results.compatibility.map((s: any) => ({
-        product: `${s.product_name} ${s.product_version}`,
+        product: formatProductLabel(s.product_name, s.product_version),
         framework: s.framework_version,
         category: s.category,
         level: s.compatibility_level,
@@ -218,7 +234,7 @@ export async function smartSearch(args: {
     query: args.query,
     totalResults: results.totalResults,
     compatibility: results.compatibility.map(s => ({
-      product: `${s.product_name} ${s.product_version}`,
+      product: formatProductLabel(s.product_name, s.product_version),
       framework: s.framework_version,
       category: s.category,
       level: s.compatibility_level,
