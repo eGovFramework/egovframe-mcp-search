@@ -75,7 +75,10 @@ for t in $targets; do # 타깃 반복(darwin-arm64, darwin-x64, linux-x64, linux
       } }
     walk(process.argv[1]);
   ' "$work/package/node_modules"
-  tar -czf "dist/$name-$ver-$t.tgz" -C "$work" package # 다시 tgz 로 압축
+  # COPYFILE_DISABLE=1: macOS 의 tar(bsdtar)는 확장 속성(com.apple.provenance 등)을 파일마다
+  # AppleDouble 엔트리(._이름)로 함께 넣는다. npm 은 이를 걸러 내지 않아 설치 위치의 모든 파일 옆에
+  # ._* 파일이 생기고, 공통컴포넌트 소스 목록에 ._*.java 같은 가짜 파일이 섞인다.
+  COPYFILE_DISABLE=1 tar -czf "dist/$name-$ver-$t.tgz" -C "$work" package # 다시 tgz 로 압축
   rm -rf "$work" # 임시 디렉토리 정리
 done
 
