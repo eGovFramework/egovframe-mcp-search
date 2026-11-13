@@ -1063,11 +1063,20 @@ export interface ComponentDDLResult {
   viewCount: number;
   /** tables 가운데 스크립트에서 CREATE TABLE / CREATE VIEW 를 찾지 못한 이름 */
   missing: string[];
+  /** tables 에는 없지만 외래 키가 참조해서 DDL 을 함께 실은 테이블 (찾은 순서, 대문자) */
+  referencedTables: string[];
+  /** ALTER 문으로 따로 실은 외래 키 제약의 수 (외래 키를 CREATE TABLE 밖에 두는 DB 의 스크립트) */
+  foreignKeyCount: number;
 }
 
 /**
  * 컴포넌트에 필요한 DDL(CREATE TABLE, CREATE VIEW) 추출
- * useTables 기반으로 해당 테이블·뷰의 DDL만 골라서 반환
+ * useTables 기반으로 해당 테이블·뷰의 DDL만 골라서 반환한다.
+ *
+ * 받은 DDL 을 그대로 실행할 수 있도록 외래 키를 따라간다:
+ * - 외래 키가 참조하는 테이블이 useTables 에 없으면 그 테이블의 DDL 도 함께 싣는다 (참조를 이어서 따라간다).
+ * - 외래 키를 CREATE TABLE 안이 아니라 ALTER 문으로 따로 두는 DB(cubrid 는 초기 데이터 스크립트의 끝)는
+ *   결과에 실린 테이블 사이의 제약을 DDL 끝에 싣는다.
  */
 export function getComponentDDL(componentId: string, dbType: string = 'mysql'): ComponentDDLResult | null {
   // 지원하지 않는 dbType 은 컴포넌트 없음(null)과 구분되도록 오류로 알린다
@@ -1102,6 +1111,8 @@ export function getComponentDDL(componentId: string, dbType: string = 'mysql'): 
       tableCount: 0,
       viewCount: 0,
       missing: [],
+      referencedTables: [],
+      foreignKeyCount: 0,
     };
   }
   
@@ -1118,21 +1129,149 @@ export function getComponentDDL(componentId: string, dbType: string = 'mysql'): 
       tableCount: 0,
       viewCount: 0,
       missing: [...tables],
+      referencedTables: [],
+      foreignKeyCount: 0,
     };
   }
 
-  const extractedDDL = extractTableDDLs(fullDDL, tables);
-  
+  // ALTER 문으로 따로 둔 외래 키 제약을 두 스크립트에서 모두 찾는다 (cubrid 는 초기 데이터 스크립트의 끝에 둔다)
+  const alterForeignKeys: SourcedForeignKey[] = [
+    ...extractForeignKeyStatements(fullDDL).map((fk) => ({ ...fk, fromDataScript: false })),
+    ...extractForeignKeyStatements(readDbScript(srcRoot, 'dml', normalizedDbType) ?? '').map((fk) => ({
+      ...fk,
+      fromDataScript: true,
+    })),
+  ];
+  const { extracted, referencedTables, foreignKeys } = extractWithForeignKeys(fullDDL, tables, alterForeignKeys);
+
+  let ddl = extracted.ddl;
+  if (foreignKeys.length > 0) {
+    ddl += '\n\n\n' + [
+      '-- =============================================',
+      `-- 외래 키 제약 ${foreignKeys.length}건`,
+      `-- ${normalizedDbType} 스크립트는 외래 키를 CREATE TABLE 안이 아니라 ALTER 문으로 따로 둔다.`,
+      ...(foreignKeys.some((fk) => fk.fromDataScript)
+        ? ['-- 원본에서는 초기 데이터 스크립트의 INSERT 문 뒤에 있으므로, 초기 데이터를 넣은 뒤에 실행한다.']
+        : []),
+      '-- =============================================',
+      ...foreignKeys.map((fk) => fk.text),
+    ].join('\n');
+  }
+
   return {
     componentId: component.component_id,
     componentName: component.name,
     dbType: normalizedDbType,
     tables,
-    ddl: extractedDDL.ddl,
-    tableCount: extractedDDL.foundCount,
-    viewCount: extractedDDL.viewCount,
-    missing: extractedDDL.missing,
+    ddl,
+    tableCount: extracted.foundCount,
+    viewCount: extracted.viewCount,
+    missing: extracted.missing,
+    referencedTables,
+    foreignKeyCount: foreignKeys.length,
   };
+}
+
+/** ALTER 문으로 따로 둔 외래 키 제약과 그 문을 읽은 스크립트 */
+interface SourcedForeignKey extends ForeignKeyStatement {
+  /** 초기 데이터(DML) 스크립트에서 읽었는지 */
+  fromDataScript: boolean;
+}
+
+/**
+ * 요청한 테이블의 DDL 을 추출하고, 외래 키가 참조하는 테이블을 이어서 따라가 함께 싣는다.
+ * 스크립트에 CREATE TABLE 이 없는 참조 테이블은 보탤 수 없으므로 건너뛴다.
+ * foreignKeys 는 결과에 실린 두 테이블 사이의 ALTER 문 제약만 담는다.
+ */
+function extractWithForeignKeys(
+  fullDDL: string,
+  tables: string[],
+  alterForeignKeys: SourcedForeignKey[],
+): { extracted: ExtractedDDL; referencedTables: string[]; foreignKeys: SourcedForeignKey[] } {
+  const defined = new Set([...fullDDL.matchAll(/^\s*CREATE\s+TABLE\s+(\w+)/gim)].map((match) => match[1].toUpperCase()));
+  const referencedTables: string[] = [];
+
+  let extracted = extractTableDDLs(fullDDL, tables);
+  let created = new Set<string>();
+  for (;;) {
+    const missing = new Set(extracted.missing.map((name) => name.toUpperCase()));
+    created = new Set([...tables.map((name) => name.toUpperCase()).filter((name) => !missing.has(name)), ...referencedTables]);
+
+    const targets = [
+      ...collectReferencedTables(extracted.ddl),
+      ...alterForeignKeys.filter((fk) => created.has(fk.table)).map((fk) => fk.references),
+    ];
+    const fresh = [...new Set(targets)].filter((name) => !created.has(name) && defined.has(name));
+    if (fresh.length === 0) break;
+
+    referencedTables.push(...fresh);
+    extracted = extractTableDDLs(fullDDL, tables, referencedTables);
+  }
+
+  const seenStatements = new Set<string>();
+  const foreignKeys = alterForeignKeys.filter((fk) => {
+    if (!created.has(fk.table) || !created.has(fk.references) || seenStatements.has(fk.text)) return false;
+    seenStatements.add(fk.text);
+    return true;
+  });
+
+  return { extracted, referencedTables, foreignKeys };
+}
+
+/** SQL 에서 REFERENCES 뒤에 오는 테이블 이름을 모은다 (대문자, 나온 순서) */
+function collectReferencedTables(sql: string): string[] {
+  return [...sql.matchAll(/\bREFERENCES\s+[\[`"]?(\w+)/gi)].map((match) => match[1].toUpperCase());
+}
+
+/** ALTER 문으로 따로 둔 외래 키 제약 한 건 */
+export interface ForeignKeyStatement {
+  /** 제약을 거는 테이블 (대문자) */
+  table: string;
+  /** 참조하는 테이블 (대문자) */
+  references: string;
+  /** 문 전체 (종결자 포함) */
+  text: string;
+}
+
+/** ALTER CLASS|TABLE <테이블> 로 시작하는 줄 */
+const ALTER_TABLE_START = /^ALTER\s+(?:CLASS|TABLE)\s+[\[`"]?(\w+)/i;
+
+/** 새 문이 시작되는 줄 (종결자 없이 열려 있던 ALTER 문을 버리는 기준) */
+const SQL_STATEMENT_START = /^(?:ALTER|CREATE|INSERT|UPDATE|DELETE|DROP|COMMIT)\b/i;
+
+/**
+ * 스크립트에서 `ALTER CLASS|TABLE <테이블> ADD [CONSTRAINT 이름] FOREIGN KEY (...) REFERENCES <테이블> ...;`
+ * 문을 추출한다. 여러 줄에 걸친 문은 종결자(;)까지 한 문으로 읽고, 외래 키가 아닌 ALTER 문은 넣지 않는다.
+ */
+export function extractForeignKeyStatements(script: string): ForeignKeyStatement[] {
+  const statements: ForeignKeyStatement[] = [];
+  let open: { table: string; lines: string[] } | null = null;
+
+  for (const line of script.split('\n')) {
+    const trimmedLine = line.trim();
+
+    // 종결자를 만나지 못한 ALTER 문은 다음 문이 시작되는 줄에서 버린다 (뒤따르는 문을 삼키지 않도록)
+    if (open && SQL_STATEMENT_START.test(trimmedLine)) {
+      open = null;
+    }
+    if (!open) {
+      const start = trimmedLine.match(ALTER_TABLE_START);
+      if (!start) continue;
+      open = { table: start[1].toUpperCase(), lines: [] };
+    }
+
+    open.lines.push(line.replace(/\s+$/, ''));
+    if (trimmedLine.endsWith(';')) {
+      const text = open.lines.join('\n');
+      const reference = text.match(/\bFOREIGN\s+KEY\b[\s\S]*?\bREFERENCES\s+[\[`"]?(\w+)/i);
+      if (reference) {
+        statements.push({ table: open.table, references: reference[1].toUpperCase(), text });
+      }
+      open = null;
+    }
+  }
+
+  return statements;
 }
 
 /** 기본 보기에서 테이블마다 보여 주는 INSERT 문 수 */
@@ -1342,9 +1481,9 @@ function openDdlBlock(trimmedLine: string, upperTableNames: Set<string>): DdlBlo
 /** extractTableDDLs 의 결과 */
 export interface ExtractedDDL {
   ddl: string;
-  /** CREATE TABLE 을 찾은 테이블 수 */
+  /** 요청한 이름 가운데 CREATE TABLE 을 찾은 테이블 수 */
   foundCount: number;
-  /** CREATE VIEW 를 찾은 뷰 수 */
+  /** 요청한 이름 가운데 CREATE VIEW 를 찾은 뷰 수 */
   viewCount: number;
   /** 요청한 이름 가운데 CREATE TABLE / CREATE VIEW 를 찾지 못한 것 (요청한 표기 그대로) */
   missing: string[];
@@ -1354,9 +1493,13 @@ export interface ExtractedDDL {
  * 전체 DDL에서 특정 테이블·뷰의 CREATE 문 추출
  * CREATE TABLE ~ ; 블록을 파싱하고 해당 테이블의 INDEX도 포함한다.
  * CREATE VIEW 로 정의된 객체는 자신이 조회하는 테이블 뒤에 오도록 맨 끝에 모은다.
+ *
+ * referencedNames 는 요청한 테이블의 외래 키가 참조해서 함께 싣는 테이블이다. 같은 방식으로 추출하되
+ * 요청한 수(foundCount, viewCount)와 찾지 못한 객체(missing)에는 넣지 않고, 머리말에 따로 적는다.
  */
-export function extractTableDDLs(fullDDL: string, tableNames: string[]): ExtractedDDL {
-  const upperTableNames = new Set(tableNames.map(t => t.toUpperCase()));
+export function extractTableDDLs(fullDDL: string, tableNames: string[], referencedNames: string[] = []): ExtractedDDL {
+  const requestedNames = new Set(tableNames.map(t => t.toUpperCase()));
+  const upperTableNames = new Set([...requestedNames, ...referencedNames.map(t => t.toUpperCase())]);
   const lines = fullDDL.split('\n');
   const tableBlocks: string[] = [];
   const viewBlocks: string[] = [];
@@ -1411,8 +1554,12 @@ export function extractTableDDLs(fullDDL: string, tableNames: string[]): Extract
     if (!foundTables.has(upper) && !foundViews.has(upper)) missing.push(name);
   }
 
-  const foundCount = foundTables.size;
-  const viewCount = foundViews.size;
+  const foundCount = [...foundTables].filter(name => requestedNames.has(name)).length;
+  const viewCount = [...foundViews].filter(name => requestedNames.has(name)).length;
+  // 요청한 이름과 겹치지 않는 참조 테이블 가운데 실제로 추출한 것 (대소문자만 다른 중복은 한 번만)
+  const referencedFound = [...new Set(referencedNames.map(name => name.toUpperCase()))].filter(
+    name => !requestedNames.has(name) && foundTables.has(name),
+  );
   const extractedBlocks = [...tableBlocks, ...viewBlocks];
 
   if (extractedBlocks.length === 0) {
@@ -1425,7 +1572,11 @@ export function extractTableDDLs(fullDDL: string, tableNames: string[]): Extract
   }
 
   const counts = `테이블 ${foundCount}개` + (viewCount > 0 ? `, 뷰 ${viewCount}개` : '');
-  const header = `-- =============================================\n-- 요청 ${seen.size}개 중 ${counts} DDL 추출\n-- 요청: ${tableNames.join(', ')}\n-- =============================================\n`;
+  const referencedLine =
+    referencedFound.length > 0
+      ? `-- 외래 키가 참조해서 함께 실은 테이블 ${referencedFound.length}개: ${referencedFound.join(', ')}\n`
+      : '';
+  const header = `-- =============================================\n-- 요청 ${seen.size}개 중 ${counts} DDL 추출\n-- 요청: ${tableNames.join(', ')}\n${referencedLine}-- =============================================\n`;
 
   return {
     ddl: header + '\n' + extractedBlocks.join('\n\n\n'),
@@ -1673,6 +1824,13 @@ export function formatComponentDDL(result: ComponentDDLResult): string {
     output += `, ${result.viewCount}개 뷰`;
   }
   output += '\n';
+  if (result.referencedTables.length > 0) {
+    // 사용 테이블은 아니지만 외래 키가 참조해서, 받은 DDL 을 그대로 실행할 수 있도록 함께 실은 테이블
+    output += `- **외래 키 참조로 함께 실은 테이블**: ${result.referencedTables.length}개 (${result.referencedTables.join(', ')})\n`;
+  }
+  if (result.foreignKeyCount > 0) {
+    output += `- **외래 키 제약**: ${result.foreignKeyCount}건 (ALTER 문, DDL 끝에 실음)\n`;
+  }
   if (result.missing.length > 0) {
     // 스크립트에 정의가 없는 이름을 밝혀, 빠진 객체를 호출자가 알 수 있게 한다
     output += `- DDL 을 찾지 못한 객체: ${result.missing.join(', ')}\n`;

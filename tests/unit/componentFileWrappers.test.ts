@@ -50,6 +50,47 @@ const DDL_SCRIPT = [
   '',
 ].join('\n');
 
+/** 외래 키를 CREATE TABLE 안에 적는 DB 의 스크립트에 덧붙이는 부분 (mysql) */
+const INLINE_FK_DDL = [
+  'CREATE TABLE COMTNPARENT (ID CHAR(20) NOT NULL, PRIMARY KEY (ID));',
+  '',
+  'CREATE TABLE COMTNCHILD',
+  '(',
+  '\tID  CHAR(20) NOT NULL,',
+  '\tPARENT_ID  CHAR(20),',
+  '\tSELF_ID  CHAR(20),',
+  '\tCONSTRAINT COMTNCHILD_FK1 FOREIGN KEY (PARENT_ID) REFERENCES COMTNPARENT (ID),',
+  '\tCONSTRAINT COMTNCHILD_FK2 FOREIGN KEY (SELF_ID) REFERENCES COMTNCHILD (ID),',
+  '\tCONSTRAINT COMTNCHILD_FK3 FOREIGN KEY (ID) REFERENCES COMTNUNDEFINED (ID)',
+  ')',
+  ';',
+  '',
+].join('\n');
+
+/** 외래 키를 초기 데이터 스크립트의 끝에 ALTER 문으로 두는 DB 의 스크립트 (cubrid) */
+const CUBRID_DDL_SCRIPT = [
+  'CREATE TABLE COMTNBRD (BRD_ID CHAR(20) NOT NULL, MASTER_ID CHAR(20));',
+  '',
+  'CREATE TABLE COMTNBRDMASTER (MASTER_ID CHAR(20) NOT NULL, TMPLAT_ID CHAR(20));',
+  '',
+  'CREATE TABLE COMTNTMPLAT (TMPLAT_ID CHAR(20) NOT NULL);',
+  '',
+  'CREATE TABLE OTHER_T (ID CHAR(20) NOT NULL, BRD_ID CHAR(20));',
+  '',
+  'CREATE TABLE COMTCCODE (CODE CHAR(6) NOT NULL);',
+  '',
+].join('\n');
+
+const CUBRID_DML_SCRIPT = [
+  ...insertRows('COMTNBRD', 2),
+  '',
+  '-- FK제약 조건 등록',
+  'ALTER CLASS COMTNBRD ADD CONSTRAINT [COMTNBRD_FK1] FOREIGN KEY([MASTER_ID]) REFERENCES [COMTNBRDMASTER] ON DELETE RESTRICT ON UPDATE RESTRICT;',
+  'ALTER CLASS COMTNBRDMASTER ADD CONSTRAINT [COMTNBRDMASTER_FK1] FOREIGN KEY([TMPLAT_ID]) REFERENCES [COMTNTMPLAT] ON DELETE RESTRICT ON UPDATE RESTRICT;',
+  'ALTER CLASS OTHER_T ADD CONSTRAINT [OTHER_T_FK1] FOREIGN KEY([BRD_ID]) REFERENCES [COMTNBRD] ON DELETE RESTRICT ON UPDATE RESTRICT;',
+  '',
+].join('\n');
+
 const DML_SCRIPT = [
   '-- 코드',
   ...insertRows('COMTCCODE', 130),
@@ -83,8 +124,10 @@ describe('공통컴포넌트 파일 기능 공개 함수 (임시 DB + 임시 소
     write('pom.xml', '<project/>\n');
     // 소스 루트가 독립 클론일 때의 저장소 메타데이터
     write(path.join('.git', 'config'), '[remote "origin"]\n\turl = https://example.com/repo.git\n');
-    write(path.join('script', 'ddl', 'mysql', 'com_DDL_mysql.sql'), DDL_SCRIPT);
+    write(path.join('script', 'ddl', 'mysql', 'com_DDL_mysql.sql'), DDL_SCRIPT + INLINE_FK_DDL);
     write(path.join('script', 'dml', 'mysql', 'com_DML_mysql.sql'), DML_SCRIPT);
+    write(path.join('script', 'ddl', 'cubrid', 'com_DDL_cubrid.sql'), CUBRID_DDL_SCRIPT);
+    write(path.join('script', 'dml', 'cubrid', 'com_DML_cubrid.sql'), CUBRID_DML_SCRIPT);
     write(path.join(javaDir, 'BoardService.java'), '// 게시판 서비스\npublic class BoardService {}\n');
     write(path.join(javaDir, '._BoardService.java'), Buffer.from([0x00, 0x05, 0x16, 0x07]));
     write(path.join('src', 'main', 'resources', 'egovframework', 'mapper', 'com', 'cop', 'brd', 'Board_SQL_mysql.xml'), '<mapper/>\n');
@@ -105,6 +148,15 @@ describe('공통컴포넌트 파일 기능 공개 함수 (임시 DB + 임시 소
         use_tables: JSON.stringify(['COMTCCODE', 'COMTNBRD', 'COMVNBRDUSER', 'COMTNMISSING']),
         version: '5.0.0',
         has_web: true,
+      },
+      {
+        component_id: 'fkc',
+        name: '외래 키 컴포넌트',
+        category_id: 'cat-test',
+        package_name: 'egovframework.com.cop.fkc',
+        use_tables: JSON.stringify(['COMTNCHILD']),
+        version: '5.0.0',
+        has_web: false,
       },
       {
         component_id: 'notbl',
@@ -223,6 +275,51 @@ describe('공통컴포넌트 파일 기능 공개 함수 (임시 DB + 임시 소
       expect(text).toContain('## 테스트 게시판 DDL (mysql)');
       expect(text).toContain('- **추출된 DDL**: 2개 테이블, 1개 뷰');
       expect(text).toContain('DDL 을 찾지 못한 객체: COMTNMISSING');
+    });
+
+    it('외래 키가 참조하는 테이블이 사용 테이블에 없으면 그 테이블의 DDL 도 함께 싣는다', () => {
+      const result = tools.getComponentDDL('fkc', 'mysql');
+
+      // 자기 자신을 참조하는 외래 키와, 스크립트에 정의가 없는 테이블을 참조하는 외래 키는 보탤 것이 없다
+      expect(result).toMatchObject({
+        tables: ['COMTNCHILD'],
+        tableCount: 1,
+        referencedTables: ['COMTNPARENT'],
+        foreignKeyCount: 0,
+        missing: [],
+      });
+      // 참조되는 테이블이 먼저 만들어지도록 스크립트의 순서를 따른다
+      expect(result!.ddl.indexOf('CREATE TABLE COMTNPARENT')).toBeGreaterThanOrEqual(0);
+      expect(result!.ddl.indexOf('CREATE TABLE COMTNPARENT')).toBeLessThan(result!.ddl.indexOf('CREATE TABLE COMTNCHILD'));
+
+      const text = tools.formatComponentDDL(result!);
+      expect(text).toContain('- **추출된 DDL**: 1개 테이블');
+      expect(text).toContain('- **외래 키 참조로 함께 실은 테이블**: 1개 (COMTNPARENT)');
+    });
+
+    it('외래 키를 ALTER 문으로 따로 두는 DB 는 그 제약을 DDL 끝에 싣고, 참조 테이블을 이어서 따라간다', () => {
+      const result = tools.getComponentDDL('brd', 'cubrid');
+
+      expect(result).toMatchObject({
+        tables: ['COMTCCODE', 'COMTNBRD', 'COMVNBRDUSER', 'COMTNMISSING'],
+        tableCount: 2,
+        // COMTNBRD → COMTNBRDMASTER → COMTNTMPLAT
+        referencedTables: ['COMTNBRDMASTER', 'COMTNTMPLAT'],
+        foreignKeyCount: 2,
+        missing: ['COMVNBRDUSER', 'COMTNMISSING'],
+      });
+      expect(result!.ddl).toContain('CREATE TABLE COMTNBRDMASTER');
+      expect(result!.ddl).toContain('CREATE TABLE COMTNTMPLAT');
+      expect(result!.ddl).toContain('ALTER CLASS COMTNBRD ADD CONSTRAINT [COMTNBRD_FK1]');
+      expect(result!.ddl).toContain('ALTER CLASS COMTNBRDMASTER ADD CONSTRAINT [COMTNBRDMASTER_FK1]');
+      // 결과에 없는 테이블(OTHER_T)에 거는 제약은 싣지 않는다
+      expect(result!.ddl).not.toContain('OTHER_T');
+      // 제약은 모든 CREATE 문 뒤에 온다
+      expect(result!.ddl.indexOf('ALTER CLASS')).toBeGreaterThan(result!.ddl.lastIndexOf('CREATE TABLE'));
+
+      const text = tools.formatComponentDDL(result!);
+      expect(text).toContain('- **외래 키 참조로 함께 실은 테이블**: 2개 (COMTNBRDMASTER, COMTNTMPLAT)');
+      expect(text).toContain('- **외래 키 제약**: 2건');
     });
 
     it('없는 컴포넌트는 null 이다', () => {

@@ -10,7 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { extractTableDDLs, formatComponentDDL } from '../../src/tools/commonComponents.js';
+import { extractForeignKeyStatements, extractTableDDLs, formatComponentDDL } from '../../src/tools/commonComponents.js';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SRC_ROOT = path.join(REPO_ROOT, 'templates', 'common-components-src');
@@ -256,6 +256,65 @@ describe('extractTableDDLs — 뷰와 찾지 못한 객체', () => {
   });
 });
 
+describe('extractTableDDLs — 외래 키 참조로 함께 싣는 테이블', () => {
+  const sql = [
+    'CREATE TABLE PARENT_T (ID CHAR(20) NOT NULL);',
+    '',
+    'CREATE TABLE CHILD_T (ID CHAR(20) NOT NULL, PARENT_ID CHAR(20));',
+    '',
+    'CREATE TABLE OTHER_T (ID CHAR(20) NOT NULL);',
+    '',
+  ].join('\n');
+
+  it('참조 테이블은 추출하되 요청한 테이블 수와 찾지 못한 객체에는 넣지 않고, 머리말에 따로 적는다', () => {
+    const result = extractTableDDLs(sql, ['CHILD_T', 'MISSING_T'], ['PARENT_T']);
+
+    expect(summarize(result.ddl)).toEqual(['table PARENT_T', 'table CHILD_T']);
+    expect(result.foundCount).toBe(1);
+    expect(result.missing).toEqual(['MISSING_T']);
+    expect(result.ddl).toContain('-- 요청 2개 중 테이블 1개 DDL 추출');
+    expect(result.ddl).toContain('-- 요청: CHILD_T, MISSING_T');
+    expect(result.ddl).toContain('-- 외래 키가 참조해서 함께 실은 테이블 1개: PARENT_T');
+  });
+
+  it('참조 테이블을 주지 않으면 머리말에 그 줄을 넣지 않는다', () => {
+    expect(extractTableDDLs(sql, ['CHILD_T']).ddl).not.toContain('외래 키가 참조해서');
+  });
+});
+
+describe('extractForeignKeyStatements', () => {
+  it('ALTER 문으로 따로 둔 외래 키 제약에서 대상 테이블과 참조 테이블을 읽는다', () => {
+    const sql = [
+      "INSERT INTO T1 (A) VALUES ('ALTER CLASS X ADD FOREIGN KEY (A) REFERENCES Y');",
+      '-- FK제약 조건 등록',
+      'ALTER CLASS COMTNBBS ADD CONSTRAINT [COMTNBBS_FK1] FOREIGN KEY([BBS_ID]) REFERENCES [COMTNBBSMASTER] ON DELETE RESTRICT ON UPDATE RESTRICT;',
+      'ALTER TABLE child',
+      '  ADD CONSTRAINT fk_child FOREIGN KEY (parent_id)',
+      '  REFERENCES "parent" (id);',
+      'ALTER TABLE T3 ADD COLUMN X INT;',
+      '',
+    ].join('\n');
+
+    expect(extractForeignKeyStatements(sql)).toEqual([
+      {
+        table: 'COMTNBBS',
+        references: 'COMTNBBSMASTER',
+        text: 'ALTER CLASS COMTNBBS ADD CONSTRAINT [COMTNBBS_FK1] FOREIGN KEY([BBS_ID]) REFERENCES [COMTNBBSMASTER] ON DELETE RESTRICT ON UPDATE RESTRICT;',
+      },
+      {
+        table: 'CHILD',
+        references: 'PARENT',
+        text: 'ALTER TABLE child\n  ADD CONSTRAINT fk_child FOREIGN KEY (parent_id)\n  REFERENCES "parent" (id);',
+      },
+    ]);
+  });
+
+  it('외래 키 ALTER 문이 없는 스크립트에서는 빈 배열을 돌려준다', () => {
+    expect(extractForeignKeyStatements("INSERT INTO T1 (A) VALUES ('x');\n")).toEqual([]);
+    expect(extractForeignKeyStatements('')).toEqual([]);
+  });
+});
+
 describe('formatComponentDDL', () => {
   const base = {
     componentId: 'bbs',
@@ -266,6 +325,8 @@ describe('formatComponentDDL', () => {
     tableCount: 1,
     viewCount: 1,
     missing: ['COMTNSIEMAP', 'UserConnection'],
+    referencedTables: [] as string[],
+    foreignKeyCount: 0,
   };
 
   it('테이블 수와 뷰 수를 따로 적고 DDL 을 찾지 못한 객체를 나열한다', () => {
@@ -276,6 +337,23 @@ describe('formatComponentDDL', () => {
     expect(text).toContain('- **추출된 DDL**: 1개 테이블, 1개 뷰');
     expect(text).toContain('DDL 을 찾지 못한 객체: COMTNSIEMAP, UserConnection');
     expect(text).toContain('```sql\nCREATE TABLE COMTNBBS');
+  });
+
+  it('외래 키 참조로 함께 실은 테이블과 ALTER 문으로 실은 외래 키 제약의 수를 적는다', () => {
+    const text = formatComponentDDL({
+      ...base,
+      referencedTables: ['COMTNBBSMASTER', 'COMTNTMPLATINFO'],
+      foreignKeyCount: 3,
+    });
+
+    expect(text).toContain('- **외래 키 참조로 함께 실은 테이블**: 2개 (COMTNBBSMASTER, COMTNTMPLATINFO)');
+    expect(text).toContain('- **외래 키 제약**: 3건');
+  });
+
+  it('함께 실은 테이블과 ALTER 문 외래 키가 없으면 그 줄들을 넣지 않는다', () => {
+    const text = formatComponentDDL({ ...base, referencedTables: [], foreignKeyCount: 0 });
+
+    expect(text).not.toContain('외래 키');
   });
 
   it('모두 찾았으면 찾지 못한 객체 줄을 넣지 않고, 뷰가 없으면 뷰 수를 적지 않는다', () => {
