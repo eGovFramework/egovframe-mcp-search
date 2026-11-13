@@ -197,6 +197,35 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
       expect(searchComponents("증서 게시판", 20, { categoryId: "로그인" }).ignoredTerms).toEqual(["게시판"]);
     });
 
+    it("대체 검색으로 찾았으면 쓴 검색어(usedTerms)와 적용한 일치 기준(requiredMatches)을 알린다", () => {
+      // 시판: bbs, tpl / 플릿: tpl / 통계: bst → 셋 가운데 둘 이상이 든 tpl
+      const half = searchComponents("시판 플릿 통계");
+      expect(idsOf(half.results)).toEqual(["tpl"]);
+      expect(half).toMatchObject({ matchMode: "any-term", usedTerms: ["시판", "플릿", "통계"], requiredMatches: 2 });
+
+      // 둘 이상이 함께 든 컴포넌트가 없으면 기준을 낮춰 찾고, 낮춘 기준을 알린다
+      const lowered = searchComponents("증서 통계 권한관리");
+      expect(idsOf(lowered.results)).toEqual(["ram", "bst", "drm", "sec"]);
+      expect(lowered).toMatchObject({
+        total: 4,
+        matchMode: "any-term",
+        usedTerms: ["증서", "통계", "권한관리"],
+        requiredMatches: 1,
+      });
+
+      // 조사를 떼어 쓴 검색어는 뗀 꼴이고, 쓰지 않은 검색어는 들어가지 않는다
+      expect(searchComponents("게시판을 만들고")).toMatchObject({ usedTerms: ["게시판"], requiredMatches: 1 });
+      // 쓸 검색어가 하나도 없으면 빈 목록과 0 이다
+      expect(searchComponents("컴포넌트 DDL 보여줘")).toMatchObject({ total: 0, usedTerms: [], requiredMatches: 0 });
+    });
+
+    it("모든 검색어가 일치했거나 검색어가 없으면 usedTerms 와 requiredMatches 를 싣지 않는다", () => {
+      for (const found of [searchComponents("게시판 템플릿"), searchComponents("?!")]) {
+        expect(found).not.toHaveProperty("usedTerms");
+        expect(found).not.toHaveProperty("requiredMatches");
+      }
+    });
+
     it("모든 검색어를 썼으면 ignoredTerms 를 싣지 않는다", () => {
       for (const query of ["게시판 템플릿", "증서 시판", "게시판을"]) {
         const found = searchComponents(query);
@@ -492,9 +521,60 @@ describe("공통컴포넌트 도구 — 결과 포맷", () => {
       }
     });
 
+    it("쓴 검색어와 일치 기준을 받으면 any-term 안내에 그 수와 검색어를 적는다", () => {
+      for (const groupByCategory of [true, false]) {
+        const lines = formatComponentList([uia, sec], groupByCategory, {
+          matchMode: "any-term",
+          usedTerms: ["로그인", "인증서", "통계"],
+          requiredMatches: 2,
+        }).split("\n");
+        expect(lines.slice(0, 4), `groupByCategory=${groupByCategory}`).toEqual([
+          "## 공통컴포넌트 목록 (2개)",
+          "",
+          "> 모든 검색어가 들어 있는 항목이 없어, 검색어 3개 가운데 2개 이상이 들어 있는 항목을 표시합니다 (검색어: 로그인, 인증서, 통계).",
+          "",
+        ]);
+      }
+      // 기준을 낮춰 찾은 결과
+      expect(
+        formatComponentList([uia], false, { matchMode: "any-term", usedTerms: ["증서", "통계", "권한관리"], requiredMatches: 1 }),
+      ).toContain("검색어 3개 가운데 1개 이상이 들어 있는 항목을 표시합니다 (검색어: 증서, 통계, 권한관리).");
+    });
+
+    it("쓴 검색어를 받지 못하면 지금까지의 문구를 그대로 쓴다", () => {
+      // 일치 기준만 받았거나 쓴 검색어가 비어 있어도 같다 (적을 검색어가 없다)
+      for (const options of [
+        { matchMode: "any-term" as const },
+        { matchMode: "any-term" as const, requiredMatches: 1 },
+        { matchMode: "any-term" as const, usedTerms: [], requiredMatches: 0 },
+        { matchMode: "any-term" as const, usedTerms: ["로그인"] },
+      ]) {
+        const lines = formatComponentList([uia, sec], false, options).split("\n");
+        expect(lines[2], JSON.stringify(options)).toBe(ANY_TERM_NOTE);
+      }
+    });
+
+    it("쓴 검색어와 일치 기준 다음 줄에 쓰지 않은 낱말을 적는다", () => {
+      const lines = formatComponentList([uia], false, {
+        matchMode: "any-term",
+        usedTerms: ["로그인"],
+        requiredMatches: 1,
+        ignoredTerms: ["컴포넌트", "보여줘"],
+      }).split("\n");
+      expect(lines.slice(0, 6)).toEqual([
+        "## 공통컴포넌트 목록 (1개)",
+        "",
+        "> 모든 검색어가 들어 있는 항목이 없어, 검색어 1개 가운데 1개 이상이 들어 있는 항목을 표시합니다 (검색어: 로그인).",
+        "",
+        "> 일치하는 항목이 없어 검색에 쓰지 않은 낱말: 컴포넌트, 보여줘.",
+        "",
+      ]);
+    });
+
     it("모든 검색어가 일치했거나 matchMode 를 주지 않으면 적지 않는다", () => {
       for (const text of [
         formatComponentList([uia, sec], false, { matchMode: "all-terms" }),
+        formatComponentList([uia, sec], false, { matchMode: "all-terms", usedTerms: ["로그인"], requiredMatches: 1 }),
         formatComponentList([uia, sec], false),
         formatComponentList([uia, sec]),
       ]) {
@@ -542,6 +622,8 @@ describe("공통컴포넌트 도구 — 결과 포맷", () => {
       const text = formatComponentList([], false, {
         total: 0,
         matchMode: "any-term",
+        usedTerms: [],
+        requiredMatches: 0,
         ignoredTerms: ["컴포넌트", "DDL", "보여줘"],
       });
       expect(text.split("\n")).toEqual([
