@@ -781,7 +781,12 @@ interface HeadingPart {
  * 짧은 소절은 제목 줄과 함께 앞의 것에 붙이고, 앞의 것이 짧으면 다음 소절을 끌어온다. 한 청크로 합칠 수 없으면
  * 50자(GUIDE_SECTION_MIN_CHARS) 이상인 것은 따로 색인하고, 50자 미만인 것만 다음 소절 앞에(마지막이면 앞 묶음의
  * 끝에) 붙여, 붙인 묶음을 더 깊은 제목이나 조각으로 다시 나눈다.
- * 본문이 없는 제목 줄은 다음 소절과 묶어 제목 경로에 싣는다 (다음 소절의 제목 줄은 본문의 첫 줄로 남는다).
+ *
+ * 본문이 없는 제목 줄(아래에 아무것도 없거나 더 깊은 제목 줄만 있는 제목)은 그 내용과 떨어져 앞 청크의 끝에 남지 않게
+ * 한다. 앞의 것이 짧지 않으면 다음 소절과 묶어 제목 경로에 싣는다 (다음 소절의 제목 줄은 본문의 첫 줄로 남는다).
+ * 앞의 것이 짧으면 앞의 것이 그 제목 줄을 끌어오되, 짧은지는 끝에 붙은 제목 줄을 빼고 잰다. 끌어온 뒤에 다음 소절을
+ * 합칠 수 없으면 제목 줄을 다음 소절의 묶음으로 옮긴다. 청크의 끝에 남는 제목 줄은 딸린 내용이 없는 것뿐이다:
+ * 절의 맨 끝에 있거나, 내용이 있는 소절의 끝에 있고 바로 뒤에 같은 수준이나 더 얕은 제목이 온다 (원문의 빈 소절).
  *
  * 합친 묶음의 이름에는 합쳐진 소절의 이름을 함께 싣는다 ("설명 > Input / Output"). 합쳐진 소절을 제목 경로로도
  * 찾을 수 있게 하려는 것이다. 절의 도입부로 시작하는 묶음은 그 절의 첫 청크이므로 절의 이름만 쓴다.
@@ -832,6 +837,24 @@ export function splitGuideSections(
     const span = trimmedSpan(scanned, from, to);
     return span.end - span.start;
   };
+  /**
+   * lines[from..to) 의 끝에 이어진 제목 줄들이 시작하는 줄 (사이의 빈 줄은 건너뛴다). 끝이 제목 줄이 아니면 to 다.
+   * 이 제목 줄들은 그 구간 안에 내용이 없다 (본문 없는 제목 줄).
+   */
+  const trailingHeadingsFrom = (from: number, to: number) => {
+    let start = to;
+    for (let i = to - 1; i >= from; i--) {
+      if (scanned.lines[i].trim() === '') continue;
+      if (innerLevel(i) === 0) break;
+      start = i;
+    }
+    return start;
+  };
+  /**
+   * lines[from..to) 에서 끝에 이어진 제목 줄을 뺀 글자 수. 묶음이나 소절이 짧은지는 이 값으로 잰다: 끝에 붙은 본문 없는
+   * 제목 줄의 글자까지 세면, 내용은 짧은데 제목 줄 덕분에 기준을 넘긴 묶음이 그 제목 줄을 끝에 단 채로 따로 남는다.
+   */
+  const contentCharsOf = (from: number, to: number) => charsOf(from, trailingHeadingsFrom(from, to));
 
   /** 짧다고 보는 글자 수: 긴 절을 나눈 결과로 생긴 도입부와 소절이 이보다 짧으면 이웃과 한 청크에 합칠 수 있을 때 합친다 */
   const shortChars = Math.max(minPieceChars, GUIDE_SECTION_MIN_CHARS);
@@ -965,10 +988,14 @@ export function splitGuideSections(
     heads.forEach((head, index) => {
       const childFrom = head + 1;
       const childTo = index + 1 < heads.length ? heads[index + 1] : to;
-      const childChars = charsOf(childFrom, childTo);
+      // 소절의 글자 수는 끝에 이어진 제목 줄을 빼고 잰다. 0 이면 본문 없는 제목 줄이다: 제목 줄 아래에 아무것도 없거나
+      // 더 깊은 제목 줄만 있다 (문장을 제목 줄로 적은 문서)
+      const childChars = contentCharsOf(childFrom, childTo);
       const previous = groups[groups.length - 1];
       if (previous) {
-        const previousChars = charsOf(previous.from, previous.to);
+        // 앞 묶음이 짧은지도 끝에 붙여 둔 본문 없는 제목 줄을 빼고 잰다
+        const previousEnd = trailingHeadingsFrom(previous.from, previous.to);
+        const previousChars = charsOf(previous.from, previousEnd);
         // 본문이 없는 제목 줄은 앞의 것 끝에 붙이지 않고 다음 소절과 묶는다 (앞의 것이 짧아서 이어 붙이는 중이면 함께 간다)
         const headingOnly = childChars === 0 && previousChars >= shortChars;
         if (!headingOnly && (childChars < shortChars || previousChars < shortChars) && fitsUpTo(previous, childTo)) {
@@ -981,13 +1008,24 @@ export function splitGuideSections(
           previous.to = childTo;
           return;
         }
+        // 앞의 것을 따로 둔다. 그 끝에 붙여 둔 본문 없는 소절(제목 줄뿐인 소절)은 앞의 것에 남기지 않고 이 소절의 묶음으로
+        // 옮긴다: 첫 제목은 제목 경로에 싣고 나머지 제목 줄은 본문에 남긴다. 남겨 두면 제목 줄이 그 내용과 떨어져 앞 청크의
+        // 끝에 온다. 앞의 것에 든 소절의 끝에 있는 더 깊은 제목 줄은 그 소절에 딸린 빈 제목이라 옮기지 않는다
+        let carried = -1;
+        for (let k = index - 1; k >= 0 && heads[k] >= previousEnd; k--) carried = heads[k];
+        if (carried >= 0) {
+          previous.to = carried;
+          groups.push({ startPath: pathOf(carried), from: carried + 1, to: childTo });
+          return;
+        }
       }
       groups.push({ startPath: pathOf(head), from: childFrom, to: childTo });
     });
-    // 마지막 묶음이 50자 미만이면 붙일 다음 소절이 없다: 앞 묶음의 끝에 붙인다
+    // 마지막 묶음이 50자 미만이면 붙일 다음 소절이 없다: 앞 묶음의 끝에 붙인다 (끝에 이어진 제목 줄은 빼고 잰다.
+    // 그 제목 줄 뒤에는 이 절의 내용이 더 없으므로 묶음의 끝에 남는다)
     if (groups.length > 1) {
       const last = groups[groups.length - 1];
-      if (charsOf(last.from, last.to) < GUIDE_SECTION_MIN_CHARS) {
+      if (contentCharsOf(last.from, last.to) < GUIDE_SECTION_MIN_CHARS) {
         groups.pop();
         groups[groups.length - 1].to = last.to;
       }

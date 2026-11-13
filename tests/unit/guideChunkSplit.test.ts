@@ -1175,6 +1175,145 @@ describe("chunkMarkdown — 제목 줄이 그 내용과 떨어져 앞 청크의 
     expect(chunks[0].content).toBe(intro);
     expect(chunks.filter((c) => endsWithHeading(c.content))).toEqual([]);
   });
+
+  /** 기본 상한에서 한 청크에 들어가지 않는 글: 10문장짜리 문단 여러 개 (문단 하나는 추정 토큰 100 남짓) */
+  const paragraphs = (label: string, count: number) =>
+    Array.from({ length: count }, (_, i) => paragraph(`${label}${i + 1}`, 10)).join("\n\n");
+  const intro69 = "의존성 주입은 필드, 생성자, 설정 메서드의 세 가지 방식으로 할 수 있으며 아래에서 방식마다 예제와 함께 차례로 설명한다.";
+
+  it("50자 미만인 도입부는 본문 없는 제목 줄을 끌어온 뒤에도 짧은 것으로 보고, 그 제목의 내용이 든 소절 앞에 붙인다", () => {
+    // 도입부(21자)와 제목 줄을 더하면 50자를 넘는다. 제목 줄의 글자를 세면 도입부와 제목 줄만 든 청크가 남는다
+    const intro = "의존성 주입 방식을 차례로 설명한다.";
+    expect(intro.length).toBeLessThan(50);
+    expect(`${intro}\n\n### Autowire 및 Qualifier 애노테이션`.length).toBeGreaterThanOrEqual(50);
+    const chunks = defaults(
+      doc(
+        "## 설명", "", intro, "", "### Autowire 및 Qualifier 애노테이션", "",
+        "#### Autowiring 예제", "", paragraphs("예제", 4), "", "#### Qualifier 예제", "", paragraphs("한정", 4),
+      ),
+    );
+    expect(chunks.map((c) => c.section)).toEqual([
+      "설명 > Autowire 및 Qualifier 애노테이션 > Autowiring 예제 (1/2)",
+      "설명 > Autowire 및 Qualifier 애노테이션 > Autowiring 예제 (2/2)",
+      "설명 > Autowire 및 Qualifier 애노테이션 > Qualifier 예제 (1/2)",
+      "설명 > Autowire 및 Qualifier 애노테이션 > Qualifier 예제 (2/2)",
+    ]);
+    expect(
+      chunks[0].content.startsWith(`${intro}\n\n### Autowire 및 Qualifier 애노테이션\n\n#### Autowiring 예제\n\n예제1 문단의 1번째 문장입니다.`),
+    ).toBe(true);
+    expect(chunks.filter((c) => endsWithHeading(c.content))).toEqual([]);
+  });
+
+  it("짧은 조각의 기준을 낮춰도 같다: 앞 묶음이 짧은지는 끝에 붙은 본문 없는 제목 줄을 빼고 잰다", () => {
+    // 낮춘 상한(짧다고 보는 기준 50자). 50자 미만인 도입부에 제목 줄을 더하면 50자를 넘는다
+    const intro = "캐시를 쓰기 전에 준비할 것과 설정하는 방법을 아래에서 차례로 설명한다.";
+    expect(intro.length).toBeLessThan(50);
+    expect(`${intro}\n\n### 준비 사항 안내`.length).toBeGreaterThanOrEqual(50);
+    const chunks = chunk(doc("## 설명", "", intro, "", "### 준비 사항 안내", "", "### 설정", "", paragraph("가", 7), "", paragraph("나", 7)));
+    expect(chunks.map((c) => c.section)).toEqual(["설명 > 준비 사항 안내 / 설정 (1/2)", "설명 > 준비 사항 안내 / 설정 (2/2)"]);
+    expect(chunks[0].content).toBe([intro, "", "### 준비 사항 안내", "", "### 설정", "", paragraph("가", 7)].join("\n"));
+    expect(chunks[1].content).toBe(paragraph("나", 7));
+  });
+
+  it("본문 없는 제목 줄을 끌어온 도입부가 다음 소절과 한 청크에 들어가지 않으면, 제목 줄을 다음 소절의 제목 경로로 옮긴다", () => {
+    // 69자 도입부는 따로 색인할 수 있다(50자 이상). 끌어온 '### 준비 사항' 을 도입부의 끝에 남기지 않는다
+    const chunks = defaults(doc("## 설명", "", intro69, "", "### 준비 사항", "", "### 설정", "", paragraphs("설정", 4)));
+    expect(chunks.map((c) => c.section)).toEqual(["설명", "설명 > 준비 사항 / 설정 (1/2)", "설명 > 준비 사항 / 설정 (2/2)"]);
+    expect(chunks[0].content).toBe(intro69);
+    // 본문 없는 제목은 제목 경로로 올라가고, 다음 소절의 제목 줄은 본문의 첫 줄로 남는다
+    expect(chunks[1].content.startsWith("### 설정\n\n설정1 문단의 1번째 문장입니다.")).toBe(true);
+  });
+
+  it("본문 없는 제목 줄이 여러 개 이어져도 모두 다음 소절과 함께 간다", () => {
+    const chunks = defaults(
+      doc("## 설명", "", intro69, "", "### 준비 사항", "", "### 설치", "", "### 설정", "", paragraphs("설정", 4)),
+    );
+    expect(chunks.map((c) => c.section)).toEqual(["설명", "설명 > 준비 사항 / 설치 / 설정 (1/2)", "설명 > 준비 사항 / 설치 / 설정 (2/2)"]);
+    expect(chunks[0].content).toBe(intro69);
+    expect(chunks[1].content.startsWith("### 설치\n\n### 설정\n\n설정1 문단의 1번째 문장입니다.")).toBe(true);
+  });
+
+  it("제목 줄 덕분에 100자를 넘긴 도입부도 짧은 것으로 보고, 한 청크에 들어가는 다음 소절을 끌어온다", () => {
+    // 도입부 69자와 본문 없는 제목 줄을 더하면 100자를 넘는다. 제목 줄의 글자를 세면 다음 소절(100자 이상)을 끌어오지 않아
+    // 제목 줄이 도입부의 끝에 남는다
+    const heading = "### Autowire 및 Qualifier 애노테이션";
+    expect(`${intro69}\n\n${heading}`.length).toBeGreaterThanOrEqual(100);
+    const example = paragraph("예제", 12);
+    expect(example.length).toBeGreaterThanOrEqual(100);
+    const chunks = defaults(doc("## 설명", "", intro69, "", heading, "", "### 예제", "", example, "", "### 세션", "", paragraphs("세션", 4)));
+    expect(chunks.map((c) => c.section)).toEqual(["설명", "설명 > 세션 (1/2)", "설명 > 세션 (2/2)"]);
+    expect(chunks[0].content).toBe([intro69, "", heading, "", "### 예제", "", example].join("\n"));
+  });
+
+  describe("소절의 내용이 더 깊은 제목 줄뿐이면 본문 없는 제목 줄로 다룬다", () => {
+    // 문장을 제목 줄로 적은 문서: '### Step 1' 아래에 '####' 줄 하나만 있고 내용은 없다
+    const note = "참고: 도커를 활용해 표준프레임워크 기반 프로그램의 이미지를 만드는 방법은 도커 문서에 따로 정리되어 있다.";
+    const step1 = ["### Step 1. 프로젝트 생성", "", "#### 생성 과정은 위의 절을 참조하여 프로젝트를 생성한다."];
+
+    it("짧은 앞 소절이 그 제목 줄들을 끌어와도 짧은 것으로 보고 다음 소절까지 끌어온다 (한 청크에 들어갈 때)", () => {
+      expect(note.length).toBeGreaterThanOrEqual(50);
+      expect(note.length).toBeLessThan(100);
+      const image = paragraph("이미지", 12);
+      const chunks = defaults(
+        doc("## 사용법", "", "### 참고", "", note, "", ...step1, "", "### Step 2. 이미지 생성", "", image, "", "### Step 3. 실행", "", paragraphs("실행", 4)),
+      );
+      expect(chunks.map((c) => c.section)).toEqual([
+        "사용법 > 참고 / Step 1. 프로젝트 생성 / Step 2. 이미지 생성",
+        "사용법 > Step 3. 실행 (1/2)",
+        "사용법 > Step 3. 실행 (2/2)",
+      ]);
+      expect(chunks[0].content).toBe([note, "", ...step1, "", "### Step 2. 이미지 생성", "", image].join("\n"));
+    });
+
+    it("다음 소절과 한 청크에 들어가지 않으면 그 제목 줄들을 다음 소절의 제목 경로로 옮긴다", () => {
+      const chunks = defaults(doc("## 사용법", "", "### 참고", "", note, "", ...step1, "", "### Step 2. 이미지 생성", "", paragraphs("이미지", 4)));
+      const moved = "사용법 > Step 1. 프로젝트 생성 > 생성 과정은 위의 절을 참조하여 프로젝트를 생성한다. / Step 2. 이미지 생성";
+      expect(chunks.map((c) => c.section)).toEqual(["사용법 > 참고", `${moved} (1/2)`, `${moved} (2/2)`]);
+      expect(chunks[0].content).toBe(note);
+      expect(chunks[1].content.startsWith("### Step 2. 이미지 생성\n\n이미지1 문단의 1번째 문장입니다.")).toBe(true);
+    });
+
+    it("앞 소절이 짧지 않으면 앞 소절의 끝에 붙이지 않고 다음 소절과 묶는다", () => {
+      // 더 깊은 제목 줄을 본문으로 세면 'Step 1' 이 짧은 소절로 보여, 한 청크에 들어가는 앞 소절의 끝에 다음 소절과 함께 붙는다
+      const image = "이미지의 이름과 태그를 입력하고 Dockerfile 이 있는 디렉토리를 지정한 다음 빌드 버튼을 누른다.";
+      const chunks = defaults(
+        doc(
+          "## 사용법", "", "### 준비", "", paragraph("준비", 12), "", ...step1, "",
+          "### Step 2. 이미지 생성", "", image, "", "### Step 3. 실행", "", paragraphs("실행", 4),
+        ),
+      );
+      expect(chunks.map((c) => c.section)).toEqual([
+        "사용법 > 준비",
+        "사용법 > Step 1. 프로젝트 생성 / Step 2. 이미지 생성",
+        "사용법 > Step 3. 실행 (1/2)",
+        "사용법 > Step 3. 실행 (2/2)",
+      ]);
+      expect(chunks[0].content).toBe(paragraph("준비", 12));
+      expect(chunks[1].content).toBe([step1[2], "", "### Step 2. 이미지 생성", "", image].join("\n"));
+    });
+  });
+
+  it("내용이 있는 소절의 끝에 있는 빈 제목 줄(아래에 내용이 없고 같거나 얕은 수준의 제목이 이어지는 것)은 그 소절에 남긴다", () => {
+    // '#### 추후 작성' 은 '### 가' 에 딸린 빈 소절이다. 뒤따르는 '### 나' 의 내용은 이 제목의 내용이 아니므로 옮기지 않는다
+    const chunks = defaults(
+      doc("## 사용법", "", "### 가", "", paragraphs("가", 3), "", "#### 추후 작성", "", "### 나", "", paragraphs("나", 3)),
+    );
+    expect(chunks.map((c) => c.section)).toEqual(["사용법 > 가", "사용법 > 나"]);
+    expect(chunks[0].content).toBe([paragraphs("가", 3), "", "#### 추후 작성"].join("\n"));
+    expect(chunks[1].content).toBe(paragraphs("나", 3));
+  });
+
+  it("50자 미만인 마지막 소절인지도 끝에 붙은 본문 없는 제목 줄을 빼고 잰다", () => {
+    // 마지막 소절의 내용은 50자 미만이고, 그 뒤에 본문 없는 제목 줄이 있다. 제목 줄까지 세면 50자를 넘어 따로 남는다
+    const note = "자세한 내용은 관련 예제 문서에 있는 설명을 함께 참고한다.";
+    expect(note.length).toBeLessThan(50);
+    expect(`${note}\n\n### 앞으로 추가할 내용 (작성 예정)`.length).toBeGreaterThanOrEqual(50);
+    const chunks = defaults(
+      doc("## 사용법", "", "### 가", "", paragraphs("가", 3), "", paragraph("나", 9), "", "### 참고", "", note, "", "### 앞으로 추가할 내용 (작성 예정)"),
+    );
+    expect(chunks.map((c) => c.section)).toEqual(["사용법 > 가 / 참고 / 앞으로 추가할 내용 (작성 예정) (1/2)", "사용법 > 가 / 참고 / 앞으로 추가할 내용 (작성 예정) (2/2)"]);
+    expect(chunks[1].content.endsWith(["### 참고", "", note, "", "### 앞으로 추가할 내용 (작성 예정)"].join("\n"))).toBe(true);
+  });
 });
 
 describe("chunkMarkdown — 합친 묶음의 이름에 합쳐진 소절을 함께 싣는다", () => {

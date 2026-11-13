@@ -346,13 +346,21 @@ describe.skipIf(GUIDE_FILES.length === 0)("가이드 원문 전체의 청킹", (
     expect(short.length / pieces.length).toBeLessThan(0.01);
   });
 
-  it("긴 절을 제목에서 나눈 결과로 생긴 청크 가운데 50자 미만은 없다", () => {
+  it("긴 절을 제목에서 나눈 결과로 생긴 청크 가운데 50자 미만은 없다 (끝에 붙은 제목 줄을 빼고 재도 그렇다)", () => {
     // ## 절이나 개요 하나에서 절이 둘 이상 나왔으면 제목에서 나눈 것이다. 그 결과가 50자 미만이면 이웃 묶음에 붙이고,
     // 50자 이상이고 짧은 조각의 기준(100자) 미만이면 이웃과 한 청크에 합칠 수 있을 때만 붙인다 (합칠 수 없으면 따로 둔다).
     // 나뉘지 않은 ## 절과 개요는 짧아도(50자 이상이면) 그대로 색인하므로 여기서 세지 않는다
     const tooShort: string[] = [];
     const short: string[] = [];
     let splitResults = 0;
+    /** 본문의 끝에 이어진 제목 줄(### 이하)을 뺀 글자 수. 제목 줄 덕분에 기준을 넘긴 청크를 가려낸다 */
+    const charsWithoutTrailingHeadings = (body: string) => {
+      const bodyLines = body.split("\n");
+      const bodyLevels = headingLevelsOf(bodyLines);
+      let end = bodyLines.length;
+      while (end > 0 && (bodyLines[end - 1].trim() === "" || bodyLevels[end - 1] >= 3)) end -= 1;
+      return bodyLines.slice(0, end).join("\n").trim().length;
+    };
     for (const document of documents) {
       const lines = document.body.split("\n");
       const levels = headingLevelsOf(lines);
@@ -374,8 +382,9 @@ describe.skipIf(GUIDE_FILES.length === 0)("가이드 원문 전체의 청킹", (
         for (const section of group) {
           splitResults += 1;
           if (section.pieces.length > 1) continue;
-          const label = `${document.relativePath} | ${section.section} | ${section.body.length}자`;
-          if (section.body.length < GUIDE_SECTION_MIN_CHARS) tooShort.push(label);
+          const chars = charsWithoutTrailingHeadings(section.body);
+          const label = `${document.relativePath} | ${section.section} | ${section.body.length}자 (끝의 제목 줄을 빼면 ${chars}자)`;
+          if (chars < GUIDE_SECTION_MIN_CHARS) tooShort.push(label);
           else if (section.body.length < GUIDE_PIECE_MIN_CHARS) short.push(label);
         }
       }
@@ -390,6 +399,53 @@ describe.skipIf(GUIDE_FILES.length === 0)("가이드 원문 전체의 청킹", (
 
   it("본문이 50자 미만인 청크는 없다", () => {
     expect(allChunks.filter((chunk) => chunk.content.length < GUIDE_SECTION_MIN_CHARS).map((chunk) => chunk.title)).toEqual([]);
+  });
+
+  it("본문이 제목 줄로 끝나는 청크가 있어도, 그 제목에 딸린 내용이 뒤따르는 청크에 있지는 않다", () => {
+    // 제목 줄이 그 내용과 떨어져 앞 청크의 끝에 남으면, 앞 청크는 내용 없는 제목으로 끝나고 뒤 청크는 그 제목 없이 시작한다.
+    // 청크의 끝에 남아도 되는 제목 줄은 딸린 내용이 없는 것뿐이다:
+    //   - ## 절(개요)의 맨 끝에 있는 제목 줄
+    //   - 바로 뒤에 같은 수준이나 더 얕은 제목이 오는 제목 줄 (원문의 빈 소절. 뒤따르는 내용은 그 제목의 내용이 아니다)
+    // 바로 뒤에 내용 줄이나 더 깊은 제목이 오는데 그 줄이 다른 청크에 있으면 제목이 내용과 떨어진 것이다
+    const dangling: string[] = [];
+    for (const document of documents) {
+      const lines = document.body.split("\n");
+      const levels = headingLevelsOf(lines);
+      const starts: number[] = [];
+      let offset = 0;
+      for (const line of lines) {
+        starts.push(offset);
+        offset += line.length + 1;
+      }
+      /** 문서 본문의 위치 at 이 든 줄 */
+      const lineAt = (at: number) => {
+        let low = 0;
+        let high = lines.length - 1;
+        while (low < high) {
+          const middle = (low + high + 1) >> 1;
+          if (starts[middle] <= at) low = middle;
+          else high = middle - 1;
+        }
+        return low;
+      };
+      for (const section of document.sections) {
+        for (const piece of section.pieces) {
+          // 닫는 펜스를 붙인 조각은 코드 줄로 끝난다
+          if (piece.trail !== "") continue;
+          const last = lineAt(section.offset + piece.end - 1);
+          if (levels[last] < 3) continue;
+          let next = last + 1;
+          while (next < lines.length && lines[next].trim() === "") next += 1;
+          // 절의 맨 끝이거나(다음이 ## 제목), 같은 수준이나 더 얕은 제목이 이어지면 딸린 내용이 없는 제목이다
+          if (next >= lines.length || levels[next] === 2) continue;
+          if (levels[next] >= 3 && levels[next] <= levels[last]) continue;
+          dangling.push(
+            `${document.relativePath} | ${section.section} | ${JSON.stringify(lines[last].slice(0, 50))} 뒤의 ${JSON.stringify(lines[next].slice(0, 40))}`,
+          );
+        }
+      }
+    }
+    expect(dangling).toEqual([]);
   });
 
   it("색인 경로(chunkGuideDocument)는 기본 상한의 chunkMarkdown 결과를 그대로 쓴다", () => {
