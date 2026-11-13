@@ -317,6 +317,51 @@ async function findCategoryOwner(filters: Record<string, unknown>): Promise<Cate
   return { guide: await isGuideCategory(category), compatibility: isCompatibilityCategory(category) };
 }
 
+/** 가이드 결과 하나에 싣는 본문의 최대 길이(문자 수). */
+const GUIDE_CONTENT_MAX_CHARS = 1500;
+
+/** 중복 청크를 걸러 낸 뒤에도 limit 건을 채울 수 있게 더 가져오는 건수. */
+const GUIDE_DEDUPE_EXTRA = 10;
+
+/**
+ * 가이드 청크의 본문을 응답에 실을 형태로 다듬는다.
+ *
+ * 본문은 원문 마크다운이라 제목(`### 1. 로그인 하기`)과 구분선(`---`)이 들어 있는데, 그대로 실으면
+ * 결과의 제목(`### 1. ...`)·결과 사이의 구분선과 구별되지 않는다. 코드 블록 밖의 제목은 굵은 글씨로,
+ * 구분선은 `* * *` 로 바꾼다. 길이 제한으로 자를 때 열려 있는 코드 블록은 닫는다.
+ */
+function formatGuideContent(content: string): string {
+  const truncated = content.length > GUIDE_CONTENT_MAX_CHARS;
+  const text = truncated ? content.substring(0, GUIDE_CONTENT_MAX_CHARS) : content;
+
+  let fence: string | null = null;
+  const lines = text.split("\n").map((line) => {
+    const fenceMatch = line.match(/^\s*(`{3,}|~{3,})/);
+    if (fenceMatch) {
+      if (fence === null) {
+        fence = fenceMatch[1];
+      } else if (fenceMatch[1][0] === fence[0] && fenceMatch[1].length >= fence.length) {
+        fence = null;
+      }
+      return line;
+    }
+    if (fence !== null) {
+      return line;
+    }
+    const heading = line.match(/^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$/);
+    if (heading) {
+      return heading[1] ? `**${heading[1]}**` : "";
+    }
+    return /^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(line) ? "* * *" : line;
+  });
+
+  let body = lines.join("\n");
+  if (fence !== null) {
+    body += `\n${fence}`;
+  }
+  return truncated ? `${body}\n\n... (truncated)` : body;
+}
+
 async function searchGuide(args: EgovSearchKnowledgeArgs, options: SectionOptions = {}): Promise<string> {
   const filters = getFilters(args);
   const query = requireQuery(args.query, "guide");
@@ -324,7 +369,23 @@ async function searchGuide(args: EgovSearchKnowledgeArgs, options: SectionOption
   const layer = asString(filters.layer);
   const category = asString(filters.category);
   const guideManager = await getInitializedGuideManager();
-  const results = await guideManager.searchGuide(query, { limit: limit.value, layer, category });
+  // 본문이 같은 청크(같은 절을 가진 두 문서)는 한 번만 싣는다. 걸러 낸 뒤에도 limit 건을 채우도록 조금 더 가져온다.
+  const candidates = await guideManager.searchGuide(query, {
+    limit: limit.value + GUIDE_DEDUPE_EXTRA,
+    layer,
+    category,
+  });
+  const seenContents = new Set<string>();
+  const results = candidates
+    .filter((candidate) => {
+      const key = candidate.content.replace(/\s+/g, " ").trim();
+      if (seenContents.has(key)) {
+        return false;
+      }
+      seenContents.add(key);
+      return true;
+    })
+    .slice(0, limit.value);
   const ignored = ignoredFiltersNote(filters, GUIDE_USED_FILTER_KEYS);
 
   const formatted = results.map((result, idx) => {
@@ -333,12 +394,12 @@ async function searchGuide(args: EgovSearchKnowledgeArgs, options: SectionOption
     return [
       `### ${idx + 1}. ${result.title}`,
       `- **문서**: ${result.docTitle}`,
-      `- **분류**: ${result.layer} > ${result.category}`,
+      `- **분류**: ${result.category ? `${result.layer} > ${result.category}` : result.layer}`,
       `- **소스**: ${result.source}`,
       ...(docUrl ? [`- **URL**: ${docUrl}`] : []),
       `- **유사도**: ${(1 - result.score).toFixed(4)}`,
       "",
-      result.content.length > 1500 ? `${result.content.substring(0, 1500)}\n\n... (truncated)` : result.content,
+      formatGuideContent(result.content),
     ].join("\n");
   });
 

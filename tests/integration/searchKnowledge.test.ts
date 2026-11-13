@@ -202,6 +202,83 @@ describe("integration — egov_search_knowledge 가이드 검색", () => {
   });
 });
 
+describe("integration — egov_search_knowledge 가이드 검색 결과의 형식", () => {
+  let client: Client;
+
+  beforeAll(async () => {
+    client = await createMcpClient();
+  });
+
+  afterAll(async () => {
+    await client?.close();
+  });
+
+  const search = (args: Record<string, unknown>) => callSearchKnowledge(client, args);
+
+  /** 코드 블록 밖의 줄만 고른다. */
+  const linesOutsideFences = (text: string): string[] => {
+    const lines: string[] = [];
+    let inFence = false;
+    for (const line of text.split("\n")) {
+      if (/^\s*(```|~~~)/.test(line)) {
+        inFence = !inFence;
+        continue;
+      }
+      if (!inFence) lines.push(line);
+    }
+    return lines;
+  };
+
+  it.skipIf(!hasEmbeddingModel())("본문 속의 제목과 구분선이 결과의 제목·구분선과 섞이지 않는다", async () => {
+    // 이 문서의 본문에는 '### 1. 로그인 하기' 같은 제목이 들어 있다
+    const res = await search({
+      scope: "guide",
+      query: "Nexus 사용법 로그인 Repository 추가 artifact 등록",
+      limit: 3,
+    });
+    expect(res.isError).toBe(false);
+    const outside = linesOutsideFences(res.text);
+
+    const headings = outside.filter((line) => /^#{1,6}\s/.test(line));
+    expect(headings.filter((line) => !/^## eGovFrame 가이드 검색 결과|^### \d+\. /.test(line))).toEqual([]);
+    expect(headings.filter((line) => /^### \d+\. /.test(line))).toHaveLength(3);
+    // 결과 사이의 구분선은 결과 수보다 하나 적다
+    expect(outside.filter((line) => line.trim() === "---")).toHaveLength(2);
+  });
+
+  it.skipIf(!hasEmbeddingModel())("본문을 자를 때 열려 있는 코드 블록을 닫는다", async () => {
+    for (const query of ["MyBatis 설정 방법", "JEUS 설정", "트랜잭션 설정 XML", "스케줄링 설정"]) {
+      const res = await search({ scope: "guide", query, limit: 5 });
+      expect(res.isError, query).toBe(false);
+      const fences = res.text.split("\n").filter((line) => /^\s*```/.test(line));
+      expect(fences.length % 2, `${query}: 코드 펜스 ${fences.length}개`).toBe(0);
+    }
+  });
+
+  it.skipIf(!hasEmbeddingModel())("본문이 같은 청크는 한 번만 싣는다", async () => {
+    // cache.md 와 cache-ehcache.md 는 같은 본문의 절을 갖고 있다
+    const res = await search({
+      scope: "guide",
+      query: "Cache Size Device 설정 메모리 최대 오브젝트 수",
+      limit: 5,
+    });
+    expect(res.isError).toBe(false);
+    const bodies = res.text
+      .split("\n\n---\n\n")
+      .map((block) => block.split("\n\n").slice(1).join("\n\n").replace(/\s+/g, " ").trim())
+      .filter((body) => body.length > 0);
+    expect(bodies.length).toBeGreaterThan(1);
+    expect(new Set(bodies).size).toBe(bodies.length);
+  });
+
+  it.skipIf(!hasEmbeddingModel())("category 가 없는 문서는 분류에 layer 만 적는다", async () => {
+    const res = await search({ scope: "guide", query: "시작하기 가이드 문서 구성", filters: { layer: "gettingstarted.md" } });
+    expect(res.isError).toBe(false);
+    expect(res.text).toContain("- **분류**: gettingstarted.md\n");
+    expect(res.text).not.toContain("gettingstarted.md > \n");
+  });
+});
+
 describe("integration — egov_search_knowledge scope 추론", () => {
   let client: Client;
 
