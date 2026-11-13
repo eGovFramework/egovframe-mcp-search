@@ -346,9 +346,11 @@ describe.skipIf(GUIDE_FILES.length === 0)("가이드 원문 전체의 청킹", (
     expect(short.length / pieces.length).toBeLessThan(0.01);
   });
 
-  it("긴 절을 제목에서 나눈 결과로 생긴 청크 가운데 짧은 조각의 기준보다 짧은 것은 없다", () => {
-    // ## 절이나 개요 하나에서 절이 둘 이상 나왔으면 제목에서 나눈 것이다. 그 결과가 짧으면 이웃 묶음에 붙는다.
+  it("긴 절을 제목에서 나눈 결과로 생긴 청크 가운데 50자 미만은 없다", () => {
+    // ## 절이나 개요 하나에서 절이 둘 이상 나왔으면 제목에서 나눈 것이다. 그 결과가 50자 미만이면 이웃 묶음에 붙이고,
+    // 50자 이상이고 짧은 조각의 기준(100자) 미만이면 이웃과 한 청크에 합칠 수 있을 때만 붙인다 (합칠 수 없으면 따로 둔다).
     // 나뉘지 않은 ## 절과 개요는 짧아도(50자 이상이면) 그대로 색인하므로 여기서 세지 않는다
+    const tooShort: string[] = [];
     const short: string[] = [];
     let splitResults = 0;
     for (const document of documents) {
@@ -371,14 +373,19 @@ describe.skipIf(GUIDE_FILES.length === 0)("가이드 원문 전체의 청킹", (
         if (group.length < 2) continue;
         for (const section of group) {
           splitResults += 1;
-          if (section.pieces.length === 1 && section.body.length < GUIDE_PIECE_MIN_CHARS) {
-            short.push(`${document.relativePath} | ${section.section} | ${section.body.length}자`);
-          }
+          if (section.pieces.length > 1) continue;
+          const label = `${document.relativePath} | ${section.section} | ${section.body.length}자`;
+          if (section.body.length < GUIDE_SECTION_MIN_CHARS) tooShort.push(label);
+          else if (section.body.length < GUIDE_PIECE_MIN_CHARS) short.push(label);
         }
       }
     }
     expect(splitResults).toBeGreaterThan(1500);
-    expect(short).toEqual([]);
+    expect(tooShort).toEqual([]);
+    // 50자 이상 100자 미만이라 따로 둔 것이 원문에 실제로 있다 (이웃 소절이 상한 가까이 차 있는 절의 도입 문장 등).
+    // 합칠 수 없는데도 이웃에 붙여 다시 나누면 이 수가 0 이 된다. 나눈 결과의 대부분은 짧지 않다
+    expect(short.length).toBeGreaterThan(0);
+    expect(short.length / splitResults).toBeLessThan(0.05);
   });
 
   it("본문이 50자 미만인 청크는 없다", () => {

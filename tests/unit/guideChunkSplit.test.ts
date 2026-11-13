@@ -858,9 +858,9 @@ describe("chunkMarkdown — 너무 작은 조각을 만들지 않는다", () => 
     expect(chunks[0].content).toBe(["설정은 다음과 같다.", "", "### 캐시", "", paragraph("캐시", 8)].join("\n"));
   });
 
-  it("합치면 상한을 넘는 짧은 소절은 따로 두지 않고 다음 소절 앞에 붙여 다시 나눈다", () => {
-    // 이웃 조각이 모두 상한 가까이 차 있어 한 청크로 합칠 수 없는 경우: 25자 소절도 60자 소절도(짧은 조각의 기준은 100자)
-    // 다음 소절 앞에 붙이고, 붙인 묶음을 조각으로 다시 나눈다
+  it("합치면 상한을 넘는 짧은 소절: 50자 미만이면 다음 소절 앞에 붙여 다시 나누고, 50자 이상이면 따로 둔다", () => {
+    // 이웃 조각이 모두 상한 가까이 차 있어 한 청크로 합칠 수 없는 경우 (짧은 조각의 기준은 100자):
+    // 25자 소절은 다음 소절 앞에 붙이고 붙인 묶음을 조각으로 다시 나눈다. 60자 소절은 이웃에 붙이지 않고 따로 색인한다
     const chunks = chunk(
       doc(
         "## 설정",
@@ -885,21 +885,27 @@ describe("chunkMarkdown — 너무 작은 조각을 만들지 않는다", () => 
       ),
       { tokenBudget: 160, minPieceChars: 100 },
     );
-    expect(chunks.map((c) => c.section)).toEqual([
-      "설정",
-      "설정 > 참고 / 세션 (1/2)",
-      "설정 > 참고 / 세션 (2/2)",
-      "설정 > 주의 / 복제 (1/2)",
-      "설정 > 주의 / 복제 (2/2)",
+    expect(chunks.map((c) => [c.section, c.content.length >= 100])).toEqual([
+      ["설정", true],
+      ["설정 > 참고 / 세션 (1/2)", true],
+      ["설정 > 참고 / 세션 (2/2)", true],
+      ["설정 > 주의", false],
+      ["설정 > 복제", true],
     ]);
     expect(chunks[1].content.startsWith("캐시는 꺼 둘 수 있다. 기본값은 켜짐이다.\n\n### 세션\n\n세션 문단의 1번째 문장입니다.")).toBe(true);
-    expect(chunks[3].content.startsWith(`${"가".repeat(60)}\n\n### 복제\n\n복제 문단의 1번째 문장입니다.`)).toBe(true);
-    for (const c of chunks) {
-      expect(c.content.length, c.section).toBeGreaterThanOrEqual(100);
-    }
+    expect(chunks[3].content).toBe("가".repeat(60));
+    expect(chunks[4].content).toBe(paragraph("복제", 13));
   });
 
-  it("짧은 도입부가 첫 소절과 한 청크에 들어가지 않으면 첫 소절 앞에 붙인다 (도입부만 든 짧은 청크를 남기지 않는다)", () => {
+  it("이웃과 합칠 수 없는 소절을 이웃에 붙이는 기준은 50자다 (49자는 붙이고 50자는 따로 둔다)", () => {
+    const body = (note: string) =>
+      doc("## 설정", "", paragraph("설정", 13), "", "### 주의", "", note, "", "### 복제", "", paragraph("복제", 13));
+    const options = { tokenBudget: 160, minPieceChars: 100 };
+    expect(chunk(body("가".repeat(49)), options).map((c) => c.section)).toEqual(["설정", "설정 > 주의 / 복제 (1/2)", "설정 > 주의 / 복제 (2/2)"]);
+    expect(chunk(body("가".repeat(50)), options).map((c) => c.section)).toEqual(["설정", "설정 > 주의", "설정 > 복제"]);
+  });
+
+  it("50자 이상 100자 미만인 도입부가 첫 소절과 한 청크에 들어가지 않으면 따로 둔다 (첫 소절 앞에 붙여 다시 나누지 않는다)", () => {
     // 60자 도입부(짧은 조각의 기준 100자 미만)와 상한 가까이 찬 첫 소절
     const intro = "캐시 설정은 저장소, 만료 시간, 최대 크기의 세 부분으로 나뉘며 아래에서 차례로 설명한다.";
     expect(intro.length).toBeGreaterThanOrEqual(50);
@@ -908,12 +914,13 @@ describe("chunkMarkdown — 너무 작은 조각을 만들지 않는다", () => 
       tokenBudget: 160,
       minPieceChars: 100,
     });
-    expect(chunks.map((c) => c.section)).toEqual(["설정 > 저장소 (1/2)", "설정 > 저장소 (2/2)"]);
-    expect(chunks[0].content).toBe([intro, "", "### 저장소", "", paragraph("저장", 7)].join("\n"));
-    expect(chunks[1].content).toBe(paragraph("소", 6));
+    expect(chunks.map((c) => [c.section, c.content])).toEqual([
+      ["설정", intro],
+      ["설정 > 저장소", [paragraph("저장", 7), "", paragraph("소", 6)].join("\n")],
+    ]);
   });
 
-  it("짧은 마지막 소절이 앞 묶음과 한 청크에 들어가지 않으면 앞 묶음의 끝에 붙인다", () => {
+  it("50자 이상 100자 미만인 마지막 소절이 앞 묶음과 한 청크에 들어가지 않으면 따로 둔다 (앞 묶음의 끝에 붙여 다시 나누지 않는다)", () => {
     const note = "자세한 내용은 관련 예제 문서에 있는 설명과 그림을 함께 보면서 참고한다. 예제는 별도 문서에 있다.";
     expect(note.length).toBeGreaterThanOrEqual(50);
     expect(note.length).toBeLessThan(100);
@@ -921,8 +928,21 @@ describe("chunkMarkdown — 너무 작은 조각을 만들지 않는다", () => 
       tokenBudget: 160,
       minPieceChars: 100,
     });
+    expect(chunks.map((c) => [c.section, c.content])).toEqual([
+      ["사용법 > 가", [paragraph("가", 7), "", paragraph("나", 6)].join("\n")],
+      ["사용법 > 참고", note],
+    ]);
+  });
+
+  it("50자 미만인 마지막 소절은 짧은 조각의 기준이 100자여도 앞 묶음의 끝에 붙인다", () => {
+    const note = "자세한 내용은 관련 예제 문서를 참고한다.";
+    expect(note.length).toBeLessThan(50);
+    const chunks = chunk(doc("## 사용법", "", "### 가", "", paragraph("가", 7), "", paragraph("나", 7), "", "### 참고", "", note), {
+      tokenBudget: 160,
+      minPieceChars: 100,
+    });
     expect(chunks.map((c) => c.section)).toEqual(["사용법 > 가 / 참고 (1/2)", "사용법 > 가 / 참고 (2/2)"]);
-    expect(chunks[1].content).toBe([paragraph("나", 6), "", "### 참고", "", note].join("\n"));
+    expect(chunks[1].content).toBe([paragraph("나", 7), "", "### 참고", "", note].join("\n"));
   });
 
   it("도입부 뒤에 짧은 마지막 소절을 붙인 묶음은 조각으로 나뉘어도 절의 이름을 쓴다", () => {
@@ -1125,6 +1145,35 @@ describe("chunkMarkdown — 나눈 결과로 생긴 짧은 글과 본문 없는 
       }
       expect(body.slice(position).trim()).toBe("");
     }
+  });
+});
+
+describe("chunkMarkdown — 제목 줄이 그 내용과 떨어져 앞 청크의 끝에 남지 않는다", () => {
+  /** 본문의 마지막 줄이 제목 줄(### 이하)인지 */
+  const endsWithHeading = (content: string) => /^#{3,6}\s+\S/.test(content.trimEnd().split("\n").at(-1) ?? "");
+  const defaults = (body: string) => chunkMarkdown(body, FRONTMATTER, DOC_PATH);
+
+  it("짧은 도입부가 본문 없는 제목 줄(바로 아래에 더 깊은 소절만 있는 제목)을 끌어와 청크의 끝에 남기지 않는다", () => {
+    // 기본 조건. 69자 도입부와, 본문 없이 #### 소절만 가진 ### 제목, 한 청크에 들어가지 않는 #### 소절 두 개
+    const intro = "의존성 주입은 필드, 생성자, 설정 메서드의 세 가지 방식으로 할 수 있으며 아래에서 방식마다 예제와 함께 차례로 설명한다.";
+    expect(intro.length).toBeGreaterThanOrEqual(50);
+    expect(intro.length).toBeLessThan(100);
+    const chunks = defaults(
+      doc(
+        "## 설명", "", intro, "", "### Autowire 및 Qualifier 애노테이션", "",
+        "#### Autowiring 예제", "", paragraph("예제", 40), "", "#### Qualifier 예제", "", paragraph("한정", 40),
+      ),
+    );
+    expect(chunks.map((c) => c.section)).toEqual([
+      "설명",
+      "설명 > Autowire 및 Qualifier 애노테이션 > Autowiring 예제 (1/2)",
+      "설명 > Autowire 및 Qualifier 애노테이션 > Autowiring 예제 (2/2)",
+      "설명 > Autowire 및 Qualifier 애노테이션 > Qualifier 예제 (1/2)",
+      "설명 > Autowire 및 Qualifier 애노테이션 > Qualifier 예제 (2/2)",
+    ]);
+    // 도입부는 따로 색인되고, 제목은 그 내용이 실린 청크의 제목 경로에 있다
+    expect(chunks[0].content).toBe(intro);
+    expect(chunks.filter((c) => endsWithHeading(c.content))).toEqual([]);
   });
 });
 
