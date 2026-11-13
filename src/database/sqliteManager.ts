@@ -463,7 +463,8 @@ export class SQLiteManager {
    *    때만 한 글자 검색어를 빼고 다시 찾는다.
    * 2) 필터까지 적용한 결과가 0건이면 한 글자 검색어를 뺀 채로(dropSingleCharacterTerms) 대체 검색
    *    (anyTermSearch)으로 넘어간다: 일치하는 행이 있는 검색어만 남기고, 그 절반 이상이 일치하는 행을 찾는다.
-   *    그런 행이 없으면 일치 기준을 낮춰 가며 찾는다.
+   *    그런 행이 없으면 일치 기준을 낮춰 가며 찾는다. 대상 행의 절반 넘게 일치하는 흔한 검색어만 일치한 행은
+   *    돌려주지 않는다.
    *    0건인지는 페이지가 아니라 전체 건수로 판단한다 (offset 이 끝을 넘었다고 검색 방식을 바꾸지 않는다).
    *
    * 두 단계 모두 일치한 검색어가 많은 행, 이름 컬럼(nameColumns)에 일치한 검색어가 많은 행, 대상의 기본 정렬,
@@ -483,16 +484,16 @@ export class SQLiteManager {
     /** 검색에 넘긴 검색어(searched)에 들지 못한, 검색에서 뺀 검색어. query 에 적힌 순서다 */
     const droppedFrom = (searched: string[]): string[] => terms.filter((term) => !searched.includes(term));
 
-    const distinctive = dropGenericTerms(terms, target.genericTerms, query.joinedTerms);
+    const kept = dropGenericTerms(terms, target.genericTerms, query.joinedTerms);
 
-    const allTerms = this.allTermsStage<Row>(target, distinctive, filter, page);
+    const allTerms = this.allTermsStage<Row>(target, kept, filter, page);
     if (allTerms) {
       const { used, rows, total } = allTerms;
       const usage: KeywordTermUsage = { used, ignored: [], dropped: droppedFrom(used), required: used.length };
       return { rows, total, matchMode: 'all-terms', terms: usage };
     }
 
-    const searchable = dropSingleCharacterTerms(distinctive);
+    const searchable = dropSingleCharacterTerms(kept);
     const fallback = this.anyTermSearch<Row>(target, searchable, filter, page);
     return {
       rows: fallback.rows,
@@ -559,7 +560,8 @@ export class SQLiteManager {
    * 검색어(matchers) 가운데 required 개 이상이 일치하는 행을 조회한다. 필터는 같은 SQL 문에서 적용한다.
    *
    * 정렬: (1) 일치한 검색어 수가 많은 행, (2) 이름 컬럼에 일치한 검색어 수가 많은 행, (3) 대상의 기본 정렬,
-   * (4) rowid. 흔한 낱말만 일치한 행이나 설명에만 검색어가 든 행은 버리지 않고 뒤로 보낸다.
+   * (4) rowid. 설명에만 검색어가 든 행은 버리지 않고 뒤로 보낸다.
+   * (흔한 검색어만 일치한 행을 거르는 일은 대체 검색이 filter 에 조건을 더해서 한다. distinctiveScope 참조.)
    */
   private selectByMatchedTerms<Row>(
     target: KeywordSearchTarget,
@@ -599,18 +601,18 @@ export class SQLiteManager {
   /**
    * 대체 검색: 모든 검색어가 일치하는 행이 없을 때, 쓸 수 있는 검색어의 절반 이상이 일치하는 행을 찾는다.
    *
-   * 필터를 적용한 대상 안에서 일치하는 행이 하나도 없는 검색어는 조사를 뗀 꼴(particleStrippedForms)로 바꿔 보고,
-   * 그 꼴도 일치하는 행이 없으면 쓰지 않는다. 문장으로 물을 때 섞이는 군말('추천', '되나요')이 일치 기준을 올려
-   * 결과를 0건으로 만들지 않게 하고, 조사가 붙은 제품명('JEUS는', '티맥스는')으로도 찾게 한다.
-   * 많은 행과 일치하는 검색어는 버리지 않는다. 그런 검색어만 일치한 행은 정렬에서 뒤로 갈 뿐이다.
+   * 쓸 수 있는 검색어는 필터를 적용한 대상 안에 일치하는 행이 있는 검색어다 (usableTerms). 문장으로 물을 때
+   * 섞이는 군말('추천', '되나요')이 일치 기준을 올려 결과를 0건으로 만들지 않게 한다.
    *
-   * 남은 검색어가 k 개일 때 ceil(k/2) 개 이상 일치한 행을 돌려준다 (k 가 0 이면 빈 결과).
+   * 쓸 수 있는 검색어가 k 개일 때 ceil(k/2) 개 이상 일치한 행을 돌려준다 (k 가 0 이면 빈 결과).
    * 그 기준을 채운 행이 없으면 기준을 1씩 낮춰 행이 나올 때까지 찾는다. 제품명 셋을 나열한 query 처럼
    * 한 행에 두 검색어가 함께 들 수 없는 경우에 0건을 돌려주면, 호출자는 그 제품들이 목록에 없다고 읽는다.
-   * 남은 검색어는 저마다 대상 안에 일치하는 행이 있으므로, k 가 1 이상이면 결과가 0건이 되지 않는다.
+   * 쓸 수 있는 검색어는 저마다 대상 안에 일치하는 행이 있으므로, k 가 1 이상이면 결과가 0건이 되지 않는다.
+   *
+   * 흔한 검색어만 일치한 행은 돌려주지 않는다 (distinctiveScope). 일치 기준도 그 조건을 건 채로 낮춘다.
    * 정렬과 필터 적용은 selectByMatchedTerms 를 따른다.
    *
-   * 결과의 terms.used 는 남은 검색어(조사를 떼어 쓴 것은 뗀 꼴), terms.ignored 는 쓰지 않은 검색어,
+   * 결과의 terms.used 는 쓸 수 있는 검색어(조사를 떼어 쓴 것은 뗀 꼴), terms.ignored 는 쓰지 않은 검색어,
    * terms.required 는 실제로 적용한 일치 기준이다 (k 가 0 이면 0). 검색에서 뺀 검색어(dropped)는 이 단계에
    * 넘어오지 않으므로 호출부가 채운다.
    */
@@ -620,22 +622,53 @@ export class SQLiteManager {
     filter: SqlCondition,
     page: SqlPage,
   ): { rows: Row[]; total: number; terms: Omit<KeywordTermUsage, 'dropped'> } {
-    /** forms 가운데 필터를 적용한 대상 안에 일치하는 행이 있는 첫 꼴과 그 꼴을 견주는 조건. 없으면 null */
-    const firstMatching = (forms: string[]): { form: string; matcher: TermMatcher } | null => {
+    const { usable, ignored } = this.usableTerms(target, terms, filter);
+    if (usable.length === 0) {
+      return { rows: [], total: 0, terms: { used: [], ignored, required: 0 } };
+    }
+
+    const used = usable.map((term) => term.form);
+    const matchers = usable.map((term) => term.matcher);
+    const scope = this.distinctiveScope(target, usable, filter);
+
+    // 절반(올림)에서 시작해, 그 기준을 채운 행이 없으면 1 까지 낮춘다.
+    // 행이 있는지는 페이지가 아니라 전체 건수로 판단한다 (offset 이 끝을 넘었다고 기준을 낮추지 않는다)
+    let required = Math.ceil(matchers.length / 2);
+    let found = this.selectByMatchedTerms<Row>(target, matchers, required, scope, page);
+    while (found.total === 0 && required > 1) {
+      required -= 1;
+      found = this.selectByMatchedTerms<Row>(target, matchers, required, scope, page);
+    }
+    return { ...found, terms: { used, ignored, required } };
+  }
+
+  /**
+   * 대체 검색에 쓸 수 있는 검색어를 고른다: 필터를 적용한 대상 안에 일치하는 행이 있는 검색어.
+   *
+   * 검색어 그대로 일치하는 행이 없으면 조사를 뗀 꼴(particleStrippedForms)로 바꿔 보고, 그 꼴도 일치하는 행이
+   * 없으면 쓰지 않는다 (ignored). 조사가 붙은 제품명('JEUS는', '티맥스는')으로도 찾게 한다.
+   * 뗀 꼴이 다른 검색어와 같으면 한 번만 쓴다.
+   */
+  private usableTerms(
+    target: KeywordSearchTarget,
+    terms: string[],
+    filter: SqlCondition,
+  ): { usable: UsableTerm[]; ignored: string[] } {
+    /** forms 가운데 필터를 적용한 대상 안에 일치하는 행이 있는 첫 꼴. 없으면 null */
+    const firstMatching = (forms: string[]): UsableTerm | null => {
       for (const form of forms) {
         const matcher = termMatcher(target, form);
         // 견줄 조건을 만들 수 없는 값은 어떤 행과도 일치하지 않는다
-        if (matcher !== null && this.existsInScope(target, matcher.matches, filter)) {
-          return { form, matcher };
+        const rows = matcher === null ? 0 : this.countInScope(target, matcher.matches, filter);
+        if (matcher !== null && rows > 0) {
+          return { form, matcher, rows };
         }
       }
       return null;
     };
 
-    // 쓰기로 한 검색어(used)와 그 검색어를 견주는 조건. 두 배열의 길이가 k 다.
-    const used: string[] = [];
+    const usable: UsableTerm[] = [];
     const ignored: string[] = [];
-    const matchers: TermMatcher[] = [];
     // 조사를 뗀 꼴이 다른 검색어와 같으면 한 번만 센다 (LIKE 처럼 영문자의 대소문자는 가리지 않는다)
     const usedKeys = new Set<string>();
     for (const term of terms) {
@@ -645,37 +678,42 @@ export class SQLiteManager {
         ignored.push(term);
       } else if (!usedKeys.has(match.form.toLowerCase())) {
         usedKeys.add(match.form.toLowerCase());
-        used.push(match.form);
-        matchers.push(match.matcher);
+        usable.push(match);
       }
     }
-
-    if (matchers.length === 0) {
-      return { rows: [], total: 0, terms: { used, ignored, required: 0 } };
-    }
-
-    // 절반(올림)에서 시작해, 그 기준을 채운 행이 없으면 1 까지 낮춘다.
-    // 행이 있는지는 페이지가 아니라 전체 건수로 판단한다 (offset 이 끝을 넘었다고 기준을 낮추지 않는다)
-    let required = Math.ceil(matchers.length / 2);
-    let found = this.selectByMatchedTerms<Row>(target, matchers, required, filter, page);
-    while (found.total === 0 && required > 1) {
-      required -= 1;
-      found = this.selectByMatchedTerms<Row>(target, matchers, required, filter, page);
-    }
-    return { ...found, terms: { used, ignored, required } };
+    return { usable, ignored };
   }
 
-  /** 조건(condition)을 채우는 행이 필터를 적용한 대상 안에 하나라도 있는지. */
-  private existsInScope(target: KeywordSearchTarget, condition: SqlExpression, filter: SqlCondition): boolean {
+  /**
+   * 대체 검색의 대상을 가려 주는 검색어가 하나 이상 일치한 행으로 좁힌 조건을 돌려준다 (좁힐 것이 없으면 filter 그대로).
+   *
+   * 가려 주는 검색어는 필터를 적용한 대상 행의 절반 이하와 일치하는 검색어이고, 절반 넘게 일치하는 검색어는
+   * 흔한 검색어다. 대체 검색은 검색어의 절반만 일치해도 돌려주므로, 흔한 검색어('제품', '기능')만 일치한 행까지
+   * 돌려주면 그 행들이 결과를 채워 찾는 행이 묻힌다 ('티맥스 제품 목록' 이 '제품' 이 든 수백 행을 돌려주고
+   * 티맥스 행 일부가 삼백 번째 뒤로 밀린다).
+   * 흔한 검색어를 버리지는 않는다: 일치한 검색어 수(정렬과 일치 기준)에는 그대로 센다.
+   * 쓸 수 있는 검색어가 모두 흔한 검색어이면 좁히지 않는다 ('CMS 추천' 은 CMS 가 든 행을 그대로 돌려준다).
+   */
+  private distinctiveScope(target: KeywordSearchTarget, usable: UsableTerm[], filter: SqlCondition): SqlCondition {
+    const scopeRows = this.countInScope(target, EVERY_ROW, filter);
+    const distinctive = usable.filter((term) => term.rows * 2 <= scopeRows);
+    // 모든 검색어가 가려 주는 검색어이면, 하나 이상 일치한 행은 이미 이 조건을 채운다
+    if (distinctive.length === 0 || distinctive.length === usable.length) {
+      return filter;
+    }
+    const condition = anyOf(distinctive.map((term) => term.matcher.matches));
+    return { sql: `${filter.sql} AND ${condition.sql}`, params: [...filter.params, ...condition.params] };
+  }
+
+  /** 조건(condition)을 채우는 행이 필터를 적용한 대상 안에 몇 건인지. */
+  private countInScope(target: KeywordSearchTarget, condition: SqlExpression, filter: SqlCondition): number {
     const row = this.db
       .prepare(
-        `SELECT EXISTS(
-           SELECT 1 FROM ${target.table} ${target.joins ?? ''}
-           WHERE ${condition.sql}${filter.sql}
-         ) AS found`,
+        `SELECT COUNT(*) AS count FROM ${target.table} ${target.joins ?? ''}
+         WHERE ${condition.sql}${filter.sql}`,
       )
-      .get(...condition.params, ...filter.params) as { found: number };
-    return row.found === 1;
+      .get(...condition.params, ...filter.params) as { count: number };
+    return row.count;
   }
 
   /**
@@ -1299,6 +1337,27 @@ interface TermMatcher {
   inName: SqlExpression;
 }
 
+/** 대체 검색이 쓰기로 한 검색어 하나 */
+interface UsableTerm {
+  /** 검색에 쓰는 꼴 (조사를 떼어 쓰면 뗀 꼴) */
+  form: string;
+  /** 그 꼴을 행과 견주는 조건 */
+  matcher: TermMatcher;
+  /** 필터를 적용한 대상 안에서 그 꼴과 일치하는 행 수 (1 이상) */
+  rows: number;
+}
+
+/** 어떤 행이나 채우는 조건 (필터만 적용한 대상의 행 수를 셀 때 쓴다) */
+const EVERY_ROW: SqlExpression = { sql: '1=1', params: [] };
+
+/** 조건 가운데 하나라도 채운다는 조건. 바인딩 값은 조건이 적힌 순서대로 잇는다. */
+function anyOf(conditions: SqlExpression[]): SqlExpression {
+  return {
+    sql: `(${conditions.map((condition) => condition.sql).join(' OR ')})`,
+    params: conditions.flatMap((condition) => condition.params),
+  };
+}
+
 /**
  * 검색어 하나를 대상의 행과 견주는 조건을 만든다.
  *
@@ -1313,12 +1372,8 @@ function termMatcher(target: KeywordSearchTarget, term: string): TermMatcher | n
   if (pattern === null) {
     return null;
   }
-  const conditions = [likeAnyColumn(target.searchColumns, pattern), ...(target.termConditions?.(term) ?? [])];
   return {
-    matches: {
-      sql: `(${conditions.map((condition) => condition.sql).join(' OR ')})`,
-      params: conditions.flatMap((condition) => condition.params),
-    },
+    matches: anyOf([likeAnyColumn(target.searchColumns, pattern), ...(target.termConditions?.(term) ?? [])]),
     inName: likeAnyColumn(target.nameColumns, pattern),
   };
 }

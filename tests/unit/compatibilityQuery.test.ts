@@ -599,24 +599,80 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(result.matchMode).toBe("any-term");
     });
 
-    it("많은 행에 들어 있는 검색어도 빼지 않는다 (일치한 검색어가 많은 행이 앞에 올 뿐이다)", () => {
-      // 전체 행의 절반 넘게 일치하는 검색어를 버리던 때에는 '호환'(여섯 행 모두)이 빠져 JEUS 두 행만 나왔고,
-      // '호환 추천' 처럼 남는 검색어가 없으면 0건이었다
+    it("가려 주는 검색어가 있으면 흔한 검색어만 일치한 행은 돌려주지 않는다", () => {
+      // JEUS: 2행(여섯 행의 절반 이하, 가려 주는 검색어) / 호환: 6행(절반 넘음, 흔한 검색어) / 여부: 0행(제외).
+      // 하나 이상 일치하면 통과하므로(k=2), '호환' 만 일치한 네 행까지 돌려주던 때에는 목록 전체가 나왔다
       const sentence = sqlite.queryCompatibleSoftware({ query: "JEUS 호환 여부" });
-      expect(versionsOf(sentence.rows)).toEqual([
-        "JEUS 21",
-        "JEUS 8.5",
-        "SampleCMS 1.0",
-        "OtherCMS 2.0",
-        "Tibero 7",
-        "WebLogic 12c",
-      ]);
-      expect(sentence.total).toBe(CATALOGUE.length);
+      expect(versionsOf(sentence.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(sentence.total).toBe(2);
       expect(sentence.matchMode).toBe("any-term");
+      // 흔한 검색어도 쓴 검색어로 알린다
+      expect(sentence.terms).toEqual({ used: ["JEUS", "호환"], ignored: ["여부"], dropped: [], required: 1 });
+    });
 
-      const common = sqlite.queryCompatibleSoftware({ query: "호환 추천" });
-      expect(common.total).toBe(CATALOGUE.length);
-      expect(common.matchMode).toBe("any-term");
+    it("쓰기로 한 검색어가 모두 흔한 검색어이면 그 검색어가 일치한 행을 그대로 돌려준다", () => {
+      // '호환' 과 '확인' 은 여섯 행 모두에 들어 있다. 흔한 검색어를 버리면 남는 검색어가 없어 0건이 된다
+      for (const query of ["호환 추천", "호환 확인 추천"]) {
+        const common = sqlite.queryCompatibleSoftware({ query });
+        expect(common.total, `query=${query}`).toBe(CATALOGUE.length);
+        expect(common.matchMode, `query=${query}`).toBe("any-term");
+      }
+    });
+
+    it("흔한 검색어는 일치한 검색어 수(정렬과 일치 기준)에는 그대로 센다", () => {
+      // 정렬: 설명에 '호환' 이 없는 JEUS 행을 넣는다. JEUS(3행)는 가려 주는 검색어, 호환(7행 가운데 6행)은 흔한 검색어다.
+      // 새 행은 확인일자가 가장 최근이지만 JEUS 하나만 일치해, JEUS·호환 두 개가 일치한 두 행 뒤에 온다
+      sqlite.addCompatibilitySoftwareBatch([
+        {
+          ...CATALOGUE[1],
+          product_name: "Plain JEUS",
+          product_version: "Plain JEUS 1.0",
+          verified_date: "2026-04-04",
+          description: "설명 없음",
+        },
+      ]);
+      const ordered = sqlite.queryCompatibleSoftware({ query: "JEUS 호환 여부" });
+      expect(versionsOf(ordered.rows)).toEqual(["JEUS 21", "JEUS 8.5", "Plain JEUS 1.0"]);
+
+      // 일치 기준: JEUS·Tibero·4.0 은 가려 주는 검색어, 호환은 흔한 검색어 → k=4, 두 개 이상 일치해야 통과.
+      // JEUS 21 은 가려 주는 검색어가 JEUS 하나뿐이지만 '호환' 까지 두 개가 일치해 통과하고, 'Plain JEUS' 는 하나라 빠진다
+      const counted = sqlite.queryCompatibleSoftware({ query: "JEUS Tibero 4.0 호환 없는말" });
+      expect(versionsOf(counted.rows)).toEqual(["Tibero 7", "JEUS 8.5", "JEUS 21"]);
+      expect(counted.terms).toEqual({
+        used: ["JEUS", "Tibero", "4.0", "호환"],
+        ignored: ["없는말"],
+        dropped: [],
+        required: 2,
+      });
+    });
+
+    it("일치 기준은 가려 주는 검색어가 일치한 행 안에서 낮춘다", () => {
+      // 설명에 '호환' 도 '확인' 도 없는 행. 드문말(1행)은 가려 주는 검색어, 호환·확인(7행 가운데 6행)은 흔한 검색어다 → k=3.
+      // 두 개 이상 일치한 행은 여섯이지만 모두 흔한 검색어만 일치했다. 그 행들을 돌려주지 않고 기준을 1 로 낮춘다
+      sqlite.addCompatibilitySoftwareBatch([
+        { ...CATALOGUE[5], product_name: "Rare", product_version: "Rare 1.0", description: "드문말" },
+      ]);
+      const result = sqlite.queryCompatibleSoftware({ query: "드문말 호환 확인 없는말" });
+      expect(versionsOf(result.rows)).toEqual(["Rare 1.0"]);
+      expect(result.total).toBe(1);
+      expect(result.terms).toEqual({ used: ["드문말", "호환", "확인"], ignored: ["없는말"], dropped: [], required: 1 });
+    });
+
+    it("흔한 검색어인지는 필터를 적용한 대상 안에서 판단한다", () => {
+      // 표 전체(6행)에서는 JEUS(2행)와 오라클(1행) 모두 가려 주는 검색어라, 하나 이상 일치한 세 행이 나온다
+      const everywhere = sqlite.queryCompatibleSoftware({ query: "JEUS 오라클" });
+      expect(versionsOf(everywhere.rows)).toEqual(["JEUS 21", "JEUS 8.5", "WebLogic 12c"]);
+      // WAS 세 행 안에서는 JEUS(2행)가 절반을 넘는 흔한 검색어다. 가려 주는 검색어 '오라클' 이 일치한 행만 남는다
+      const inWas = sqlite.queryCompatibleSoftware({ query: "JEUS 오라클", filters: { category: "WAS" } });
+      expect(versionsOf(inWas.rows)).toEqual(["WebLogic 12c"]);
+      expect(inWas.terms).toEqual({ used: ["JEUS", "오라클"], ignored: [], dropped: [], required: 1 });
+    });
+
+    it("대상 행의 정확히 절반과 일치하는 검색어는 가려 주는 검색어다", () => {
+      // 티맥스: 6행 가운데 3행 / 호환: 6행. '호환' 만 일치한 세 행은 나오지 않는다
+      const result = sqlite.queryCompatibleSoftware({ query: "티맥스 호환 없는말" });
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "Tibero 7", "JEUS 8.5"]);
+      expect(result.total).toBe(3);
     });
 
     it("일치한 검색어 수가 많은 행을 먼저 돌려준다 (확인일자보다 앞선 기준이다)", () => {
@@ -654,8 +710,9 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     });
 
     it("일치한 검색어 수가 같으면 이름에 일치한 검색어가 많은 행을 먼저 돌려준다", () => {
-      // Tibero·호환·없는말: Tibero 7 은 둘, 나머지 다섯 행은 '호환' 하나만 일치한다 (k=2, 하나 이상이면 통과).
-      // 분류에만 'Tibero' 가 든 행을 넣으면 일치한 수는 Tibero 7 과 같지만 이름에는 없어 그 뒤에 온다
+      // Tibero·호환·없는말: 분류에만 'Tibero' 가 든 행을 넣는다. 그 행과 Tibero 7 은 Tibero·호환 두 개가 일치한다
+      // (k=2, 하나 이상이면 통과). 새 행은 확인일자가 더 최근이지만 이름에는 'Tibero' 가 없어 Tibero 7 뒤에 온다.
+      // '호환' 만 일치한 다섯 행은 가려 주는 검색어(Tibero)가 일치하지 않아 나오지 않는다
       sqlite.addCompatibilitySoftwareBatch([
         {
           ...CATALOGUE[2],
@@ -666,8 +723,8 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
         },
       ]);
       const result = sqlite.queryCompatibleSoftware({ query: "Tibero 호환 없는말" });
-      expect(versionsOf(result.rows).slice(0, 3)).toEqual(["Tibero 7", "Addon 1.0", "JEUS 21"]);
-      expect(result.total).toBe(CATALOGUE.length + 1);
+      expect(versionsOf(result.rows)).toEqual(["Tibero 7", "Addon 1.0"]);
+      expect(result.total).toBe(2);
     });
 
     it("한 글자 검색어뿐인 query 도 대체 검색에서 그대로 쓴다", () => {

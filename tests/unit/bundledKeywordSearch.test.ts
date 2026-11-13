@@ -12,6 +12,7 @@
  * - 한 글자 낱말을 검색어에서 빼, 그 낱말이 가려 주던 행이 나머지 낱말만의 결과에 묻혔다 ("롤 관리", "JEUS 8").
  * - 영어 기능어와 목록의 모든 항목에 해당하는 낱말이 결과를 흩뜨렸다 ("Is Tibero compatible with eGovFrame 4.3?",
  *   "eGovFrame 4.3 호환 CMS", "게시판 컴포넌트").
+ * - 대체 검색이 흔한 낱말만 일치한 행으로 결과를 채웠다 ("티맥스 제품 목록", "게시판 기능 알려줘").
  *
  * DB 는 읽기 전용으로 열고, 조회가 파일을 바꾸지 않았는지 마지막에 확인한다.
  * 동봉 데이터는 갱신될 수 있으므로 건수를 숫자로 고정하지 않고, 같은 뜻의 두 조회가 같은 결과를 내는지와
@@ -105,6 +106,28 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       expect(idsOf(alone.rows)).toContain("wed");
     });
 
+    it("흔한 낱말이 섞인 문장형 질의는 가려 주는 낱말이 든 컴포넌트만 돌려준다", () => {
+      // '기능' 은 컴포넌트 대부분의 설명에 들어 있다. 그 낱말만 일치한 컴포넌트까지 돌려주던 때에는
+      // "게시판 기능 알려줘" 가 130건 남짓이 되고, 첫 20건 가운데 14건에 '게시판' 이 없었다
+      const cases: Array<[string, string]> = [
+        ["게시판 기능 알려줘", "게시판"],
+        ["로그인 기능이 필요합니다", "로그인"],
+        ["통계 기능 알려줘", "통계"],
+      ];
+      const everyComponent = sqlite.queryComponents().total;
+      for (const [query, keyword] of cases) {
+        const expected = sqlite.queryComponents({ query: keyword });
+        const result = sqlite.queryComponents({ query });
+        expect(expected.total, `query=${keyword}`).toBeGreaterThan(0);
+        expect(result.matchMode, `query=${query}`).toBe("any-term");
+        expect(idsOf(result.rows).sort(), `query=${query}`).toEqual(idsOf(expected.rows).sort());
+        // 흔한 낱말도 쓴 검색어로 알린다 (버리지 않고, 일치한 검색어 수에는 센다)
+        expect(result.terms?.used, `query=${query}`).toEqual([keyword, "기능"]);
+      }
+      // '기능' 은 대상의 절반 넘게 일치하는 흔한 낱말이다
+      expect(sqlite.queryComponents({ query: "기능" }).total * 2).toBeGreaterThan(everyComponent);
+    });
+
     it("컴포넌트 ID 로도 찾는다 (패키지명과 다른 ID)", () => {
       // 'uss-cmt' 의 패키지명은 egovframework.com.uss.cmt 다. ID 에만 'uss-cmt' 가 있다
       expect(idsOf(sqlite.queryComponents({ query: "uss-cmt" }).rows)).toEqual(["uss-cmt"]);
@@ -174,11 +197,36 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       expect(cms.total).toBeGreaterThan(0);
 
       expect(result.matchMode).toBe("any-term");
-      // 절반 넘는 행과 일치하는 'CMS' 를 버리던 때에는 0건이었다
-      expect(result.total).toBeGreaterThanOrEqual(cms.total);
-      // 앞쪽 행은 CMS 가 든 행이다 (CMS 단독 조회의 첫 20건과 같다)
-      expect(rowKeys(result).slice(0, 20)).toEqual(rowKeys(cms).slice(0, 20));
-      expect(result.terms?.used).toContain("CMS");
+      // 절반 넘는 행과 일치하는 'CMS' 를 버리던 때에는 0건이었다.
+      // 쓸 수 있는 검색어가 흔한 검색어뿐이면 그 검색어가 일치한 행을 그대로 돌려준다 (CMS 단독 조회와 행도 순서도 같다)
+      expect(cms.total * 2).toBeGreaterThan(sqlite.queryCompatibleSoftware().total);
+      expect(rowKeys(result)).toEqual(rowKeys(cms));
+      expect(result.terms).toEqual({ used: ["CMS"], ignored: ["추천"], dropped: [], required: 1 });
+    });
+
+    it("흔한 낱말이 섞인 문장형 질의는 가려 주는 낱말이 든 행만 돌려준다", () => {
+      // '제품', '버전', '호환' 은 목록의 대부분 행에 들어 있다. 그 낱말만 일치한 행까지 돌려주던 때에는
+      // "티맥스 제품 목록" 이 350건 남짓이 되고 티맥스 다섯 행 가운데 둘이 300번째 뒤로 밀렸다
+      const cases: Array<[string, string]> = [
+        ["티맥스 제품 목록", "티맥스"],
+        ["DBMS 제품 추천", "DBMS"],
+        ["티베로 호환되는 버전", "티베로"],
+        ["JEUS의 호환 버전", "JEUS"],
+      ];
+      const everyRow = sqlite.queryCompatibleSoftware().total;
+      for (const [query, keyword] of cases) {
+        const expected = compatible(keyword);
+        const result = compatible(query);
+        expect(expected.total, `query=${keyword}`).toBeGreaterThan(0);
+        expect(expected.total * 2, `query=${keyword}`).toBeLessThanOrEqual(everyRow);
+        expect(result.matchMode, `query=${query}`).toBe("any-term");
+        expect(rowSet(result), `query=${query}`).toEqual(rowSet(expected));
+        // 흔한 낱말도 쓴 검색어로 알린다 (버리지 않고, 일치한 검색어 수에는 센다)
+        expect(result.terms?.used[0], `query=${query}`).toBe(keyword);
+        expect(result.terms?.used.length, `query=${query}`).toBeGreaterThan(1);
+      }
+      // 티맥스 제품만 나온다
+      expect(compatible("티맥스 제품 목록").rows.every((row) => row.vendor.includes("티맥스"))).toBe(true);
     });
 
     it("조사가 붙은 제품명·업체명·버전은 조사를 뗀 검색어와 같은 행을 돌려준다", () => {

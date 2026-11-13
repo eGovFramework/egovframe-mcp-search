@@ -329,13 +329,33 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
       expect(result.matchMode).toBe("any-term");
     });
 
-    it("많은 컴포넌트에 들어 있는 검색어도 빼지 않는다 (일치한 검색어가 많은 컴포넌트가 앞에 올 뿐이다)", () => {
-      // 전체의 절반 넘게 일치하는 검색어를 버리던 때에는 '기능'(일곱 컴포넌트)이 빠져 bbs, tpl 만 나왔다.
-      // 기능·게시판이 모두 든 bbs, tpl 이 먼저고, '기능' 만 든 다섯 컴포넌트가 이름이 짧은 순으로 뒤따른다
+    it("가려 주는 검색어가 있으면 흔한 검색어만 일치한 컴포넌트는 돌려주지 않는다", () => {
+      // 기능: 여덟 컴포넌트 가운데 일곱(절반 넘음, 흔한 검색어) / 게시판: bbs, tpl(가려 주는 검색어) / 없는말: 0행(제외).
+      // 하나 이상 일치하면 통과하므로(k=2), '기능' 만 든 다섯 컴포넌트까지 돌려주던 때에는 일곱 건이 나왔다
       const result = sqlite.queryComponents({ query: "기능 게시판 없는말" });
-      expect(idsOf(result.rows)).toEqual(["bbs", "tpl", "ram", "bst", "uia", "drm", "sec"]);
+      expect(idsOf(result.rows)).toEqual(["bbs", "tpl"]);
+      expect(result.total).toBe(2);
+      expect(result.matchMode).toBe("any-term");
+      // 흔한 검색어도 쓴 검색어로 알린다
+      expect(result.terms).toEqual({ used: ["기능", "게시판"], ignored: ["없는말"], dropped: [], required: 1 });
+    });
+
+    it("쓰기로 한 검색어가 모두 흔한 검색어이면 그 검색어가 일치한 컴포넌트를 그대로 돌려준다", () => {
+      // '기능' 과 '제공함' 은 일곱 컴포넌트의 설명에 들어 있다. 흔한 검색어를 버리면 남는 검색어가 없어 0건이 된다
+      const result = sqlite.queryComponents({ query: "기능 제공함 없는말" });
       expect(result.total).toBe(7);
       expect(result.matchMode).toBe("any-term");
+      expect(idsOf(result.rows)).not.toContain("cmm");
+    });
+
+    it("흔한 검색어는 일치한 검색어 수(정렬과 일치 기준)에는 그대로 센다", () => {
+      // 게시물(bbs, bst)·통계(bst)·템플릿(tpl)은 가려 주는 검색어, 기능은 흔한 검색어 → k=4, 두 개 이상 일치해야 통과.
+      // bst 는 게시물·통계·기능 세 개, bbs 는 게시물·기능, tpl 은 템플릿·기능 두 개가 일치한다.
+      // '기능' 을 세지 않으면 bbs 와 tpl 은 하나만 일치해 빠진다.
+      // 두 개가 일치한 둘 가운데에서는 이름에 검색어(템플릿)가 든 tpl 이 먼저다
+      const result = sqlite.queryComponents({ query: "게시물 통계 템플릿 기능 없는말" });
+      expect(idsOf(result.rows)).toEqual(["bst", "tpl", "bbs"]);
+      expect(result.terms?.required).toBe(2);
     });
 
     it("남은 검색어의 절반 이상(올림)이 일치하는 컴포넌트가 있으면 그것만 돌려준다", () => {
