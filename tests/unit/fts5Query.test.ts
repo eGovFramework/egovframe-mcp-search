@@ -1,17 +1,14 @@
 /**
- * 키워드 검색어 추출과 FTS5 MATCH 식 조립 단위 테스트
+ * 키워드 검색어 추출 단위 테스트
  *
- * 사용자가 입력한 문장을 그대로 MATCH 에 넘기면 문장부호 하나로 구문 오류가 나고,
- * 한국어 복합어("권한관리")는 토큰 전체가 일치해야만 검색된다.
- * extractSearchTerms / buildFts5MatchQuery 는 어떤 입력에도 구문 오류가 나지 않는
- * 접두 일치 MATCH 식을 만든다.
+ * 공통컴포넌트·호환 소프트웨어의 키워드 검색은 query 에서 검색어를 추출해 부분 문자열 일치로 찾는다.
+ * 문장부호, 검색 연산자처럼 적은 접속사, 전각 문자, 아주 긴 입력이 들어와도 일정한 검색어 목록이 나와야 한다.
+ * (파일 이름은 검색어로 FTS5 MATCH 식을 조립하던 때의 것이다.)
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import Database from "better-sqlite3";
+import { describe, it, expect } from "vitest";
 import {
   MAX_KEYWORD_QUERY_LENGTH,
   MAX_SEARCH_TERMS,
-  buildFts5MatchQuery,
   extractSearchTerms,
   particleStrippedForms,
   trimEdgeSeparators,
@@ -279,94 +276,5 @@ describe("extractSearchTerms 의 처리 시간", () => {
     // 'a' + '.' 8만 개 + 'a' 는 약 3초가 걸렸고, 그동안 stdio 서버 전체가 멈췄다
     expect(elapsedMs(() => extractSearchTerms(`a${".".repeat(80000)}a`))).toBeLessThan(100);
     expect(elapsedMs(() => extractSearchTerms("-".repeat(60000)))).toBeLessThan(100);
-  });
-});
-
-describe("buildFts5MatchQuery", () => {
-  it("검색어마다 큰따옴표 구와 접두 일치(*)를 붙여 AND 로 결합한다", () => {
-    expect(buildFts5MatchQuery(["게시판", "4.3"])).toBe('"게시판"* "4.3"*');
-  });
-
-  it("검색어가 없으면 null 을 돌려준다", () => {
-    expect(buildFts5MatchQuery([])).toBeNull();
-  });
-});
-
-describe("조립한 MATCH 식을 실제 FTS5 에 실행", () => {
-  let db: Database.Database;
-
-  beforeAll(() => {
-    db = new Database(":memory:");
-    db.exec(`
-      CREATE VIRTUAL TABLE docs USING fts5(body);
-      INSERT INTO docs(rowid, body) VALUES
-        (1, '권한관리 컴포넌트는 역할별 권한을 관리합니다'),
-        (2, '게시판에 글을 등록합니다'),
-        (3, '표준프레임워크 4.3 버전을 지원합니다'),
-        (4, '4 개 항목 가운데 3 개를 선택합니다'),
-        (5, 'egovframework.com.cop.bbs 패키지'),
-        (6, 'JEUS는 AND 연산을 지원합니다');
-    `);
-  });
-
-  afterAll(() => {
-    db.close();
-  });
-
-  const match = (raw: string): number[] => {
-    const expr = buildFts5MatchQuery(extractSearchTerms(raw));
-    if (!expr) return [];
-    return (db.prepare("SELECT rowid FROM docs WHERE docs MATCH ? ORDER BY rowid").all(expr) as Array<{
-      rowid: number;
-    }>).map((r) => r.rowid);
-  };
-
-  it("복합어의 앞부분만 입력해도 찾는다", () => {
-    expect(match("권한")).toEqual([1]);
-  });
-
-  it("조사가 붙은 낱말을 조사 없이 찾는다", () => {
-    expect(match("게시판")).toEqual([2]);
-    expect(match("jeus")).toEqual([6]);
-  });
-
-  it("버전 번호는 숫자가 붙어 있는 행만 찾는다", () => {
-    expect(match("4.3")).toEqual([3]);
-  });
-
-  it("패키지명은 구 단위로 찾는다", () => {
-    expect(match("egovframework.com.cop.bbs")).toEqual([5]);
-  });
-
-  it("여러 검색어는 모두 포함한 행만 찾는다", () => {
-    expect(match("권한 컴포넌트")).toEqual([1]);
-    expect(match("권한 게시판")).toEqual([]);
-  });
-
-  it("문장부호와 FTS5 연산자 단어가 섞여도 구문 오류가 나지 않는다", () => {
-    const nasty = [
-      "로그인?",
-      "게시판!",
-      "A AND",
-      "AND",
-      "OR NOT",
-      "NEAR(a b)",
-      "c++",
-      "it's",
-      '"dq" "',
-      "(x)",
-      "a:b",
-      "-neg",
-      "x*",
-      "^start",
-      "100%",
-      "a/b\\c",
-      "{col}: v",
-    ];
-    for (const raw of nasty) {
-      expect(() => match(raw), `query=${raw}`).not.toThrow();
-    }
-    // 연산자 단어는 검색어에서 빠지고, 남은 낱말로 검색된다
-    expect(match("AND 연산")).toEqual([6]);
   });
 });

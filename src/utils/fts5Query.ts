@@ -1,11 +1,12 @@
 /**
- * SQLite FTS5 키워드 검색용 질의 조립 유틸.
+ * 키워드 검색어 추출 유틸.
  *
- * 사용자 입력을 MATCH 에 그대로 넘기면 `.` `:` `?` 같은 문자가 FTS5 구문으로 해석되어
- * "fts5: syntax error near ..." 가 나므로, 검색어를 추출한 뒤 MATCH 식을 직접 조립한다.
+ * 공통컴포넌트·호환 소프트웨어의 키워드 검색(database/sqliteManager 의 keywordSearch)은 query 에서
+ * 검색어를 추출해 LIKE 부분 문자열 일치로 찾는다. 파일 이름은 검색어로 FTS5 MATCH 식을 조립하던 때의
+ * 것이고, 지금은 MATCH 식을 만들지 않는다.
  */
 
-/** 한 번의 키워드 검색에 쓰는 검색어 수 상한. 긴 문장이 MATCH 식을 비대하게 만드는 것을 막는다. */
+/** 한 번의 키워드 검색에 쓰는 검색어 수 상한. 긴 문장이 조회 문을 비대하게 만드는 것을 막는다. */
 export const MAX_SEARCH_TERMS = 16;
 
 /**
@@ -156,18 +157,4 @@ export function particleStrippedForms(term: string): string[] {
   }
 
   return forms;
-}
-
-/**
- * 검색어 목록으로 FTS5 MATCH 식을 만든다.
- *
- * 검색어마다 큰따옴표 구(phrase)로 감싸므로 AND/OR/NOT/NEAR 나 문장부호가 연산자로 해석되지 않고,
- * 끝에 `*` 를 붙여 접두 일치로 찾는다 ("권한" → "권한관리", "게시판" → "게시판에").
- * 검색어 사이는 공백(암묵적 AND)으로 결합한다. 검색어가 없으면 null.
- */
-export function buildFts5MatchQuery(terms: string[]): string | null {
-  if (terms.length === 0) {
-    return null;
-  }
-  return terms.map((term) => `"${term.replaceAll('"', '')}"*`).join(' ');
 }

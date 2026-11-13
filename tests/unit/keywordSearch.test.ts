@@ -112,6 +112,62 @@ describe("SQLiteManager 키워드 검색", () => {
     });
   });
 
+  describe("어떤 query 에도 조회 오류가 나지 않는다", () => {
+    // 문장부호, 검색 연산자, LIKE 와일드카드·이스케이프 문자, SQL 조각, 제어 문자
+    const NASTY = [
+      "로그인?",
+      "게시판!",
+      "A AND",
+      "OR NOT",
+      "NEAR(a b)",
+      "c++",
+      "it's",
+      '"dq" "',
+      "(x)",
+      "a:b",
+      "-neg",
+      "x*",
+      "^start",
+      "100%",
+      "a_b",
+      "%",
+      "_",
+      "a/b\\c",
+      "\\",
+      "{col}: v",
+      "'; DROP TABLE common_components; --",
+      "게시판\u0000관리",
+      "\u0000",
+      "가".repeat(30000),
+      "%".repeat(30000),
+    ];
+
+    it("공통컴포넌트 조회", () => {
+      for (const query of NASTY) {
+        expect(() => sqlite.queryComponents({ query }), `query=${query.slice(0, 30)}`).not.toThrow();
+        expect(() => sqlite.searchComponents(query), `query=${query.slice(0, 30)}`).not.toThrow();
+      }
+      // 표는 그대로다
+      expect(componentIds("게시판")).toEqual(["bbs"]);
+    });
+
+    it("호환 소프트웨어 조회", () => {
+      for (const query of NASTY) {
+        expect(() => sqlite.queryCompatibleSoftware({ query }), `query=${query.slice(0, 30)}`).not.toThrow();
+        expect(() => sqlite.fullTextSearchCompatibility(query), `query=${query.slice(0, 30)}`).not.toThrow();
+      }
+    });
+
+    it("와일드카드 문자는 검색어에 남더라도 글자 그대로 비교한다", () => {
+      // '_' 는 검색어 안쪽에 남는 문자다. 와일드카드였다면 'a_b' 가 'axb' 와도 일치한다
+      sqlite.addCommonComponentsBatch([
+        component("wild", "axb 도구", "egovframework.com.wild", "와일드카드 확인용"),
+        component("lit", "a_b 도구", "egovframework.com.lit", "와일드카드 확인용"),
+      ]);
+      expect(componentIds("a_b")).toEqual(["lit"]);
+    });
+  });
+
   describe("compatibility", () => {
     it("벤더명의 앞부분만 입력해도 찾는다", () => {
       expect(productNames("티맥스")).toEqual(["JEUS", "Tibero"]);
