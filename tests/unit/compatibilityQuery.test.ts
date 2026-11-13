@@ -221,9 +221,11 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
 
     it("대체 검색(any-term)과 조사를 뗀 꼴에도 같은 규칙을 적용한다", () => {
       sqlite.addCompatibilitySoftwareBatch([UNLABELLED_43]);
-      // 2023: OtherCMS(확인일자) / 4.3: 세 행(프레임워크 버전) / 없는말: 0행(제외) → 하나 이상 일치하는 네 행
+      // 2023: OtherCMS(확인일자) / 4.3: 세 행(프레임워크 버전) / 없는말: 0행(제외) → 하나 이상 일치하는 네 행.
+      // 네 행 모두 검색어 하나가 일치한다. '2023' 은 숫자뿐인 검색어라 낱말의 처음에서 일치했는지를 세고
+      // (확인일자의 앞부분과 같으면 값의 맨 앞에서 일치한 것이다), '.' 이 든 '4.3' 은 세지 않아 OtherCMS 가 먼저다
       const fallback = sqlite.queryCompatibleSoftware({ query: "2023 4.3 없는말" });
-      expect(versionsOf(fallback.rows)).toEqual(["JEUS 21", "SampleCMS 1.0", "NoVersionText 1.0", "OtherCMS 2.0"]);
+      expect(versionsOf(fallback.rows)).toEqual(["OtherCMS 2.0", "JEUS 21", "SampleCMS 1.0", "NoVersionText 1.0"]);
       expect(fallback.matchMode).toBe("any-term");
       expect(fallback.terms).toMatchObject({ used: ["2023", "4.3"], ignored: ["없는말"] });
 
@@ -467,10 +469,11 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     });
 
     it("이름에 일치한 검색어 수는 검색어마다 따로 센다", () => {
-      // 'T M': OtherCMS 는 이름에 둘 다, SampleCMS('m')와 Tibero('T')는 하나씩 들어 있다.
-      // 이름에 일치한 수가 같은 SampleCMS 와 Tibero 는 확인일자가 최근인 순이다
-      const result = sqlite.queryCompatibleSoftware({ query: "T M" });
-      expect(versionsOf(result.rows)).toEqual(["OtherCMS 2.0", "SampleCMS 1.0", "Tibero 7"]);
+      // 'e m': SampleCMS 와 OtherCMS 는 이름에 둘 다, Tibero 는 이름에 'e' 만 들어 있다 ('m' 은 분류 DBMS 에 있다).
+      // 이름에 일치한 수가 같은 SampleCMS 와 OtherCMS 는 확인일자가 최근인 순이다.
+      // (두 글자 모두 어느 행에서도 낱말의 처음에 나오지 않아, 낱말의 처음에서 일치한 수는 모든 행이 0 이다.)
+      const result = sqlite.queryCompatibleSoftware({ query: "e m" });
+      expect(versionsOf(result.rows)).toEqual(["SampleCMS 1.0", "OtherCMS 2.0", "Tibero 7"]);
     });
 
     it("제품 버전 표기에만 일치한 행이 설명에만 일치한 행보다 앞에 온다", () => {
@@ -507,6 +510,176 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
         "JEUS 8.5",
         "WebLogic 12c",
       ]);
+    });
+  });
+
+  describe("키워드 검색의 정렬: 영문 검색어가 낱말의 처음에서 일치한 행", () => {
+    /** 제품 버전 표기만 다른 행 (제품명·분류·설명에는 견줄 낱말이 없다) */
+    const probe = (index: number, product_version: string, verified_date: string): SoftwareSeed => ({
+      ...CATALOGUE[5],
+      product_name: `Probe${index}`,
+      product_version,
+      category: "기타",
+      verified_date,
+      description: "설명 없음",
+    });
+
+    it("낱말의 처음에서 일치한 행을 낱말의 가운데에서 일치한 행보다 먼저 돌려준다", () => {
+      // 'ECM' 은 'SampleCMS' 의 가운데(Sampl-eCM-S)에도 들어 있다. 분류가 'ECM Solution' 인 행은 이름에 'ECM' 이 없고
+      // 확인일자도 더 오래됐지만, 두 검색어가 모두 낱말의 처음에서 일치해 앞에 온다 (SampleCMS 는 'Solution' 하나다)
+      sqlite.addCompatibilitySoftwareBatch([
+        {
+          ...CATALOGUE[5],
+          product_name: "SmartOpen",
+          product_version: "SmartOpen 3.0",
+          category: "ECM Solution",
+          verified_date: "2014-10-29",
+          description: "설명 없음",
+        },
+      ]);
+      const result = sqlite.queryCompatibleSoftware({ query: "ECM Solution" });
+      expect(versionsOf(result.rows)).toEqual(["SmartOpen 3.0", "SampleCMS 1.0"]);
+      expect(result.matchMode).toBe("all-terms");
+      expect(result.terms).toEqual({ used: ["ECM", "Solution"], ignored: [], dropped: [], required: 2 });
+    });
+
+    it("낱말의 처음은 값의 맨 앞이거나, 바로 앞 글자가 ASCII 영문자가 아닌 자리다", () => {
+      // 일곱 행 모두 제품 버전 표기에만 'zeta' 가 들어 있다 (이름에 일치한 검색어 수가 같다).
+      // 낱말의 가운데에서 일치한 두 행의 확인일자가 가장 최근이라, 이 기준이 없으면 그 두 행이 맨 앞에 온다
+      sqlite.addCompatibilitySoftwareBatch([
+        probe(1, "Zeta 1", "2001-01-01"), // 값의 맨 앞
+        probe(2, "가 Zeta", "2002-01-01"), // 앞이 공백
+        probe(3, "7zeta", "2003-01-01"), // 앞이 숫자
+        probe(4, "X-ZETA", "2004-01-01"), // 앞이 기호
+        probe(5, "가zeta", "2005-01-01"), // 앞이 한글
+        probe(6, "Alphazeta", "2030-01-01"), // 앞이 영문 소문자
+        probe(7, "ALPHAZETA", "2031-01-01"), // 앞이 영문 대문자
+      ]);
+      for (const query of ["zeta", "Zeta", "ZETA"]) {
+        const result = sqlite.queryCompatibleSoftware({ query });
+        expect(versionsOf(result.rows), `query=${query}`).toEqual([
+          "가zeta",
+          "X-ZETA",
+          "7zeta",
+          "가 Zeta",
+          "Zeta 1",
+          "ALPHAZETA",
+          "Alphazeta",
+        ]);
+      }
+    });
+
+    it("이름이 아닌 컬럼에서 낱말의 처음으로 일치해도 센다 (이름에 일치한 검색어 수보다 앞선 기준이다)", () => {
+      // 'omega': 한 행은 이름의 가운데에, 다른 한 행은 설명의 낱말 처음에만 들어 있다.
+      // 이름에 든 행의 확인일자가 더 최근이기도 해서, 이 기준이 이름보다 뒤에 있으면 그 행이 먼저 나온다
+      sqlite.addCompatibilitySoftwareBatch([
+        probe(1, "Bigomega 1.0", "2030-01-01"),
+        { ...probe(2, "Plain 2.0", "2001-01-01"), description: "분류: Omega 계열" },
+      ]);
+      const result = sqlite.queryCompatibleSoftware({ query: "omega" });
+      expect(versionsOf(result.rows)).toEqual(["Plain 2.0", "Bigomega 1.0"]);
+    });
+
+    it("일치한 검색어 수보다는 뒤선 기준이다", () => {
+      // 대체 검색: 'omega'·'sigma' 가 모두 낱말의 가운데에 든 행(둘 일치)이, 'omega' 하나가 낱말의 처음에 든 행보다 앞이다
+      sqlite.addCompatibilitySoftwareBatch([
+        probe(1, "Omega 1.0", "2030-01-01"),
+        probe(2, "Bigomega Bigsigma", "2001-01-01"),
+      ]);
+      const result = sqlite.queryCompatibleSoftware({ query: "omega sigma 없는말" });
+      expect(result.matchMode).toBe("any-term");
+      expect(result.terms).toEqual({ used: ["omega", "sigma"], ignored: ["없는말"], dropped: [], required: 1 });
+      expect(versionsOf(result.rows)).toEqual(["Bigomega Bigsigma", "Omega 1.0"]);
+    });
+
+    it("낱말의 처음에서 일치한 검색어 수는 검색어마다 따로 센다", () => {
+      // 'omega sigma': 둘 다 낱말의 처음인 행, 하나만 처음인 행, 둘 다 가운데인 행 (확인일자는 그 반대 순서다)
+      sqlite.addCompatibilitySoftwareBatch([
+        probe(1, "Bigomega Bigsigma", "2030-01-01"),
+        probe(2, "Omega Bigsigma", "2020-01-01"),
+        probe(3, "Omega Sigma", "2010-01-01"),
+      ]);
+      const result = sqlite.queryCompatibleSoftware({ query: "omega sigma" });
+      expect(result.matchMode).toBe("all-terms");
+      expect(versionsOf(result.rows)).toEqual(["Omega Sigma", "Omega Bigsigma", "Bigomega Bigsigma"]);
+    });
+
+    it("한글이 든 검색어에는 이 기준을 적용하지 않는다", () => {
+      // 한국어 복합어의 가운데에 든 낱말은 정상적인 일치다. '나래' 가 값의 맨 앞에 든 행이 '그린나래' 보다 앞서지 않는다
+      sqlite.addCompatibilitySoftwareBatch([
+        probe(1, "나래 1.0", "2001-01-01"),
+        probe(2, "그린나래 2.0", "2030-01-01"),
+        probe(3, "나래CMS", "2002-01-01"),
+        probe(4, "그린나래CMS", "2031-01-01"),
+      ]);
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "나래" }).rows)).toEqual([
+        "그린나래CMS",
+        "그린나래 2.0",
+        "나래CMS",
+        "나래 1.0",
+      ]);
+      // 영문자와 한글이 섞인 검색어도 같다
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "나래CMS" }).rows)).toEqual(["그린나래CMS", "나래CMS"]);
+      // 행을 돌려주는 조회 문의 정렬에 낱말의 처음을 견주는 식(GLOB)이 없다
+      const clauses = orderByClausesOf(sqlite, () => sqlite.queryCompatibleSoftware({ query: "나래 호환" }));
+      expect(clauses).toHaveLength(1);
+      expect(clauses[0]).not.toContain("GLOB ?");
+    });
+
+    it("'.', '-', '_' 가 든 검색어에도 적용하지 않는다", () => {
+      sqlite.addCompatibilitySoftwareBatch([probe(1, "X-Zeta 1.0", "2001-01-01"), probe(2, "MAX-Zeta 2.0", "2030-01-01")]);
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "x-zeta" }).rows)).toEqual(["MAX-Zeta 2.0", "X-Zeta 1.0"]);
+    });
+
+    it("영문 검색어와 한글 검색어가 섞여 있으면 영문 검색어만 센다", () => {
+      // '나래 omega': 두 행 모두 두 검색어가 일치한다. 'omega' 가 낱말의 처음에 든 행이 먼저다
+      sqlite.addCompatibilitySoftwareBatch([
+        probe(1, "나래 Omega", "2001-01-01"),
+        probe(2, "나래 Bigomega", "2030-01-01"),
+      ]);
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "나래 omega" }).rows)).toEqual(["나래 Omega", "나래 Bigomega"]);
+    });
+
+    it("확인일자의 앞부분과 같아서 일치한 검색어도 값의 맨 앞에서 일치한 것으로 센다", () => {
+      // '2025': JEUS 21 은 확인일자(2025-08-21)로만 일치한다. 설명에 '2025' 가 적힌 오래된 행 뒤로 밀리지 않는다
+      sqlite.addCompatibilitySoftwareBatch([{ ...probe(1, "Legacy 1.0", "2010-01-01"), description: "2025 년까지 지원" }]);
+      const result = sqlite.queryCompatibleSoftware({ query: "2025" });
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "Legacy 1.0"]);
+    });
+
+    it("대체 검색에서 조사를 떼어 쓴 검색어는 뗀 꼴로 견준다", () => {
+      // 'omega는 없는말' → 'omega' 로 찾는다
+      sqlite.addCompatibilitySoftwareBatch([
+        probe(1, "Bigomega 1.0", "2030-01-01"),
+        probe(2, "Omega 2.0", "2001-01-01"),
+      ]);
+      const result = sqlite.queryCompatibleSoftware({ query: "omega는 없는말" });
+      expect(result.terms?.used).toEqual(["omega"]);
+      expect(versionsOf(result.rows)).toEqual(["Omega 2.0", "Bigomega 1.0"]);
+    });
+
+    it("필터와 페이지를 줘도 같은 순서에서 고른다", () => {
+      sqlite.addCompatibilitySoftwareBatch([
+        probe(1, "Bigomega 1.0", "2030-01-01"),
+        probe(2, "Omega 2.0", "2001-01-01"),
+        probe(3, "Omega 3.0", "2002-01-01"),
+      ]);
+      const page = sqlite.queryCompatibleSoftware({ query: "omega", filters: { category: "기타" }, limit: 2, offset: 1 });
+      expect(versionsOf(page.rows)).toEqual(["Omega 2.0", "Bigomega 1.0"]);
+      expect(page.total).toBe(3);
+    });
+
+    it("검색어는 바인딩 값으로만 넘긴다 (조회 문에 검색어가 들어가지 않는다)", () => {
+      const statements = statementsOf(sqlite, () => sqlite.queryCompatibleSoftware({ query: "zeta9 Solution" }));
+      expect(statements.length).toBeGreaterThan(0);
+      for (const sql of statements) {
+        expect(sql.toLowerCase()).not.toContain("zeta9");
+        expect(sql).not.toContain("Solution");
+      }
+      // 영문 검색어가 있으면 행을 돌려주는 조회 문의 정렬에 낱말의 처음을 견주는 식이 들어간다
+      const clauses = orderByClausesOf(sqlite, () => sqlite.queryCompatibleSoftware({ query: "Solution" }));
+      expect(clauses).toHaveLength(1);
+      expect(clauses[0]).toContain("GLOB ?");
     });
   });
 
@@ -733,9 +906,10 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     });
 
     it("한 글자 검색어뿐인 query 도 대체 검색에서 그대로 쓴다", () => {
-      // T 는 세 행에 들어 있고 9 는 어느 행에도 없다 → k=1
+      // T 는 세 행에 들어 있고 9 는 어느 행에도 없다 → k=1.
+      // 'T' 가 낱말의 처음에 든 Tibero 가 먼저고, 낱말의 가운데에 든 두 행은 이름에 든 OtherCMS 가 먼저다
       const result = sqlite.queryCompatibleSoftware({ query: "T 9" });
-      expect(versionsOf(result.rows)).toEqual(["OtherCMS 2.0", "Tibero 7", "SampleCMS 1.0"]);
+      expect(versionsOf(result.rows)).toEqual(["Tibero 7", "OtherCMS 2.0", "SampleCMS 1.0"]);
       expect(result.matchMode).toBe("any-term");
     });
 

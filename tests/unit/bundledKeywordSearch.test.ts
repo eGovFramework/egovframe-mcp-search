@@ -14,6 +14,8 @@
  *   "eGovFrame 4.3 호환 CMS", "게시판 컴포넌트").
  * - 대체 검색이 흔한 낱말만 일치한 행으로 결과를 채웠다 ("티맥스 제품 목록", "게시판 기능 알려줘").
  * - 낱말을 저장된 표기와 다른 기호로 이으면 0건이었다 ("K2Web-Wizard", "sts_com", "JEUS-8").
+ * - 두세 글자 영문 검색어가 다른 낱말 속에서 일치한 행이, 낱말로 일치한 행보다 앞에 왔다 ("ECM Solution", "ERS",
+ *   컴포넌트 ID "ist").
  *
  * DB 는 읽기 전용으로 열고, 조회가 파일을 바꾸지 않았는지 마지막에 확인한다.
  * 동봉 데이터는 갱신될 수 있으므로 건수를 숫자로 고정하지 않고, 같은 뜻의 두 조회가 같은 결과를 내는지와
@@ -158,6 +160,34 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       // 'uss-cmt' 의 패키지명은 egovframework.com.uss.cmt 다. ID 에만 'uss-cmt' 가 있다
       expect(idsOf(sqlite.queryComponents({ query: "uss-cmt" }).rows)).toEqual(["uss-cmt"]);
     });
+
+    it("세 글자 컴포넌트 ID 로 찾으면 그 컴포넌트가 맨 앞에 온다", () => {
+      // 'ist' 는 'list'·'statistics' 의 가운데에, 'omm' 은 'common'·'community' 의 가운데에도 들어 있다.
+      // 낱말의 처음에서 일치했는지를 가리지 않던 때에는 그런 컴포넌트가 이름이 짧은 순으로 앞을 채워,
+      // 찾는 컴포넌트(연계현황관리, 온라인매뉴얼)가 일곱 번째와 아홉 번째였다
+      for (const id of ["ist", "omm"]) {
+        const result = sqlite.queryComponents({ query: id });
+        expect(result.matchMode, `query=${id}`).toBe("all-terms");
+        expect(result.total, `query=${id}`).toBeGreaterThan(1);
+        expect(idsOf(result.rows)[0], `query=${id}`).toBe(id);
+      }
+    });
+
+    it('"Q&A" 는 두 글자가 모두 낱말의 처음에 든 컴포넌트를 앞에 돌려준다', () => {
+      // 'Q' 와 'A' 가 어딘가에 든 컴포넌트는 서른 개가 넘는다. 낱말의 처음에서 일치했는지를 가리지 않던 때에는
+      // Q&A관리(qna)가 이름이 더 짧은 컴포넌트들에 밀려 여섯 번째였다
+      const result = sqlite.queryComponents({ query: "Q&A" });
+      expect(result.matchMode).toBe("all-terms");
+      expect(result.terms).toEqual({ used: ["Q", "A"], ignored: [], dropped: [], required: 2 });
+      const ids = idsOf(result.rows);
+      // 두 글자가 모두 낱말의 처음에 든 컴포넌트는 여럿이고(설문조사는 ID 'qri' 와 영문 설명의 'answering'),
+      // 그 안에서는 이름이 짧은 순이다. Q&A관리는 앞의 두 건 안에 들고, 'Q' 가 낱말의 가운데에 든 FAQ관리보다 앞이다
+      expect(ids.slice(0, 2)).toContain("qna");
+      expect(ids).toContain("faq");
+      expect(ids.indexOf("qna")).toBeLessThan(ids.indexOf("faq"));
+      // '관리' 를 함께 적으면 세 검색어가 모두 이름에 든 Q&A관리가 맨 앞이다
+      expect(idsOf(sqlite.queryComponents({ query: "Q&A 관리" }).rows)[0]).toBe("qna");
+    });
   });
 
   describe("호환 소프트웨어", () => {
@@ -214,6 +244,9 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       expect(result.rows.some((row) => /^(aXis|WISE|WITHCMS)/i.test(row.product_name) && row.framework_version !== "4.3")).toBe(
         false,
       );
+      // 제품명이 낱말로 일치한 Tibero 행이 맨 앞이다. 이름에 '4.3' 이 든 다른 제품(확인일자가 더 최근이다)이 앞서지 않는다
+      const tibero = compatible("Tibero");
+      expect(rowKeys(result).slice(0, tibero.total)).toEqual(rowKeys(tibero));
     });
 
     it('"CMS 추천" 은 any-term 으로 CMS 행을 돌려준다', () => {
@@ -305,6 +338,36 @@ describe("동봉 지식베이스의 키워드 검색", () => {
         expect(rowKeys(result), `query=${query}`).toEqual(rowKeys(jeus));
         expect(result.terms?.used, `query=${query}`).toEqual(["JEUS"]);
       }
+    });
+
+    it('"ECM Solution" 은 분류가 ECM Solution 인 행을 맨 앞에 돌려준다', () => {
+      // 'ECM' 은 'TimeCMS'·'UniteCMS' 의 가운데에도 들어 있다. 낱말의 처음에서 일치했는지를 가리지 않던 때에는
+      // 그런 제품이 확인일자 순으로 앞을 채워, 분류가 ECM Solution 인 행이 맨 뒤였다
+      const category = sqlite.queryCompatibleSoftware({ filters: { category: "ECM Solution" } });
+      expect(category.total).toBeGreaterThan(0);
+      const result = compatible("ECM Solution");
+      expect(result.matchMode).toBe("all-terms");
+      expect(result.total).toBeGreaterThan(category.total);
+      expect(rowKeys(result).slice(0, category.total).sort()).toEqual(rowSet(category));
+    });
+
+    it("두세 글자 영문 검색어는 낱말로 일치한 행을 다른 낱말 속에서 일치한 행보다 먼저 돌려준다", () => {
+      // 'ERS' 는 'PowerService'·'Universe' 의 가운데에, 'EP' 는 'Report' 의 가운데에도 들어 있다
+      const startsWord = (row: CompatibilitySoftwareInfo, term: string): boolean =>
+        [row.product_name, row.product_version, row.vendor, row.category, row.description].some((value) =>
+          new RegExp(`(^|[^A-Za-z])${term}`, "i").test(value ?? ""),
+        );
+      for (const term of ["ERS", "EP"]) {
+        const result = compatible(term);
+        expect(result.matchMode, `query=${term}`).toBe("all-terms");
+        const flags = result.rows.map((row) => startsWord(row, term));
+        // 낱말로 일치한 행과 다른 낱말 속에서 일치한 행이 모두 있고, 앞의 것이 모두 먼저다
+        expect(flags.includes(true), `query=${term}`).toBe(true);
+        expect(flags.includes(false), `query=${term}`).toBe(true);
+        expect(flags.lastIndexOf(true), `query=${term}`).toBeLessThan(flags.indexOf(false));
+      }
+      expect(compatible("ERS").rows[0].product_name).toBe("Crownix Report & ERS");
+      expect(compatible("EP").rows[0].product_name).toMatch(/(^|[^A-Za-z])EP([^A-Za-z]|$)/);
     });
 
     it('전각으로 입력한 "ＣＭＳ" 는 "CMS" 와 같은 건수를 돌려준다', () => {

@@ -9,6 +9,8 @@
  * - 검색어로 쓰지 않는 낱말의 목록과 판정: ENGLISH_FUNCTION_WORDS, COMPATIBILITY_GENERIC_WORDS,
  *   COMPONENT_GENERIC_WORDS, isGenericTerm, dropGenericTerms
  * - 조사가 붙은 검색어를 조사 없는 꼴로 바꿔 보는 후보: particleStrippedForms
+ * - 기호로 이은 검색어를 나눈 조각: splitAtSeparators
+ * - 영문 검색어가 낱말의 처음에서 일치했는지를 가리는 패턴: isAsciiAlphanumericTerm, wordStartGlobPattern
  */
 
 /** 한 번의 키워드 검색에 쓰는 검색어 수 상한. 긴 문장이 조회 문을 비대하게 만드는 것을 막는다. */
@@ -264,6 +266,50 @@ export function splitAtSeparators(term: string): string[] {
     return [];
   }
   return term.split(/[._-]+/).filter((piece) => piece !== '');
+}
+
+/**
+ * ASCII 영문자와 숫자로만 된 검색어인지 ('ECM', 'K2Web', '21').
+ * 한글이나 기호(검색어 안쪽의 `.` `-` `_` 포함)가 든 검색어와 빈 문자열은 아니다.
+ *
+ * 키워드 검색은 이런 검색어에만 "낱말의 처음에서 일치했는가" 를 정렬 기준으로 쓴다 (wordStartGlobPattern).
+ * 두세 글자 영문 검색어는 다른 낱말 속에서도 일치하지만('TimeCMS' 의 'ECM'), 한국어 복합어의 가운데에 든
+ * 낱말('공통코드' 의 '코드')은 정상적인 일치라 한글이 든 검색어에는 그 기준을 쓰지 않는다.
+ */
+export function isAsciiAlphanumericTerm(term: string): boolean {
+  return /^[A-Za-z0-9]+$/.test(term);
+}
+
+/** SQLite 의 GLOB 패턴에서 글자 하나를 글자 그대로(ASCII 영문자는 대소문자를 가리지 않고) 견주는 조각 */
+function globLiteral(char: string): string {
+  if (/^[A-Za-z]$/.test(char)) {
+    return `[${char.toUpperCase()}${char.toLowerCase()}]`;
+  }
+  // GLOB 에서 뜻이 있는 문자는 문자 집합에 넣어 글자 그대로 견준다. ']' 는 집합의 첫 글자로 적으면 글자 그대로다
+  if (char === '*' || char === '?' || char === '[' || char === ']') {
+    return `[${char}]`;
+  }
+  return char;
+}
+
+/**
+ * 값 안에서 검색어가 낱말의 처음에 나오는지를 가리는 SQLite GLOB 패턴을 만든다.
+ * 낱말의 처음은 값의 맨 앞이거나, 바로 앞 글자가 ASCII 영문자가 아닌 자리다 (앞 글자가 숫자, 공백, 기호,
+ * 한글이면 낱말의 처음이다. 'MC@CMS' 의 'CMS', '리포트ERS' 의 'ERS').
+ *
+ * 패턴은 값 앞에 공백 한 칸을 붙인 문자열과 견준다: `(' ' || 컬럼) GLOB ?`. 붙인 공백이 값의 맨 앞을
+ * "앞 글자가 영문자가 아닌 자리" 로 만들어, 패턴 하나로 두 경우를 함께 가린다.
+ * - LIKE 로는 "앞 글자가 영문자가 아님" 을 적을 수 없어 문자 집합(`[^A-Za-z]`)이 있는 GLOB 을 쓴다.
+ * - GLOB 은 대소문자를 가리므로 검색어의 ASCII 영문자마다 두 꼴을 문자 집합으로 적는다 ('ecm' → `[Ee][Cc][Mm]`).
+ *   LIKE 와 같이 ASCII 영문자만 대소문자를 가리지 않는다.
+ * - GLOB 에서 뜻이 있는 문자(`*`, `?`, `[`, `]`)는 글자 그대로 견주도록 바꾼다. 키워드 검색은 영문자와
+ *   숫자뿐인 검색어(isAsciiAlphanumericTerm)만 넘기지만, 어떤 검색어를 받아도 와일드카드로 읽히지 않는다.
+ *
+ * 패턴은 조회 문에 끼워 넣지 않고 바인딩 값으로 넘긴다. 검색어는 길어야 MAX_KEYWORD_QUERY_LENGTH 자이고
+ * 글자마다 4바이트 이하라, 패턴은 SQLite 의 패턴 길이 한도(50,000바이트)를 넘지 않는다.
+ */
+export function wordStartGlobPattern(term: string): string {
+  return `*[^A-Za-z]${Array.from(term, globLiteral).join('')}*`;
 }
 
 /** 영문·숫자·`.`·`-`·`_` 로만 된 앞부분 뒤에 한글 음절 1~3자가 붙은 꼴 ('JEUS는', '4.3에서') */

@@ -5,7 +5,8 @@
  * 문장부호, 검색 연산자처럼 적은 접속사, 전각 문자, 아주 긴 입력이 들어와도 일정한 검색어 목록이 나와야 한다.
  * (파일 이름은 검색어로 FTS5 MATCH 식을 조립하던 때의 것이다.)
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
+import Database from "better-sqlite3";
 import {
   COMPATIBILITY_GENERIC_WORDS,
   COMPONENT_GENERIC_WORDS,
@@ -14,11 +15,13 @@ import {
   MAX_SEARCH_TERMS,
   dropGenericTerms,
   extractSearchTerms,
+  isAsciiAlphanumericTerm,
   isGenericTerm,
   joinedTermKeys,
   particleStrippedForms,
   splitAtSeparators,
   trimEdgeSeparators,
+  wordStartGlobPattern,
 } from "../../src/utils/fts5Query.js";
 
 /** fn 을 한 번 실행하는 데 걸린 시간(ms) */
@@ -366,6 +369,111 @@ describe("splitAtSeparators", () => {
     for (const term of [`${"a-".repeat(999)}a`, `a${".".repeat(1998)}a`, "a".repeat(2000)]) {
       expect(elapsedMs(() => splitAtSeparators(term))).toBeLessThan(100);
     }
+  });
+});
+
+describe("isAsciiAlphanumericTerm", () => {
+  it("ASCII 영문자와 숫자로만 된 검색어를 가려낸다", () => {
+    for (const term of ["ECM", "ecm", "K2Web", "21", "a", "Z9"]) {
+      expect(isAsciiAlphanumericTerm(term), term).toBe(true);
+    }
+  });
+
+  it("한글이나 기호가 든 검색어, 빈 문자열은 아니다", () => {
+    for (const term of ["게시판", "JEUS는", "CMS관리", "4.3", "i-Portal", "sts_com", "Q&A", "ＣＭＳ", "é", "a b", ""]) {
+      expect(isAsciiAlphanumericTerm(term), term).toBe(false);
+    }
+  });
+});
+
+describe("wordStartGlobPattern", () => {
+  // 패턴이 SQLite 의 GLOB 에서 실제로 어떻게 견줘지는지를 본다 (키워드 검색은 값 앞에 공백 한 칸을 붙여 견준다)
+  const db = new Database(":memory:");
+  afterAll(() => {
+    db.close();
+  });
+
+  /** 값(value)에서 검색어(term)가 낱말의 처음에서 일치하는지 */
+  const startsWord = (value: string, term: string): boolean => {
+    const row = db.prepare("SELECT (' ' || ?) GLOB ? AS hit").get(value, wordStartGlobPattern(term)) as { hit: number };
+    return row.hit === 1;
+  };
+
+  it("값의 맨 앞에서 일치하면 낱말의 처음이다", () => {
+    expect(startsWord("ECM Solution", "ECM")).toBe(true);
+    expect(startsWord("ECM", "ECM")).toBe(true);
+    expect(startsWord("ist", "ist")).toBe(true);
+  });
+
+  it("바로 앞 글자가 공백, 숫자, 기호, 한글이면 낱말의 처음이다", () => {
+    for (const value of ["Crownix Report & ERS", "7ERS", "MC@ERS", "a.b.ers", "(ERS)", "Report/ERS", "리포트ERS", "１ERS"]) {
+      expect(startsWord(value, "ERS"), value).toBe(true);
+    }
+  });
+
+  it("바로 앞 글자가 ASCII 영문자이면 낱말의 처음이 아니다", () => {
+    for (const value of ["PowerService5", "Universe CMS", "UNIVERSE", "xers", "XERS", "zErS"]) {
+      expect(startsWord(value, "ERS"), value).toBe(false);
+    }
+    expect(startsWord("TimeCMS", "ECM")).toBe(false);
+    expect(startsWord("ZenithECM 3.0", "ECM")).toBe(false);
+  });
+
+  it("ASCII 영문자의 대소문자를 가리지 않는다", () => {
+    for (const [value, term] of [
+      ["ecm solution", "ECM"],
+      ["ECM Solution", "ecm"],
+      ["Ecm", "eCM"],
+      ["k2web wizard", "K2Web"],
+    ]) {
+      expect(startsWord(value, term), `${value} / ${term}`).toBe(true);
+    }
+  });
+
+  it("낱말의 가운데에서 일치한 자리를 지나, 그 뒤에 낱말의 처음에서 일치한 자리가 있으면 일치한다", () => {
+    // 'TimeCMS' 의 가운데 다음에, 설명의 '영역: ECM' 에서 낱말의 처음으로 나온다
+    expect(startsWord("TimeCMS -영역: ECM", "ECM")).toBe(true);
+    expect(startsWord("aaa a", "a")).toBe(true);
+    expect(startsWord("aaa", "aa")).toBe(true);
+    expect(startsWord("baa", "aa")).toBe(false);
+  });
+
+  it("숫자로 된 검색어는 앞 글자가 숫자여도 낱말의 처음으로 본다 (ASCII 영문자가 아니면 된다)", () => {
+    expect(startsWord("JEUS 21", "21")).toBe(true);
+    expect(startsWord("2021", "21")).toBe(true);
+    expect(startsWord("v21", "21")).toBe(false);
+  });
+
+  it("검색어가 들어 있지 않은 값이나 빈 값과는 일치하지 않는다", () => {
+    expect(startsWord("CMS Solution", "ECM")).toBe(false);
+    expect(startsWord("", "ECM")).toBe(false);
+    expect(startsWord("EC", "ECM")).toBe(false);
+  });
+
+  it("GLOB 에서 뜻이 있는 문자(*, ?, [, ])는 글자 그대로 견준다", () => {
+    // 지금 이 패턴을 쓰는 검색어는 영문자와 숫자뿐이지만, 어떤 검색어를 넘겨도 와일드카드로 읽히지 않아야 한다
+    expect(startsWord("a*b", "a*b")).toBe(true);
+    expect(startsWord("aXb", "a*b")).toBe(false);
+    expect(startsWord("a?b", "a?b")).toBe(true);
+    expect(startsWord("aXb", "a?b")).toBe(false);
+    expect(startsWord("[ab]", "[ab]")).toBe(true);
+    expect(startsWord("a", "[ab]")).toBe(false);
+    expect(startsWord("x]y", "x]y")).toBe(true);
+    expect(startsWord("x[y", "x[y")).toBe(true);
+    expect(startsWord("[^a]", "[^a]")).toBe(true);
+    expect(startsWord("b", "[^a]")).toBe(false);
+    expect(startsWord("a-z", "a-z")).toBe(true);
+    expect(startsWord("m", "a-z")).toBe(false);
+    // 별표뿐인 검색어가 모든 값과 일치하지 않는다
+    expect(startsWord("anything", "*")).toBe(false);
+    expect(startsWord("5 * 3", "*")).toBe(true);
+  });
+
+  it("아주 긴 검색어도 SQLite 의 패턴 길이 한도(50,000바이트) 안에 든다", () => {
+    // 검색어는 길어야 2,000자(MAX_KEYWORD_QUERY_LENGTH)다
+    const pattern = wordStartGlobPattern("a".repeat(MAX_KEYWORD_QUERY_LENGTH));
+    expect(Buffer.byteLength(pattern, "utf8")).toBeLessThan(50_000);
+    expect(startsWord(`x ${"A".repeat(MAX_KEYWORD_QUERY_LENGTH)}`, "a".repeat(MAX_KEYWORD_QUERY_LENGTH))).toBe(true);
   });
 });
 

@@ -15,10 +15,12 @@ import {
   codePointLength,
   dropGenericTerms,
   extractSearchTerms,
+  isAsciiAlphanumericTerm,
   isGenericTerm,
   parseKeywordQuery,
   particleStrippedForms,
   splitAtSeparators,
+  wordStartGlobPattern,
   type KeywordQuery,
 } from '../utils/fts5Query.js';
 import { escapeLikePattern } from '../utils/sqlLike.js';
@@ -361,7 +363,8 @@ export class SQLiteManager {
    * - query 가 없거나 검색어가 하나도 추출되지 않으면("*", "?" 등) 필터에 맞는 행을
    *   확인일자가 최근인 순으로 돌려준다.
    * - 확인일자 순은 어느 경로에서나 같다 (COMPATIBILITY_NEWEST_FIRST): verified_date 가 날짜 꼴이 아닌 행은
-   *   맨 뒤로 간다. 키워드 검색에서는 일치한 검색어 수와 이름에 일치한 검색어 수가 같은 행끼리 이 순서를 따른다.
+   *   맨 뒤로 간다. 키워드 검색에서는 일치한 검색어 수, 낱말의 처음에서 일치한 영문 검색어 수, 이름에 일치한
+   *   검색어 수가 모두 같은 행끼리 이 순서를 따른다.
    *
    * total 은 같은 조건에 맞는 전체 건수이고, rows 는 그 가운데 offset 부터 limit 건이다.
    * rows 에는 내부용 컬럼(id, created_at)을 넣지 않는다.
@@ -470,8 +473,8 @@ export class SQLiteManager {
    *    돌려주지 않는다.
    *    0건인지는 페이지가 아니라 전체 건수로 판단한다 (offset 이 끝을 넘었다고 검색 방식을 바꾸지 않는다).
    *
-   * 두 단계 모두 일치한 검색어가 많은 행, 이름 컬럼(nameColumns)에 일치한 검색어가 많은 행, 대상의 기본 정렬,
-   * rowid 순으로 돌려준다 (selectByMatchedTerms).
+   * 두 단계 모두 일치한 검색어가 많은 행, 낱말의 처음에서 일치한 영문 검색어가 많은 행, 이름 컬럼(nameColumns)에
+   * 일치한 검색어가 많은 행, 대상의 기본 정렬, rowid 순으로 돌려준다 (selectByMatchedTerms).
    *
    * 결과의 terms 는 실제로 쓴 검색어(used), 일치하는 행이 없어 쓰지 않은 검색어(ignored), 일치하는 행이 있는지와
    * 관계없이 검색에서 뺀 검색어(dropped: 가려 주지 못하는 낱말과 한 글자 검색어), 결과의 행마다 일치한 검색어의
@@ -562,8 +565,14 @@ export class SQLiteManager {
   /**
    * 검색어(matchers) 가운데 required 개 이상이 일치하는 행을 조회한다. 필터는 같은 SQL 문에서 적용한다.
    *
-   * 정렬: (1) 일치한 검색어 수가 많은 행, (2) 이름 컬럼에 일치한 검색어 수가 많은 행, (3) 대상의 기본 정렬,
-   * (4) rowid. 설명에만 검색어가 든 행은 버리지 않고 뒤로 보낸다.
+   * 정렬:
+   * (1) 일치한 검색어 수가 많은 행.
+   * (2) 낱말의 처음에서 일치한 영문 검색어 수가 많은 행 (TermMatcher.startsWord). 두세 글자 영문 검색어는 다른
+   *     낱말 속에서도 일치해('TimeCMS' 의 'ECM'), 낱말로 일치한 행('ECM Solution')이 그런 행에 밀리지 않게 한다.
+   *     한글이 든 검색어는 세지 않으므로, 영문자와 숫자뿐인 검색어가 없는 조회에는 이 기준이 없다.
+   * (3) 이름 컬럼에 일치한 검색어 수가 많은 행. 설명에만 검색어가 든 행은 버리지 않고 뒤로 보낸다.
+   * (4) 대상의 기본 정렬.
+   * (5) rowid.
    * (흔한 검색어만 일치한 행을 거르는 일은 대체 검색이 filter 에 조건을 더해서 한다. distinctiveScope 참조.)
    */
   private selectByMatchedTerms<Row>(
@@ -573,13 +582,11 @@ export class SQLiteManager {
     filter: SqlCondition,
     page: SqlPage,
   ): { rows: Row[]; total: number } {
-    // 조건을 채운 검색어의 수를 세는 식. 바인딩 값은 식에 적힌 순서대로 잇는다.
-    const countOf = (pick: (matcher: TermMatcher) => SqlExpression): SqlExpression => ({
-      sql: matchers.map((matcher) => `(CASE WHEN ${pick(matcher).sql} THEN 1 ELSE 0 END)`).join(' + '),
-      params: matchers.flatMap((matcher) => pick(matcher).params),
-    });
-    const matchedTerms = countOf((matcher) => matcher.matches);
-    const matchedInName = countOf((matcher) => matcher.inName);
+    const matchedTerms = countOf(matchers.map((matcher) => matcher.matches));
+    const matchedInName = countOf(matchers.map((matcher) => matcher.inName));
+    // 낱말의 처음을 따지는 검색어가 하나도 없으면 그 정렬 기준을 두지 않는다 (모든 행이 0 이라 순서를 바꾸지 않는다)
+    const wordStarts = matchers.flatMap((matcher) => (matcher.startsWord === null ? [] : [matcher.startsWord]));
+    const matchedAtWordStart = wordStarts.length > 0 ? countOf(wordStarts) : null;
 
     const from = `FROM ${target.table} ${target.joins ?? ''} WHERE (${matchedTerms.sql}) >= ?${filter.sql}`;
     const fromParams = [...matchedTerms.params, required, ...filter.params];
@@ -590,14 +597,16 @@ export class SQLiteManager {
       return { rows: [], total: 0 };
     }
 
+    // 정렬 기준과 그 바인딩 값을 같은 순서로 잇는다
+    const ranking = [matchedTerms, ...(matchedAtWordStart ? [matchedAtWordStart] : []), matchedInName];
     const rows = this.db
       .prepare(
         `SELECT ${target.columns} ${from}
-         ORDER BY (${matchedTerms.sql}) DESC, (${matchedInName.sql}) DESC,
+         ORDER BY ${ranking.map((count) => `(${count.sql}) DESC`).join(', ')},
                   ${target.defaultOrder}, ${target.rowid}
          LIMIT ? OFFSET ?`,
       )
-      .all(...fromParams, ...matchedTerms.params, ...matchedInName.params, page.limit, page.offset) as Row[];
+      .all(...fromParams, ...ranking.flatMap((count) => count.params), page.limit, page.offset) as Row[];
     return { rows, total };
   }
 
@@ -1361,7 +1370,9 @@ interface KeywordSearchTarget {
   nameColumns: string[];
   /**
    * 부분 문자열이 아닌 규칙으로 검색어와 견주는 컬럼의 조건. 이 가운데 하나를 채워도 그 검색어가 일치한 것이다.
-   * 검색어가 어떤 컬럼과 견줄 수 없는 꼴이면 그 컬럼의 조건은 돌려주지 않는다. 그런 컬럼이 없는 대상은 생략한다
+   * 검색어가 어떤 컬럼과 견줄 수 없는 꼴이면 그 컬럼의 조건은 돌려주지 않는다. 그런 컬럼이 없는 대상은 생략한다.
+   * 조건은 값의 맨 앞부터 견주는 것(값 전체가 같다, 값이 검색어로 시작한다)이어야 한다. 정렬에서 이 조건을
+   * 채운 검색어를 낱말의 처음에서 일치한 것으로 센다 (termMatcher 의 startsWord)
    */
   termConditions?: (term: string) => SqlExpression[];
   /**
@@ -1370,8 +1381,8 @@ interface KeywordSearchTarget {
    */
   genericTerms: ReadonlySet<string>;
   /**
-   * 기본 정렬. 키워드 검색에서 일치한 검색어 수와 이름에 일치한 검색어 수 다음에 적용하고,
-   * 호환성 소프트웨어는 키워드 없는 필터 조회에도 이 정렬을 쓴다
+   * 기본 정렬. 키워드 검색에서 일치한 검색어 수, 낱말의 처음에서 일치한 영문 검색어 수, 이름에 일치한 검색어 수
+   * 다음에 적용하고, 호환성 소프트웨어는 키워드 없는 필터 조회에도 이 정렬을 쓴다
    */
   defaultOrder: string;
 }
@@ -1382,6 +1393,12 @@ interface TermMatcher {
   matches: SqlExpression;
   /** 검색어가 이름 컬럼(nameColumns)에 부분 문자열로 들어 있다 */
   inName: SqlExpression;
+  /**
+   * 검색어가 낱말의 처음에서 일치한다: 검색 컬럼(searchColumns) 가운데 하나에서 값의 맨 앞이거나 바로 앞 글자가
+   * ASCII 영문자가 아닌 자리에 들어 있다. 대상이 따로 정한 조건(termConditions)을 채운 것도 값의 맨 앞에서
+   * 일치한 것으로 센다. ASCII 영문자와 숫자로만 된 검색어에만 있고, 그 밖의 검색어는 null 이다
+   */
+  startsWord: SqlExpression | null;
 }
 
 /** 대체 검색이 쓰기로 한 검색어 하나 */
@@ -1405,12 +1422,23 @@ function anyOf(conditions: SqlExpression[]): SqlExpression {
   };
 }
 
+/** 조건마다 채웠으면 1 을 더해, 채운 조건의 수를 세는 식. 바인딩 값은 조건이 적힌 순서대로 잇는다. */
+function countOf(conditions: SqlExpression[]): SqlExpression {
+  return {
+    sql: conditions.map((condition) => `(CASE WHEN ${condition.sql} THEN 1 ELSE 0 END)`).join(' + '),
+    params: conditions.flatMap((condition) => condition.params),
+  };
+}
+
 /**
  * 검색어 하나를 대상의 행과 견주는 조건을 만든다.
  *
  * 검색어는 searchColumns 가운데 하나에 부분 문자열로 들어 있거나 대상이 따로 정한 조건(termConditions)
  * 가운데 하나를 채우면 일치한다. 키워드 검색의 모든 단계(all-terms, any-term, 일치하는 행이 있는 검색어인지의
  * 판정)가 이 조건을 쓰므로, 일치 규칙을 바꿀 때는 여기만 바꾼다.
+ *
+ * ASCII 영문자와 숫자로만 된 검색어에는 낱말의 처음에서 일치했는지를 가리는 조건(startsWord)도 만든다.
+ * 정렬에만 쓰고, 행이 일치하는지는 바꾸지 않는다 (selectByMatchedTerms).
  *
  * LIKE 패턴을 만들 수 없는 값(containsPattern)은 어떤 행과도 일치하지 않는 것으로 보고 null 을 돌려준다.
  */
@@ -1419,9 +1447,13 @@ function termMatcher(target: KeywordSearchTarget, term: string): TermMatcher | n
   if (pattern === null) {
     return null;
   }
+  const termConditions = target.termConditions?.(term) ?? [];
   return {
-    matches: anyOf([likeAnyColumn(target.searchColumns, pattern), ...(target.termConditions?.(term) ?? [])]),
+    matches: anyOf([likeAnyColumn(target.searchColumns, pattern), ...termConditions]),
     inName: likeAnyColumn(target.nameColumns, pattern),
+    startsWord: isAsciiAlphanumericTerm(term)
+      ? anyOf([wordStartAnyColumn(target.searchColumns, wordStartGlobPattern(term)), ...termConditions])
+      : null,
   };
 }
 
@@ -1527,6 +1559,20 @@ function containsPattern(value: string): string | null {
 function likeAnyColumn(columns: string[], pattern: string): SqlExpression {
   return {
     sql: `(${columns.map((column) => `${column} LIKE ? ESCAPE '\\'`).join(' OR ')})`,
+    params: columns.map(() => pattern),
+  };
+}
+
+/**
+ * 컬럼 가운데 하나라도 검색어가 낱말의 처음에 들어 있다는 조건. pattern 은 wordStartGlobPattern 이 만든 GLOB
+ * 패턴이고 컬럼마다 한 번씩 바인딩한다.
+ *
+ * 값 앞에 공백 한 칸을 붙여 견준다. 값의 맨 앞도 "앞 글자가 ASCII 영문자가 아닌 자리" 가 되어, 패턴 하나로
+ * 낱말의 처음을 모두 가린다. 값이 NULL 인 컬럼은 붙인 결과도 NULL 이라 일치하지 않는다.
+ */
+function wordStartAnyColumn(columns: string[], pattern: string): SqlExpression {
+  return {
+    sql: `(${columns.map((column) => `(' ' || ${column}) GLOB ?`).join(' OR ')})`,
     params: columns.map(() => pattern),
   };
 }

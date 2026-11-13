@@ -220,6 +220,60 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     });
   });
 
+  describe("키워드 검색의 정렬: 영문 검색어가 낱말의 처음에서 일치한 컴포넌트", () => {
+    it("낱말의 처음에서 일치한 컴포넌트를 낱말의 가운데에서 일치한 컴포넌트보다 먼저 돌려준다", () => {
+      // 'ist' 는 컴포넌트 ID 이면서 'List', 'Statistics'(bst)의 가운데에도 들어 있다. 세 컴포넌트 모두 이름 컬럼
+      // (ID 나 영문명)에 일치하므로, 이 기준이 없으면 이름이 짧은 순(lv1 2자, bst 5자, ist 6자)으로 나온다
+      sqlite.addCommonComponentsBatch([
+        extra("ist", "연계현황관리", "Linkage Status", "설명 없음"),
+        extra("lv1", "목록", "List Viewer", "설명 없음"),
+      ]);
+      const result = sqlite.queryComponents({ query: "ist" });
+      expect(idsOf(result.rows)).toEqual(["ist", "lv1", "bst"]);
+      expect(result.matchMode).toBe("all-terms");
+    });
+
+    it("앞 글자가 '.', 공백, 한글이면 낱말의 처음이다 (패키지명의 마디, 영문명의 낱말, 한글에 붙은 영문)", () => {
+      // 'omm': 영문명의 둘째 낱말(om2), 한글 뒤에 붙은 영문(om3), 패키지명의 마디(om4)는 낱말의 처음이고
+      // 'Common'(cmm)의 가운데는 아니다. cmm 은 영문명에 일치하고 이름('공통')도 가장 짧아, 이 기준이 없으면 맨 앞에 온다
+      sqlite.addCommonComponentsBatch([
+        extra("om2", "매뉴얼관리도구", "Tool Omm", "설명 없음"),
+        extra("om3", "매뉴얼관리도구들", "Guide", "안내omm 을 다룬다"),
+        { ...extra("om4", "매뉴얼관리도구모음", "Guide", "설명 없음"), package_name: "egovframework.com.extra.omm" },
+      ]);
+      const result = sqlite.queryComponents({ query: "omm" });
+      // 낱말의 처음: om2(영문명이라 이름에도 일치) → om3·om4(이름에 없음, 이름이 짧은 순) / 낱말의 가운데: cmm
+      expect(idsOf(result.rows)).toEqual(["om2", "om3", "om4", "cmm"]);
+    });
+
+    it("이름에 일치한 검색어 수보다 앞선 기준이고, 일치한 검색어 수보다는 뒤선 기준이다", () => {
+      sqlite.addCommonComponentsBatch([
+        // 'kappa' 가 이름(영문명)의 가운데에 든 컴포넌트와, 설명의 낱말 처음에만 든 컴포넌트
+        extra("k1", "가", "Bigkappa", "설명 없음"),
+        extra("k2", "가나다라마", "Other", "kappa 를 다룬다"),
+        // 'kappa' 와 'lambda' 가 모두 낱말의 가운데에 든 컴포넌트
+        extra("k3", "가나다라마바사", "Bigkappa Biglambda", "설명 없음"),
+      ]);
+      expect(idsOf(sqlite.queryComponents({ query: "kappa" }).rows)).toEqual(["k2", "k1", "k3"]);
+      // 대체 검색: 두 검색어가 일치한 k3 이 'kappa' 하나가 낱말의 처음에서 일치한 k2 보다 앞이다
+      const fallback = sqlite.queryComponents({ query: "kappa lambda 없는말" });
+      expect(fallback.matchMode).toBe("any-term");
+      expect(idsOf(fallback.rows)).toEqual(["k3", "k2", "k1"]);
+    });
+
+    it("한글이 든 검색어에는 이 기준을 적용하지 않는다", () => {
+      // '코드': 이름의 맨 앞에 든 '코드관리' 가 이름의 뒤쪽에 든 '공통코드' 보다 앞서지 않는다 (이름의 길이가 같아 ID 순이다)
+      sqlite.addCommonComponentsBatch([
+        extra("zcr", "코드관리", "Code Management", "설명 없음"),
+        extra("cca", "공통코드", "Common Code", "설명 없음"),
+      ]);
+      expect(idsOf(sqlite.queryComponents({ query: "코드" }).rows)).toEqual(["cca", "zcr"]);
+      const clauses = orderByClausesOf(sqlite, () => sqlite.queryComponents({ query: "코드" }));
+      expect(clauses).toHaveLength(1);
+      expect(clauses[0]).not.toContain("GLOB");
+    });
+  });
+
   describe("가려 주지 못하는 낱말 (영어 기능어, 목록의 모든 항목에 해당하는 낱말)", () => {
     const termsOf = (query: string) => sqlite.queryComponents({ query }).terms;
 
