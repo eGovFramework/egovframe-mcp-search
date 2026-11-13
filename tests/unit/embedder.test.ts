@@ -2,13 +2,98 @@
  * 로컬 임베더(src/rag/embedder.ts) 단위 테스트
  *
  * 입력 길이 제한은 순수 함수로 검증하고, 실제 모델이 필요한 검증은 모델(models/)이 있을 때만 수행한다.
+ * 모델 로드 실패는 transformers.js 의 로컬 모델 경로를 임시 디렉토리로 돌려 재현한다
+ * (저장소의 models/ 는 건드리지 않는다).
  */
-import { describe, it, expect, beforeAll } from "vitest";
-import { AutoTokenizer } from "@xenova/transformers";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
+import fs from "fs-extra";
+import os from "node:os";
+import path from "node:path";
+import { AutoTokenizer, env } from "@xenova/transformers";
 import { LocalEmbedder, MAX_EMBED_INPUT_CHARS, truncateEmbedInput } from "../../src/rag/embedder.js";
 import { EMBEDDING_MODEL_ID } from "../../src/utils/dataPaths.js";
+import { INTERNAL_ERROR_MESSAGE, UserFacingError, toUserMessage } from "../../src/utils/errors.js";
 import { hasEmbeddingModel } from "../integration/_helper.js";
 import { GUIDE_TABLE, HAS_BUNDLED_TABLES, KNOWLEDGE_TABLE, openBundledTable } from "./_lanceFixtures.js";
+
+describe("LocalEmbedder — 모델 로드 실패", () => {
+  const MODEL_NOT_FOUND_MESSAGE =
+    "임베딩 모델을 찾을 수 없습니다 (models/Xenova/multilingual-e5-small). 저장소를 클론해 쓰는 경우 npm run fetch-model 을 실행하세요.";
+
+  let tmpDir: string;
+  let savedModelPath: string;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "egov-embedder-"));
+    savedModelPath = env.localModelPath;
+    env.localModelPath = tmpDir;
+    // 실패 경위는 stderr 로 나간다 — 테스트 출력에서는 가린다
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(async () => {
+    env.localModelPath = savedModelPath;
+    vi.restoreAllMocks();
+    await fs.remove(tmpDir);
+  });
+
+  it("모델 파일이 없으면 조치 방법을 담은 UserFacingError 를 던진다", async () => {
+    const error = await new LocalEmbedder().initialize().catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(UserFacingError);
+    expect((error as Error).message).toBe(MODEL_NOT_FOUND_MESSAGE);
+    // 도구 응답에 그대로 실리는 문구다 — 설치 위치의 절대 경로가 들어가면 안 된다
+    expect(toUserMessage(error)).toBe(MODEL_NOT_FOUND_MESSAGE);
+    expect(toUserMessage(error)).not.toContain(tmpDir);
+  });
+
+  // 가중치(onnx)만 없는 불완전한 모델 디렉토리 — 설정·토크나이저는 실제 모델의 것을 써야 해서 모델이 있을 때만 돈다
+  it.skipIf(!hasEmbeddingModel())("모델 파일 가운데 일부만 없어도 같은 안내를 던진다", async () => {
+    const modelDir = path.join(tmpDir, EMBEDDING_MODEL_ID);
+    await fs.ensureDir(modelDir);
+    for (const file of ["config.json", "tokenizer.json", "tokenizer_config.json"]) {
+      await fs.symlink(path.join(savedModelPath, EMBEDDING_MODEL_ID, file), path.join(modelDir, file));
+    }
+
+    const error = await new LocalEmbedder().initialize().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(UserFacingError);
+    expect((error as Error).message).toBe(MODEL_NOT_FOUND_MESSAGE);
+  });
+
+  it("embed() 도 같은 안내를 던진다 (임베딩 생성 실패로 감싸지 않는다)", async () => {
+    const error = await new LocalEmbedder().embed("게시판", "query").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(UserFacingError);
+    expect((error as Error).message).toBe(MODEL_NOT_FOUND_MESSAGE);
+  });
+
+  it("그 밖의 로드 실패는 원래 오류를 그대로 던진다 (서버가 고정 문구로 바꾼다)", async () => {
+    // 모델 파일은 있지만 내용이 깨진 경우: 어느 파일을 먼저 읽든 JSON 파싱 오류가 난다
+    const modelDir = path.join(tmpDir, EMBEDDING_MODEL_ID);
+    await fs.ensureDir(modelDir);
+    for (const file of ["config.json", "tokenizer.json", "tokenizer_config.json"]) {
+      await fs.writeFile(path.join(modelDir, file), "{ 깨진 JSON");
+    }
+
+    const error = await new LocalEmbedder().initialize().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(SyntaxError);
+    expect(error).not.toBeInstanceOf(UserFacingError);
+    expect(toUserMessage(error)).toBe(INTERNAL_ERROR_MESSAGE);
+  });
+
+  it.skipIf(!hasEmbeddingModel())(
+    "실패한 뒤에도 모델이 준비되면 다시 불러온다",
+    async () => {
+      const embedder = new LocalEmbedder();
+      await expect(embedder.initialize()).rejects.toBeInstanceOf(UserFacingError);
+
+      env.localModelPath = savedModelPath;
+      await embedder.initialize();
+      expect(embedder.getModelInfo().isLoaded).toBe(true);
+    },
+    120_000,
+  );
+});
 
 describe("truncateEmbedInput", () => {
   it("상한 이하의 입력은 그대로 둔다", () => {

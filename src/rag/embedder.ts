@@ -13,6 +13,7 @@ import { pipeline, env } from '@xenova/transformers';
 import { fileURLToPath } from 'url';
 import { getModelsPath } from '../utils/projectPath.js';
 import { EMBEDDING_MODEL_ID } from '../utils/dataPaths.js';
+import { UserFacingError } from '../utils/errors.js';
 import { sliceHead } from '../utils/text.js';
 
 // 폐쇄망 대응: 패키지에 동봉된 로컬 모델(models/)만 사용하고 원격 다운로드를 금지한다.
@@ -40,6 +41,25 @@ export const MAX_EMBED_INPUT_CHARS = 8000;
 /** 임베딩 입력을 MAX_EMBED_INPUT_CHARS 글자까지만 남긴다 (질의·문서 공통). */
 export function truncateEmbedInput(text: string): string {
   return sliceHead(text, MAX_EMBED_INPUT_CHARS);
+}
+
+/**
+ * 모델 파일이 없을 때 호출자에게 보여 주는 안내.
+ * models/ 는 git 에 없어(용량 제한) 저장소를 클론한 직후에는 비어 있다. 배포 tgz 에는 동봉된다.
+ */
+const MODEL_NOT_FOUND_MESSAGE =
+  `임베딩 모델을 찾을 수 없습니다 (models/${EMBEDDING_MODEL_ID}). ` +
+  '저장소를 클론해 쓰는 경우 npm run fetch-model 을 실행하세요.';
+
+/**
+ * 모델 파일을 찾지 못해 난 로드 실패인지 판별한다.
+ *
+ * 원격 다운로드를 막아 두었으므로(allowRemoteModels=false) transformers.js 는 필요한 파일
+ * (config.json, tokenizer.json, tokenizer_config.json, onnx/model_quantized.onnx) 가운데 하나라도
+ * 로컬에 없으면 "... file was not found locally at <절대 경로>" 오류를 던진다.
+ */
+function isModelNotFound(error: unknown): boolean {
+  return error instanceof Error && /file was not found locally/i.test(error.message);
 }
 
 export class LocalEmbedder {
@@ -81,8 +101,13 @@ export class LocalEmbedder {
       this.model = await pipeline('feature-extraction', this.modelName);
       console.error('✅ 임베딩 모델 로드 완료');
     } catch (error) {
+      // 상세 내용(절대 경로 포함)은 서버 로그에만 남긴다
       console.error('❌ 임베딩 모델 로드 실패:', error);
-      throw new Error(`임베딩 모델 로드 실패: ${error}`);
+      if (isModelNotFound(error)) {
+        throw new UserFacingError(MODEL_NOT_FOUND_MESSAGE);
+      }
+      // 그 밖의 실패(깨진 파일, 런타임 오류 등)는 원래 오류를 그대로 던진다 — 서버가 고정 문구로 바꾼다
+      throw error;
     }
   }
 
