@@ -32,6 +32,26 @@ import {
 
 type SearchScope = "auto" | "guide" | "knowledge" | "components" | "compatibility" | "all";
 
+/**
+ * components scope 가 지원하는 action 목록.
+ * server.ts 의 inputSchema enum 과 게이트웨이의 런타임 검증이 이 배열 하나를 함께 쓴다.
+ */
+export const COMPONENT_ACTIONS = [
+  "get",
+  "info",
+  "dependencies",
+  "sourceFiles",
+  "readSource",
+  "ddl",
+  "dml",
+] as const;
+
+export type ComponentAction = (typeof COMPONENT_ACTIONS)[number];
+
+function isComponentAction(value: string): value is ComponentAction {
+  return (COMPONENT_ACTIONS as readonly string[]).includes(value);
+}
+
 export interface EgovSearchKnowledgeArgs {
   query?: string;
   scope?: SearchScope;
@@ -139,6 +159,19 @@ async function searchPersonalKnowledge(args: EgovSearchKnowledgeArgs): Promise<s
   return formatJson("개인 지식 검색 결과", result);
 }
 
+/** filters.componentId 와 그 별칭(component, id) 가운데 먼저 지정된 값. */
+function getComponentId(filters: Record<string, unknown>): string | undefined {
+  return asString(filters.componentId) || asString(filters.component) || asString(filters.id);
+}
+
+function requireComponentId(filters: Record<string, unknown>, purpose: string): string {
+  const componentId = getComponentId(filters);
+  if (!componentId) {
+    throw new Error(`filters.componentId is required for ${purpose}`);
+  }
+  return componentId;
+}
+
 function formatComponentDetail(componentId: string): string {
   const { component, dependencies, dependencyComponents } = getComponentInfo(componentId);
   return component
@@ -147,18 +180,21 @@ function formatComponentDetail(componentId: string): string {
 }
 
 function formatComponentDependencyLookup(filters: Record<string, unknown>): string {
-  const componentIds = asStringArray(filters.componentIds);
-  if (!componentIds || componentIds.length === 0) {
-    throw new Error("filters.componentIds is required for component dependency resolution");
+  // 배열(componentIds)이 기본 형태이고, 컴포넌트 하나만 볼 때는 단수형(componentId 와 별칭)도 받는다.
+  const single = getComponentId(filters);
+  const componentIds = [
+    ...new Set([...(asStringArray(filters.componentIds) ?? []), ...(single ? [single] : [])]),
+  ];
+  if (componentIds.length === 0) {
+    throw new Error(
+      "filters.componentIds (or filters.componentId) is required for component dependency resolution",
+    );
   }
   return formatDependencyResolution(resolveDependencies(componentIds));
 }
 
 function formatComponentSourceFileLookup(filters: Record<string, unknown>): string {
-  const componentId = asString(filters.componentId);
-  if (!componentId) {
-    throw new Error("filters.componentId is required for component source file listing");
-  }
+  const componentId = requireComponentId(filters, "component source file listing");
   const result = getComponentSourceFiles(componentId);
   return result ? formatComponentSourceFiles(result) : `컴포넌트를 찾을 수 없습니다: ${componentId}`;
 }
@@ -182,10 +218,7 @@ function formatComponentSourceRead(filters: Record<string, unknown>): string {
 }
 
 function formatComponentScriptLookup(filters: Record<string, unknown>, action: "ddl" | "dml"): string {
-  const componentId = asString(filters.componentId);
-  if (!componentId) {
-    throw new Error(`filters.componentId is required for component ${action} lookup`);
-  }
+  const componentId = requireComponentId(filters, `component ${action} lookup`);
   const dbType = asString(filters.dbType) || "mysql";
   if (action === "ddl") {
     const result = getComponentDDL(componentId, dbType);
@@ -224,25 +257,35 @@ function formatComponentListLookup(args: EgovSearchKnowledgeArgs, filters: Recor
 
 function searchComponentsGateway(args: EgovSearchKnowledgeArgs): string {
   const filters = getFilters(args);
-  const action = args.action || "";
-  const componentId = asString(filters.componentId) || asString(filters.component) || asString(filters.id);
+  const action = args.action;
 
-  if (action === "get" || action === "info" || componentId) {
-    if (!componentId) {
-      throw new Error("filters.componentId is required for component detail lookup");
-    }
-    return formatComponentDetail(componentId);
+  // action 이 없을 때만 필터로 동작을 정한다: componentId 가 있으면 상세, 없으면 목록/검색.
+  // action 이 있으면 componentId 는 그 action 의 대상일 뿐이므로 상세 조회로 가로채지 않는다.
+  if (!action) {
+    const componentId = getComponentId(filters);
+    return componentId ? formatComponentDetail(componentId) : formatComponentListLookup(args, filters);
   }
 
-  const actionHandlers: Record<string, () => string> = {
-    dependencies: () => formatComponentDependencyLookup(filters),
-    sourceFiles: () => formatComponentSourceFileLookup(filters),
-    readSource: () => formatComponentSourceRead(filters),
-    ddl: () => formatComponentScriptLookup(filters, "ddl"),
-    dml: () => formatComponentScriptLookup(filters, "dml"),
-  };
+  if (!isComponentAction(action)) {
+    throw new Error(
+      `Unsupported action for components scope: ${action}. Supported actions: ${COMPONENT_ACTIONS.join(", ")}`,
+    );
+  }
 
-  return actionHandlers[action]?.() || formatComponentListLookup(args, filters);
+  switch (action) {
+    case "get":
+    case "info":
+      return formatComponentDetail(requireComponentId(filters, "component detail lookup"));
+    case "dependencies":
+      return formatComponentDependencyLookup(filters);
+    case "sourceFiles":
+      return formatComponentSourceFileLookup(filters);
+    case "readSource":
+      return formatComponentSourceRead(filters);
+    case "ddl":
+    case "dml":
+      return formatComponentScriptLookup(filters, action);
+  }
 }
 
 async function searchCompatibility(args: EgovSearchKnowledgeArgs): Promise<string> {

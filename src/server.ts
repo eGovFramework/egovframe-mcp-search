@@ -17,7 +17,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { egovSearchKnowledge } from "./tools/egovSearchKnowledge.js";
+import { COMPONENT_ACTIONS, egovSearchKnowledge } from "./tools/egovSearchKnowledge.js";
 
 const server = new McpServer({
   name: "egovframe-mcp-search",
@@ -50,11 +50,11 @@ server.registerTool(
         .describe(
           "Search scope. Use auto to infer the best source from query and filters. Default: auto.",
         ),
+      // 빈 문자열은 "지정하지 않음"으로 받는다 (쓰지 않는 선택 파라미터를 "" 로 채워 보내는 클라이언트 호환).
       action: z
-        .string()
-        .optional()
+        .preprocess((value) => (value === "" ? undefined : value), z.enum(COMPONENT_ACTIONS).optional())
         .describe(
-          "Optional sub-action for scoped lookup. Components support: get/info, dependencies, sourceFiles, readSource, ddl (pre-built component CREATE TABLE), dml (initial INSERTs).",
+          "Optional sub-action, supported only for the components scope. get/info: component detail (filters.componentId). dependencies: transitive dependencies (filters.componentIds array, or a single filters.componentId). sourceFiles: source file list (filters.componentId). readSource: one source file (filters.filePath). ddl: pre-built CREATE TABLE statements (filters.componentId, optional filters.dbType). dml: initial INSERT statements (filters.componentId, optional filters.dbType). Without an action, filters.componentId returns the component detail and otherwise the component list/search runs.",
         ),
       filters: z
         .record(z.string(), z.any())

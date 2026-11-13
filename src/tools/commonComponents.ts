@@ -571,7 +571,7 @@ export function formatComponentSourceFiles(result: ComponentSourceFiles): string
     output += '```\n\n';
   }
   
-  output += '> `read_component_source` 도구로 개별 파일 내용을 조회할 수 있습니다.\n';
+  output += '> 개별 파일 내용은 `egov_search_knowledge` 를 `scope: "components"`, `action: "readSource"`, `filters.filePath: <위 경로>` 로 호출해 조회할 수 있습니다.\n';
   
   return output;
 }

@@ -55,3 +55,43 @@ export async function createMcpClient(): Promise<Client> {
 export function hasSampleProject(): boolean {
   return fs.existsSync(SAMPLE_PROJECT_PATH);
 }
+
+/** `egov_search_knowledge` 호출 결과에서 테스트가 쓰는 부분만 추린 형태. */
+export interface SearchKnowledgeResult {
+  /** content 의 text 항목을 이어 붙인 본문 */
+  text: string;
+  /** 도구가 오류 결과(isError)로 응답했는지 — 입력 스키마 위반도 여기에 해당한다 */
+  isError: boolean;
+}
+
+/**
+ * `egov_search_knowledge` 를 호출하고 본문 텍스트와 오류 여부를 돌려준다.
+ * zod 입력 스키마 검증을 포함한 전체 MCP 스택을 통과한다.
+ */
+export async function callSearchKnowledge(
+  client: Client,
+  args: Record<string, unknown>,
+): Promise<SearchKnowledgeResult> {
+  const res = await client.callTool({ name: "egov_search_knowledge", arguments: args });
+  const content = (res.content ?? []) as Array<{ type: string; text?: string }>;
+  const text = content.map((c) => (c.type === "text" ? (c.text ?? "") : "")).join("\n");
+  return { text, isError: res.isError === true };
+}
+
+/**
+ * 공통컴포넌트 소스 트리(git 서브모듈)가 체크아웃되어 있는지.
+ * 없으면 소스 파일/DDL/DML 내용에 의존하는 테스트는 skip 한다.
+ */
+export function hasComponentSources(): boolean {
+  return fs.existsSync(path.join(REPO_ROOT, "templates", "common-components-src", "pom.xml"));
+}
+
+/**
+ * 로컬 임베딩 모델(models/ — git 미추적, `npm run fetch-model` 로 생성)이 있는지.
+ * 없으면 의미 검색(guide/knowledge/all)에 의존하는 테스트는 skip 한다.
+ */
+export function hasEmbeddingModel(): boolean {
+  return fs.existsSync(
+    path.join(REPO_ROOT, "models", "Xenova", "multilingual-e5-small", "onnx", "model_quantized.onnx"),
+  );
+}
