@@ -10,16 +10,9 @@ import {
 } from '../types/knowledge.js';
 import { UserFacingError } from '../utils/errors.js';
 import { excerptKnowledgeContent } from '../utils/knowledgeExcerpt.js';
+import { presentTitle } from '../utils/knowledgePresentation.js';
 import { sliceHead } from '../utils/text.js';
 import { maskResidentNumbers } from '../utils/sensitiveText.js';
-
-/**
- * 응답에 싣는 제목을 다듬는다: NFC 로 정규화하고(macOS 파일 이름에서 온 제목이 NFD 로 색인되어 있다)
- * 주민등록번호 형식의 값을 가린다.
- */
-function presentTitle(title: unknown): string {
-  return maskResidentNumbers(String(title ?? '').normalize('NFC'));
-}
 
 /**
  * 응답에 싣는 본문을 만든다: 주민등록번호 형식의 값을 가린 뒤(공개 게시판의 글이라 본문에 들어 있을 수 있다)

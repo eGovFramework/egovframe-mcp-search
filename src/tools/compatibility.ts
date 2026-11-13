@@ -7,7 +7,9 @@ import { getHybridManager, type HybridDatabaseManager } from '../database/hybrid
 import type { SQLiteManager } from '../database/sqliteManager.js';
 import { CompatibilitySearchFilter, CompatibilitySoftwareInfo, KeywordMatchMode } from '../types/database.js';
 import { normalizeFrameworkVersion } from '../utils/frameworkVersion.js';
+import { collapseWhitespace, excerptAround, presentTitle } from '../utils/knowledgePresentation.js';
 import { findProductMention, lowerAscii, nameWithoutParentheses } from '../utils/productMention.js';
+import { maskResidentNumbers } from '../utils/sensitiveText.js';
 
 /** 문자열 필터 값의 앞뒤 공백을 뗀다. 문자열이 아니거나 비어 있으면 undefined. */
 function cleanFilter(value: string | undefined): string | undefined {
@@ -101,7 +103,13 @@ function normalizeOffset(offset: number | undefined): number {
 /** includeKnowledge 로 함께 돌려주는 관련 지식 한 건 */
 export interface RelatedKnowledgeItem {
   id: string;
+  /** 제목. 지식 검색의 응답과 같은 방식으로 다듬는다 (NFC 정규화, 주민등록번호 형식 가림) */
   title: string;
+  /**
+   * 본문에서 제품명이 처음 나오는 자리를 가운데에 둔 발췌 (제품명이 제목에만 있으면 본문의 처음부터).
+   * 줄바꿈과 연속 공백은 공백 하나로 바꾸고, 자른 쪽에는 "..." 을 붙인다. 표시까지 200자 이내다
+   */
+  excerpt: string;
   type: string;
   importance: number;
   tags: string[];
@@ -121,6 +129,27 @@ const KNOWLEDGE_CANDIDATES_PER_PRODUCT = 50;
 
 /** 제품 하나에 싣는 관련 지식의 최대 건수 */
 const MAX_KNOWLEDGE_PER_PRODUCT = 5;
+
+/** 관련 지식 항목에 싣는 본문 발췌의 최대 길이 (생략 표시 포함) */
+const KNOWLEDGE_EXCERPT_LENGTH = 200;
+
+/**
+ * 관련 지식 항목에 싣는 본문 발췌를 만든다: 본문에서 제품의 이름(name)이 처음 언급된 자리를 가운데에 둔다.
+ * 본문이 그 이름을 언급하지 않으면(제목에만 있으면) 본문의 처음부터 싣는다.
+ *
+ * 줄바꿈과 연속 공백을 공백 하나로 바꾸고 주민등록번호 형식을 가린 뒤에 자른다. 자른 뒤에 가리면 잘린 자리에
+ * 걸친 번호의 일부가 남는다 (공개 게시판의 글이라 본문에 들어 있을 수 있다).
+ */
+function mentionExcerpt(content: unknown, name: string): string {
+  if (typeof content !== 'string') {
+    return '';
+  }
+  const text = maskResidentNumbers(collapseWhitespace(content));
+  const at = findProductMention(text, name);
+  return at === -1
+    ? excerptAround(text, 0, 0, KNOWLEDGE_EXCERPT_LENGTH)
+    : excerptAround(text, at, name.length, KNOWLEDGE_EXCERPT_LENGTH);
+}
 
 /** 관련 지식 조회가 실패했을 때 응답에 싣는 안내. 상세 원인은 서버 로그(stderr)에만 남긴다. */
 const KNOWLEDGE_WARNING =
@@ -151,6 +180,8 @@ async function openKnowledge(manager: HybridDatabaseManager) {
  * 제품을 실제로 언급하는 글이 가까운 몇 건 안에 든다는 보장이 없으므로 (제품명이 짧으면 다른 글이 앞 순위를
  * 차지한다), 후보를 KNOWLEDGE_CANDIDATES_PER_PRODUCT 건까지 보고 그 가운데 앞의 MAX_KNOWLEDGE_PER_PRODUCT 건을
  * 싣는다. 그런 지식이 하나도 없는 제품은 결과에 넣지 않는다.
+ * 항목에는 본문 전체 대신 제품명이 나오는 자리의 발췌를 싣는다 (mentionExcerpt). 호출자가 제목으로 다시
+ * 검색하지 않고도 그 글이 제품을 어떻게 언급하는지 볼 수 있다.
  *
  * 지식 쪽 오류는 던지지 않고 failed 로 알린다 (소프트웨어 조회 결과는 이미 구해져 있다).
  * searchedProducts 는 조회를 마친 제품 수다. productNames 가 비어 있으면 지식 쪽을 초기화하지 않는다.
@@ -187,7 +218,8 @@ async function findRelatedKnowledge(
           product: productName,
           knowledge: mentioning.map((item) => ({
             id: item.id,
-            title: item.title,
+            title: presentTitle(item.title),
+            excerpt: mentionExcerpt(item.content, name),
             type: item.type,
             importance: item.importance,
             tags: item.tags,

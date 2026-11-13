@@ -90,8 +90,15 @@ const knowledge = (id: string, title: string, content: string) => ({
   metadata: {},
 });
 
-/** 응답의 relatedKnowledge 에 실리는 지식 한 건 */
-const listed = (id: string, title: string) => ({ id, title, type: "solution", importance: 3, tags: ["was"] });
+/** 응답의 relatedKnowledge 에 실리는 지식 한 건. excerpt 는 본문의 발췌다 (200자 이내의 본문은 그대로다) */
+const listed = (id: string, title: string, excerpt: string) => ({
+  id,
+  title,
+  excerpt,
+  type: "solution",
+  importance: 3,
+  tags: ["was"],
+});
 
 /**
  * 의미 검색이 돌려줄 후보를 정한다 (가까운 순). 실제 검색처럼 요청한 limit 건까지만 돌려준다.
@@ -548,7 +555,10 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       expect(response.relatedKnowledge).toEqual([
         {
           product: "JEUS",
-          knowledge: [listed("k-title", "JEUS 데이터소스 설정 문의"), listed("k-content", "WAS 기동 오류")],
+          knowledge: [
+            listed("k-title", "JEUS 데이터소스 설정 문의", "설정 방법이 궁금합니다."),
+            listed("k-content", "WAS 기동 오류", "JEUS 8 에서 기동할 때 오류가 납니다."),
+          ],
         },
       ]);
       expect(response).not.toHaveProperty("knowledgeWarning");
@@ -582,7 +592,13 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
 
       expect(hybrid.searchKnowledge).toHaveBeenCalledWith("JEUS", { limit: 50 });
       expect(response.relatedKnowledge).toEqual([
-        { product: "JEUS", knowledge: [listed("k9", "JEUS 세션 클러스터링"), listed("k11", "배포 오류")] },
+        {
+          product: "JEUS",
+          knowledge: [
+            listed("k9", "JEUS 세션 클러스터링", "세션이 공유되지 않습니다."),
+            listed("k11", "배포 오류", "JEUS 21 에 배포할 때 오류가 납니다."),
+          ],
+        },
       ]);
     });
 
@@ -613,7 +629,7 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       expect(response.success).toBe(true);
       expect(versionsOf(response.software).sort()).toEqual(["JEUS 21", "JEUS 8.5", "Tibero 7"]);
       expect(response.relatedKnowledge).toEqual([
-        { product: "Tibero", knowledge: [listed("k-tibero", "Tibero 연결 설정")] },
+        { product: "Tibero", knowledge: [listed("k-tibero", "Tibero 연결 설정", "Tibero 7 JDBC 설정")] },
       ]);
       // 조회를 마친 제품만 센다
       expect(response.knowledgeLookup).toEqual({ searchedProducts: 1, pageProducts: 2 });
@@ -718,6 +734,86 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
     });
   });
 
+  describe("includeKnowledge — 항목의 제목과 발췌", () => {
+    useCatalogue(CATALOGUE);
+
+    /** JEUS 를 조회해 관련 지식 항목을 돌려준다 */
+    const jeusItems = async (candidates: unknown[]) => {
+      setCandidates(candidates);
+      const response = await searchCompatibleSoftware({ productName: "JEUS", limit: 1, includeKnowledge: true });
+      return response.relatedKnowledge?.[0]?.knowledge ?? [];
+    };
+
+    it("본문에서 제품명이 처음 나오는 자리를 가운데에 둔 200자 이내의 발췌를 싣는다", async () => {
+      const head = "서버 설정을 바꾼 뒤부터 문제가 생겼습니다. ".repeat(20);
+      const tail = " 로그를 첨부합니다.".repeat(30);
+      const [item] = await jeusItems([knowledge("k1", "WAS 기동 오류", `${head}JEUS 8 에서 기동할 때 오류가 납니다.${tail}`)]);
+
+      expect(item.excerpt.length).toBeLessThanOrEqual(200);
+      expect(item.excerpt.startsWith("...")).toBe(true);
+      expect(item.excerpt.endsWith("...")).toBe(true);
+      // 제품명이 발췌의 가운데에 있다
+      const at = item.excerpt.indexOf("JEUS 8 에서 기동할 때");
+      expect(at).toBeGreaterThan(80);
+      expect(at).toBeLessThan(110);
+    });
+
+    it("제품명이 여러 번 나오면 처음 나오는 자리를 쓴다", async () => {
+      const filler = "가".repeat(300);
+      const [item] = await jeusItems([knowledge("k1", "문의", `${filler} JEUS 첫째 ${filler} JEUS 둘째 ${filler}`)]);
+      expect(item.excerpt).toContain("JEUS 첫째");
+      expect(item.excerpt).not.toContain("JEUS 둘째");
+    });
+
+    it("제품명이 제목에만 있으면 본문의 처음부터 싣는다", async () => {
+      const body = "설정 방법이 궁금합니다. ".repeat(40).trim();
+      const [item] = await jeusItems([knowledge("k1", "JEUS 데이터소스 설정 문의", body)]);
+      expect(item.excerpt).toBe(`${body.slice(0, 197).trimEnd()}...`);
+      expect(item.excerpt.length).toBeLessThanOrEqual(200);
+    });
+
+    it("200자 이내의 본문은 자르지 않고, 줄바꿈과 연속 공백을 공백 하나로 바꿔 싣는다", async () => {
+      const [item] = await jeusItems([knowledge("k1", "문의", "질문:\nJEUS   설정이 궁금합니다.\r\n\r\n답변:\n\t가이드를 참고하세요.  ")]);
+      expect(item.excerpt).toBe("질문: JEUS 설정이 궁금합니다. 답변: 가이드를 참고하세요.");
+    });
+
+    it("줄바꿈으로 나뉜 긴 본문도 공백을 정리한 뒤에 200자를 센다", async () => {
+      const line = "로그 한 줄입니다.";
+      const [item] = await jeusItems([knowledge("k1", "문의", `JEUS 기동 로그\n\n\n${`${line}\n\n\n`.repeat(60)}`)]);
+      expect(item.excerpt.length).toBeLessThanOrEqual(200);
+      expect(item.excerpt.length).toBeGreaterThan(190);
+      expect(item.excerpt).not.toMatch(/\s{2,}|\n/);
+      expect(item.excerpt.startsWith("JEUS 기동 로그 로그 한 줄입니다.")).toBe(true);
+    });
+
+    it("제목은 NFC 로 정규화하고 주민등록번호 형식을 가린다", async () => {
+      // 테스트용으로 지어낸 번호다
+      const [item] = await jeusItems([
+        knowledge("k1", `${"적용가이드".normalize("NFD")} JEUS 900101-1234567`, "본문"),
+      ]);
+      expect(item.title).toBe("적용가이드 JEUS ******-*******");
+    });
+
+    it("발췌의 주민등록번호 형식은 자르기 전에 가린다 (번호의 일부도 남기지 않는다)", async () => {
+      // 가리지 않고 자르면 197번째 글자에서 번호가 끊겨 앞 여섯 자리가 남는다
+      const [item] = await jeusItems([
+        knowledge("k1", "문의", `JEUS 문의입니다. ${"가".repeat(178)} 900101-1234567 뒤에 이어지는 글이 더 있습니다.`),
+      ]);
+      expect(item.excerpt.length).toBeLessThanOrEqual(200);
+      expect(item.excerpt).not.toMatch(/\d/);
+      expect(item.excerpt).toContain("*");
+
+      // 잘리지 않는 자리에 있는 번호도 가린다
+      const [whole] = await jeusItems([knowledge("k2", "문의", "JEUS 담당자 850505-2345678 입니다.")]);
+      expect(whole.excerpt).toBe("JEUS 담당자 ******-******* 입니다.");
+    });
+
+    it("본문이 비어 있으면 빈 발췌를 싣는다", async () => {
+      const [item] = await jeusItems([knowledge("k1", "JEUS 문의", "")]);
+      expect(item.excerpt).toBe("");
+    });
+  });
+
   describe("includeKnowledge — 괄호가 든 제품명", () => {
     const seed = (product_name: string): SoftwareSeed => ({
       ...CATALOGUE[4],
@@ -763,7 +859,7 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       const response = await searchCompatibleSoftware({ productName: "UCARE", includeKnowledge: true });
       expect(hybrid.searchKnowledge).toHaveBeenCalledWith("UCARE(콜센터상담시스템)", { limit: 50 });
       expect(response.relatedKnowledge).toEqual([
-        { product: "UCARE(콜센터상담시스템)", knowledge: [listed("k1", "UCARE 연동")] },
+        { product: "UCARE(콜센터상담시스템)", knowledge: [listed("k1", "UCARE 연동", "본문")] },
       ]);
     });
   });
