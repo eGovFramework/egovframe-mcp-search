@@ -1002,6 +1002,39 @@ describe("splitGuideSections — 조각을 이으면 절의 본문이 그대로 
     paragraph("만료", 20),
   );
 
+  it("뒤 조각이 줄의 처음에서 시작하면 그 줄의 들여쓰기를 지킨다 (중첩 목록의 항목 모양이 원문과 같다)", () => {
+    // 첫 줄을 뺀 모든 줄이 세 칸 들여쓴 하위 항목이다: 둘째 조각부터는 들여쓴 줄에서 시작한다
+    const sub = Array.from({ length: 20 }, (_, i) => `   - 하위 단계 ${i + 1}: 목록의 ${i + 1}번째 줄입니다.`);
+    const result = sections(doc("## 설정", "", "1. 다음 순서로 진행한다.", ...sub));
+    expect(result).toHaveLength(1);
+    const pieces = result[0].pieces;
+    expect(pieces.length).toBeGreaterThan(2);
+    for (const piece of pieces.slice(1)) {
+      // 조각의 첫 줄이 들여쓰기까지 원문의 줄과 같다
+      expect(sub, piece.content.split("\n")[0]).toContain(piece.content.split("\n")[0]);
+    }
+    expectLossless(result[0]);
+    // 구간 사이에는 줄바꿈만 있다 (들여쓰기가 구간 밖으로 밀려나지 않는다)
+    for (let i = 1; i < pieces.length; i++) {
+      expect(result[0].body.slice(pieces[i - 1].end, pieces[i].start)).toBe("\n");
+    }
+  });
+
+  it("절의 첫 조각은 앞의 공백을 떼고, 조각의 끝에서는 뒤의 공백을 뗀다", () => {
+    const lines = Array.from({ length: 20 }, (_, i) => `   - 하위 단계 ${i + 1}: 목록의 ${i + 1}번째 줄입니다.   `);
+    const result = sections(doc("## 설정", "", ...lines));
+    const pieces = result[0].pieces;
+    expect(pieces.length).toBeGreaterThan(2);
+    expect(pieces[0].content.startsWith("- 하위 단계 1:")).toBe(true);
+    for (const piece of pieces) {
+      expect(piece.content).toBe(piece.content.trimEnd());
+    }
+    for (const piece of pieces.slice(1)) {
+      expect(piece.content.startsWith("   - 하위 단계 ")).toBe(true);
+    }
+    expectLossless(result[0]);
+  });
+
   it("조각의 구간이 절의 본문을 순서대로 덮고, 구간 사이에는 공백만 있다", () => {
     const result = sections(body);
     expect(result.map((s) => s.section)).toEqual(["개요", "설정", "설정 > 만료"]);

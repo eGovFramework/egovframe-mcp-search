@@ -604,12 +604,13 @@ function splitIntoPieces(
     (last + 1 < count ? atoms[last + 1].closeTokens : 0);
   /**
    * atoms[first..last] 로 만든 조각이 절의 본문에서 맡는 구간과 덧붙일 줄.
-   * 덧붙인 줄이 없는 쪽은 절의 본문처럼 앞뒤 공백을 뺀다. 펜스를 다시 연 조각의 첫 줄은 들여쓰기를 지킨다
+   * 절의 첫 조각은 절의 본문처럼 앞의 공백을 뺀다. 뒤 조각은 시작하는 줄의 들여쓰기를 지킨다 (중첩 목록의 항목이나
+   * 들여쓴 줄의 모양이 원문과 같다). 닫는 펜스를 붙이지 않는 조각은 뒤의 공백을 뺀다
    */
   const spanOf = (first: number, last: number) => {
     const lead = leadOf(first);
     const trail = trailOf(last);
-    const start = lead === '' ? Math.min(textStarts[first], atoms[last].end) : atoms[first].start;
+    const start = first === 0 ? Math.min(textStarts[first], atoms[last].end) : atoms[first].start;
     const end = trail === '' ? Math.max(textEnds[last], atoms[first].start) : atoms[last].end;
     return { start, end, lead, trail };
   };
