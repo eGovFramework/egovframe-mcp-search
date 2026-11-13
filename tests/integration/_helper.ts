@@ -9,6 +9,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import * as path from "path";
 import * as fs from "fs";
+import * as os from "os";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -20,13 +21,15 @@ export const REPO_ROOT = path.resolve(__dirname, "../..");
 /** MCP 서버 엔트리(빌드 산출물) */
 export const SERVER_ENTRY = path.join(REPO_ROOT, "build", "index.js");
 
-/** 통합 테스트가 입력으로 쓰는 샘플 eGovFrame 프로젝트(존재해야만 동작). */
-export const SAMPLE_PROJECT_PATH = path.join(
-  REPO_ROOT,
-  "tests",
-  "test-output",
-  "my-egov-app",
-);
+/**
+ * 테스트 서버가 쓰는 빈 사용자 데이터 디렉토리(오버레이).
+ * 서버는 오버레이에 갱신분이 있으면 동봉 지식베이스 대신 그것을 읽는다. 개발자가 update 로 적용해 둔
+ * 갱신분이 테스트 결과를 바꾸지 않도록, 테스트 서버에는 항상 비어 있는 디렉토리를 준다.
+ */
+const ISOLATED_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "egov-mcp-test-data-"));
+process.once("exit", () => {
+  fs.rmSync(ISOLATED_DATA_DIR, { recursive: true, force: true });
+});
 
 /**
  * MCP Client 를 생성하고 서버에 연결한다.
@@ -42,6 +45,8 @@ export async function createMcpClient(): Promise<Client> {
   const transport = new StdioClientTransport({
     command: "node",
     args: [SERVER_ENTRY],
+    // SDK 가 물려주는 기본 환경 변수(HOME, PATH 등)에 더해진다
+    env: { EGOV_MCP_DATA_DIR: ISOLATED_DATA_DIR },
   });
   const client = new Client(
     { name: "test-client", version: "1.0.0" },
@@ -49,11 +54,6 @@ export async function createMcpClient(): Promise<Client> {
   );
   await client.connect(transport);
   return client;
-}
-
-/** 샘플 프로젝트가 디스크에 존재하는지(없으면 데이터 의존 테스트는 skip). */
-export function hasSampleProject(): boolean {
-  return fs.existsSync(SAMPLE_PROJECT_PATH);
 }
 
 /** `egov_search_knowledge` 호출 결과에서 테스트가 쓰는 부분만 추린 형태. */
