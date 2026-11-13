@@ -195,6 +195,19 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       expect(response.count).toBe(CATALOGUE.length);
       expect(response.filters).toEqual({});
     });
+
+    it("vendor·productName 에 NUL 문자가 들었거나 지나치게 긴 값을 줘도 오류 없이 0건으로 응답한다", async () => {
+      // NUL 이 든 값은 필터가 무시되어 전체가 나왔고, LIKE 패턴 한도(50,000바이트)를 넘는 값은 SQLite 오류가 났다
+      for (const value of ["\u0000티맥스", "a".repeat(50000)]) {
+        const label = `값 ${Buffer.byteLength(value, "utf8")}바이트`;
+        const byVendor = await searchCompatibleSoftware({ query: "JEUS", vendor: value });
+        expect(byVendor, label).toMatchObject({ success: true, total: 0, count: 0, software: [] });
+        const byProduct = await searchCompatibleSoftware({ productName: value });
+        expect(byProduct, label).toMatchObject({ success: true, total: 0, count: 0, software: [] });
+        // 필터 값은 모두 유효한 꼴이므로 쓸 수 있는 값 안내는 붙지 않는다
+        expect(byProduct, label).not.toHaveProperty("available");
+      }
+    });
   });
 
   describe("normalizeFrameworkVersion", () => {

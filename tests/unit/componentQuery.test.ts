@@ -190,6 +190,46 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     });
   });
 
+  describe("keyword 필터에 쓸 수 없는 값", () => {
+    const NO_ROWS = { rows: [], total: 0 };
+
+    it("NUL 문자가 든 keyword 는 필터를 무시하지 않고 일치하는 컴포넌트가 없는 조건으로 처리한다", () => {
+      // SQLite 의 LIKE 는 패턴을 NUL 에서 끊어 읽는다. '\u0000게시판' 은 '%' 만 남아 모든 행과 일치한다
+      expect(sqlite.queryComponents({ filters: { keyword: "\u0000게시판" } })).toEqual(NO_ROWS);
+      expect(sqlite.queryComponents({ filters: { keyword: "\u0000" } })).toEqual(NO_ROWS);
+      // NUL 뒤가 잘리면 '%템플릿' 이 되어, 값에 없는 문자열인데도 '게시판 템플릿' 과 일치한다
+      expect(sqlite.queryComponents({ filters: { keyword: "템플릿\u0000없는말" } })).toEqual(NO_ROWS);
+      // NUL 이 없는 같은 값은 그대로 찾는다
+      expect(idsOf(sqlite.queryComponents({ filters: { keyword: "템플릿" } }).rows)).toEqual(["tpl"]);
+    });
+
+    it("키워드 검색과 함께 줘도 같다", () => {
+      // 필터가 무시되면 '게시' 의 세 행이 그대로 나온다
+      expect(sqlite.queryComponents({ query: "게시", filters: { keyword: "\u0000템플릿" } })).toEqual({
+        ...NO_ROWS,
+        matchMode: "any-term",
+      });
+      // 부분 일치 대체 검색으로 넘어가는 질의도 같다
+      expect(sqlite.queryComponents({ query: "증서", filters: { keyword: "\u0000" } }).total).toBe(0);
+    });
+
+    it("LIKE 패턴 길이 한도를 넘는 값은 오류 없이 일치하는 컴포넌트가 없는 조건으로 처리한다", () => {
+      // UTF-8 로 SQLite 의 LIKE 패턴 한도(50,000바이트)를 넘는 값
+      for (const keyword of ["a".repeat(50000), "가".repeat(20000)]) {
+        const bytes = Buffer.byteLength(keyword, "utf8");
+        expect(sqlite.queryComponents({ filters: { keyword } }), `${bytes}바이트`).toEqual(NO_ROWS);
+        expect(sqlite.queryComponents({ query: "게시", filters: { keyword } }).total, `query + ${bytes}바이트`).toBe(0);
+        expect(sqlite.queryComponents({ query: "증서", filters: { keyword } }).total, `query + ${bytes}바이트`).toBe(0);
+      }
+    });
+
+    it("배열을 돌려주는 getCommonComponents 와 searchComponents 도 같다", () => {
+      expect(sqlite.getCommonComponents({ keyword: "\u0000게시판" })).toEqual([]);
+      expect(sqlite.getCommonComponents({ keyword: "a".repeat(50000) })).toEqual([]);
+      expect(sqlite.searchComponents("게시", 20, { keyword: "\u0000" })).toEqual([]);
+    });
+  });
+
   describe("컴포넌트 한 건 조회", () => {
     it("컴포넌트 ID 는 앞뒤 공백을 떼고 대소문자를 구분하지 않고 찾는다", () => {
       for (const id of ["bbs", "BBS", "Bbs", " bbs ", "\tbbs\n"]) {

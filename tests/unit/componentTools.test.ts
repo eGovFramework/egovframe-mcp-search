@@ -140,6 +140,15 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
       expect(listed.total).toBe(6);
       expect(listCommonComponents().components).toHaveLength(COMPONENTS.length);
     });
+
+    it("keyword 에 NUL 문자가 들었거나 지나치게 긴 값을 줘도 오류 없이 0건으로 응답한다", () => {
+      // NUL 이 든 값은 필터가 무시되어 전체가 나왔고, LIKE 패턴 한도(50,000바이트)를 넘는 값은 SQLite 오류가 났다
+      for (const keyword of ["\u0000게시판", "a".repeat(50000)]) {
+        const label = `값 ${Buffer.byteLength(keyword, "utf8")}바이트`;
+        expect(listCommonComponents({ keyword }), label).toMatchObject({ components: [], total: 0 });
+        expect(searchComponents("게시", 20, { keyword }), label).toMatchObject({ results: [], total: 0 });
+      }
+    });
   });
 
   describe("searchComponents", () => {

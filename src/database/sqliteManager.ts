@@ -393,17 +393,14 @@ export class SQLiteManager {
 
     const vendor = trimFilter(filters.vendor);
     if (vendor) {
-      clauses.push("cs.vendor LIKE ? ESCAPE '\\'");
-      params.push(`%${escapeLikePattern(vendor)}%`);
+      addContainsClause(clauses, params, ['cs.vendor'], vendor);
     }
 
     // 제품명 필터는 버전 표기(product_version, 예: 'JEUS 8.5')와도 비교한다.
     // 조회 결과에 보이는 값을 그대로 넣어도 찾을 수 있어야 한다.
     const productName = trimFilter(filters.productName);
     if (productName) {
-      const pattern = `%${escapeLikePattern(productName)}%`;
-      clauses.push("(cs.product_name LIKE ? ESCAPE '\\' OR cs.product_version LIKE ? ESCAPE '\\')");
-      params.push(pattern, pattern);
+      addContainsClause(clauses, params, ['cs.product_name', 'cs.product_version'], productName);
     }
 
     return { sql: clauses.map((clause) => ` AND ${clause}`).join(''), params };
@@ -494,7 +491,7 @@ export class SQLiteManager {
     filter: SqlCondition,
     page: SqlPage,
   ): { rows: Row[]; total: number } {
-    const termMatches = `(${target.likeColumns.map((column) => `${column} LIKE ? ESCAPE '\\'`).join(' OR ')})`;
+    const termMatches = likeAnyColumn(target.likeColumns);
     const bindPattern = (pattern: string) => target.likeColumns.map(() => pattern);
 
     const tableRows = (
@@ -979,11 +976,7 @@ export class SQLiteManager {
     }
 
     if (filters.keyword) {
-      const pattern = `%${escapeLikePattern(filters.keyword)}%`;
-      clauses.push(
-        "(c.name LIKE ? ESCAPE '\\' OR c.name_en LIKE ? ESCAPE '\\' OR c.description LIKE ? ESCAPE '\\' OR c.package_name LIKE ? ESCAPE '\\')",
-      );
-      params.push(pattern, pattern, pattern, pattern);
+      addContainsClause(clauses, params, ['c.name', 'c.name_en', 'c.description', 'c.package_name'], filters.keyword);
     }
 
     return { sql: clauses.map((clause) => ` AND ${clause}`).join(''), params };
@@ -1186,12 +1179,39 @@ const COMPONENT_SEARCH: KeywordSearchTarget = {
 const MAX_LIKE_PATTERN_BYTES = 50000;
 
 /**
- * 검색어를 부분 문자열로 찾는 LIKE 패턴 (`LIKE ? ESCAPE '\'` 와 함께 쓴다).
- * 패턴이 SQLite 의 길이 한도를 넘으면 null 을 돌려준다. 그런 검색어는 어떤 행과도 일치할 수 없다.
+ * 값(검색어 또는 필터 값)을 부분 문자열로 찾는 LIKE 패턴 (`LIKE ? ESCAPE '\'` 와 함께 쓴다).
+ *
+ * 아래 값으로는 패턴을 만들 수 없어 null 을 돌려준다. 호출부는 그런 값을 어떤 행과도 일치하지 않는 것으로 다룬다.
+ * - NUL 문자가 든 값: SQLite 의 LIKE 는 패턴을 NUL 에서 끊어 읽는다. NUL 뒤가 버려져 값과 다른 패턴이 되고
+ *   ('\u0000abc' 는 '%' 만 남는다), 값을 포함하지 않는 행과 일치한다.
+ * - 패턴이 SQLite 의 길이 한도를 넘는 값: 조회가 'LIKE or GLOB pattern too complex' 오류로 실패한다.
  */
-function containsPattern(term: string): string | null {
-  const pattern = `%${escapeLikePattern(term)}%`;
+function containsPattern(value: string): string | null {
+  if (value.includes('\u0000')) {
+    return null;
+  }
+  const pattern = `%${escapeLikePattern(value)}%`;
   return Buffer.byteLength(pattern, 'utf8') > MAX_LIKE_PATTERN_BYTES ? null : pattern;
+}
+
+/** 컬럼 가운데 하나라도 LIKE 패턴과 일치한다는 조건. 패턴은 컬럼마다 한 번씩 바인딩한다. */
+function likeAnyColumn(columns: string[]): string {
+  return `(${columns.map((column) => `${column} LIKE ? ESCAPE '\\'`).join(' OR ')})`;
+}
+
+/**
+ * "컬럼 가운데 하나라도 value 를 부분 문자열로 포함한다" 는 필터 조건을 clauses 와 params 에 덧붙인다.
+ * value 로 LIKE 패턴을 만들 수 없으면(containsPattern) 어떤 행과도 일치하지 않는 조건을 덧붙인다.
+ * 필터를 빼 버리면 필터를 주지 않은 것과 같은 결과가 나오므로, 조건 자체는 반드시 남긴다.
+ */
+function addContainsClause(clauses: string[], params: unknown[], columns: string[], value: string): void {
+  const pattern = containsPattern(value);
+  if (pattern === null) {
+    clauses.push('1=0');
+    return;
+  }
+  clauses.push(likeAnyColumn(columns));
+  params.push(...columns.map(() => pattern));
 }
 
 /** 조회할 범위. SQL 의 LIMIT / OFFSET 에 그대로 넣는 정수다. */

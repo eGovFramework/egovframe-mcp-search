@@ -288,6 +288,63 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     });
   });
 
+  describe("LIKE 로 비교하는 필터(vendor, productName)에 쓸 수 없는 값", () => {
+    const NO_ROWS = { rows: [], total: 0 };
+    /** UTF-8 로 SQLite 의 LIKE 패턴 한도(50,000바이트)를 넘는 값 */
+    const TOO_LONG = ["a".repeat(50000), "가".repeat(20000)];
+
+    it("NUL 문자가 든 vendor 는 필터를 무시하지 않고 일치하는 행이 없는 조건으로 처리한다", () => {
+      // SQLite 의 LIKE 는 패턴을 NUL 에서 끊어 읽는다. '\u0000티맥스' 는 '%' 만 남아 모든 행과 일치한다
+      expect(sqlite.queryCompatibleSoftware({ filters: { vendor: "\u0000티맥스" } })).toEqual(NO_ROWS);
+      expect(sqlite.queryCompatibleSoftware({ filters: { vendor: "\u0000" } })).toEqual(NO_ROWS);
+      // NUL 뒤가 잘리면 '%티맥스소프트' 가 되어, 값에 없는 문자열인데도 그렇게 끝나는 벤더와 일치한다
+      expect(sqlite.queryCompatibleSoftware({ filters: { vendor: "티맥스소프트\u0000없는말" } })).toEqual(NO_ROWS);
+      // NUL 이 없는 같은 값은 그대로 찾는다
+      expect(sqlite.queryCompatibleSoftware({ filters: { vendor: "티맥스" } }).total).toBe(3);
+    });
+
+    it("NUL 문자가 든 productName 도 같다 (제품명과 버전 표기 어느 쪽과도 일치하지 않는다)", () => {
+      expect(sqlite.queryCompatibleSoftware({ filters: { productName: "\u0000JEUS" } })).toEqual(NO_ROWS);
+      expect(sqlite.queryCompatibleSoftware({ filters: { productName: "JEUS\u0000" } })).toEqual(NO_ROWS);
+      expect(sqlite.queryCompatibleSoftware({ filters: { productName: "JEUS" } }).total).toBe(2);
+    });
+
+    it("키워드 검색과 함께 줘도 같다", () => {
+      // 필터가 무시되면 'JEUS' 의 두 행이 그대로 나온다
+      expect(sqlite.queryCompatibleSoftware({ query: "JEUS", filters: { vendor: "\u0000티맥스" } })).toEqual({
+        ...NO_ROWS,
+        matchMode: "any-term",
+      });
+      expect(sqlite.queryCompatibleSoftware({ query: "티맥스", filters: { productName: "\u0000" } }).total).toBe(0);
+      // 부분 일치 대체 검색으로 넘어가는 질의도 같다
+      expect(sqlite.queryCompatibleSoftware({ query: "오라클", filters: { vendor: "\u0000" } }).total).toBe(0);
+    });
+
+    it("LIKE 패턴 길이 한도를 넘는 값은 오류 없이 일치하는 행이 없는 조건으로 처리한다", () => {
+      for (const value of TOO_LONG) {
+        const bytes = Buffer.byteLength(value, "utf8");
+        expect(sqlite.queryCompatibleSoftware({ filters: { vendor: value } }), `vendor ${bytes}바이트`).toEqual(NO_ROWS);
+        expect(
+          sqlite.queryCompatibleSoftware({ filters: { productName: value } }),
+          `productName ${bytes}바이트`,
+        ).toEqual(NO_ROWS);
+        expect(
+          sqlite.queryCompatibleSoftware({ query: "JEUS", filters: { vendor: value } }).total,
+          `query + vendor ${bytes}바이트`,
+        ).toBe(0);
+        expect(
+          sqlite.queryCompatibleSoftware({ query: "오라클", filters: { productName: value } }).total,
+          `query + productName ${bytes}바이트`,
+        ).toBe(0);
+      }
+    });
+
+    it("배열을 돌려주는 searchCompatibleSoftware 도 같다", () => {
+      expect(sqlite.searchCompatibleSoftware({ vendor: "\u0000티맥스" })).toEqual([]);
+      expect(sqlite.searchCompatibleSoftware({ productName: TOO_LONG[0] })).toEqual([]);
+    });
+  });
+
   describe("전체 건수와 페이지", () => {
     it("total 은 limit 과 무관하게 조건에 맞는 전체 건수다", () => {
       const result = sqlite.queryCompatibleSoftware({ filters: { category: "WAS" }, limit: 2 });
