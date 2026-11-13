@@ -1,16 +1,70 @@
 /**
  * 적용가이드 PDF 를 청크로 나눠 개발자 지식 입력으로 만드는 과정(src/scripts/buildIndex.ts) 단위 테스트
  *
+ * 임베딩 모델은 입력의 앞 512 토큰만 읽는다. 청크가 그보다 길면 뒷부분은 벡터에 반영되지 않아 의미 검색으로
+ * 찾을 수 없다. 그래서 청크의 임베딩 입력(제목·표지·상황·태그 포함)이 512 토큰 안에 들어가야 한다.
+ * 나누는 규칙은 순수 함수(chunkPdfText)로 검증하고, 토큰 수는 동봉 PDF 와 토크나이저가 있을 때 실제 입력으로 확인한다.
+ *
  * buildIndex.ts 는 직접 실행될 때만 인덱싱을 시작하므로, import 해서 함수만 불러 쓴다.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, vi } from "vitest";
+import fs from "fs-extra";
+import os from "node:os";
 import path from "node:path";
-import { TEMPLATES_DIR, chunkPdfText, pdfTextToKnowledge } from "../../src/scripts/buildIndex.js";
+import { AutoTokenizer } from "@xenova/transformers";
+import {
+  PDF_CHUNK_MAX_CHARS,
+  TEMPLATES_DIR,
+  chunkPdfText,
+  pdfTextToKnowledge,
+  readPdfKnowledge,
+} from "../../src/scripts/buildIndex.js";
+import { getEmbedder } from "../../src/rag/embedder.js";
+import { DeveloperKnowledgeManager } from "../../src/rag/knowledgeManager.js";
+import type { AddKnowledgeInput } from "../../src/types/knowledge.js";
+import { EMBEDDING_MODEL_ID } from "../../src/utils/dataPaths.js";
+import { hasEmbeddingModel } from "../integration/_helper.js";
 
-/** 한 줄이 lineLength 글자인 줄 lineCount 개로 된 문단. 줄마다 내용이 다르다. */
-function paragraphOfLines(label: string, lineCount: number, lineLength: number): string {
-  return Array.from({ length: lineCount }, (_, i) => `${label}${i + 1} `.padEnd(lineLength, "가")).join("\n");
+/** 한 줄이 lineLength 글자인 줄 count 개. 줄마다 내용이 다르다. */
+function linesOf(label: string, count: number, lineLength: number): string[] {
+  return Array.from({ length: count }, (_, i) => `${label}${i + 1} `.padEnd(lineLength, "가"));
 }
+
+/** 한 줄이 lineLength 글자인 줄 lineCount 개로 된 문단. */
+function paragraphOfLines(label: string, lineCount: number, lineLength: number): string {
+  return linesOf(label, lineCount, lineLength).join("\n");
+}
+
+/**
+ * 청크가 원문을 빠짐없이 순서대로 덮는지 확인한다.
+ * 청크를 원문에서 차례로 찾았을 때 청크 사이와 원문의 양 끝에는 공백만 남아야 한다.
+ */
+function expectChunksCoverSource(source: string, chunks: string[]): void {
+  let cursor = 0;
+  for (const chunk of chunks) {
+    const start = source.indexOf(chunk, cursor);
+    expect(start, `원문에서 찾지 못한 청크: ${JSON.stringify(chunk.slice(0, 40))}`).toBeGreaterThanOrEqual(0);
+    expect(source.slice(cursor, start).trim()).toBe("");
+    cursor = start + chunk.length;
+  }
+  expect(source.slice(cursor).trim()).toBe("");
+}
+
+/** 나누는 단위(문단, 줄, 문장, 낱말, 글자)가 서로 다른 본문 */
+const SAMPLE_TEXTS: Record<string, string> = {
+  "짧은 문단 여러 개": Array.from({ length: 12 }, (_, i) => paragraphOfLines(`문단${i + 1}줄`, 3, 18)).join("\n\n"),
+  "긴 문단 하나": paragraphOfLines("줄", 40, 24),
+  "짧은 문단과 긴 문단": [
+    paragraphOfLines("머리줄", 2, 16),
+    paragraphOfLines("본문줄", 30, 22),
+    "-- 1 of 2 --",
+    paragraphOfLines("꼬리줄", 12, 31),
+    "-- 2 of 2 --",
+  ].join("\n\n"),
+  "문장이 이어진 긴 줄": Array.from({ length: 30 }, (_, i) => `${i + 1}번 문장은 여기에서 끝난다.`).join(" "),
+  "낱말만 이어진 긴 줄": Array.from({ length: 80 }, (_, i) => `낱말${i + 1}`).join(" "),
+  "공백이 없는 글자열": Array.from({ length: 40 }, (_, i) => `[${i + 1}]가나다라마`).join(""),
+};
 
 describe("chunkPdfText — 본문 정리", () => {
   it("꺾쇠로 감싼 글자를 지우지 않는다", () => {
@@ -40,6 +94,145 @@ describe("chunkPdfText — 본문 정리", () => {
     expect(chunkPdfText(text)).toEqual([
       "정보시스템 구축 발주자를 위한\n표준프레임워크 적용가이드\n\n-- 1 of 113 --\n\n목 차",
     ]);
+  });
+});
+
+describe("chunkPdfText — 청크 크기", () => {
+  it("상한을 주지 않으면 PDF_CHUNK_MAX_CHARS 로 나눈다", () => {
+    const text = Array.from({ length: 8 }, (_, i) => paragraphOfLines(`문단${i + 1}줄`, 25, 39)).join("\n\n");
+    const chunks = chunkPdfText(text);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks).toEqual(chunkPdfText(text, PDF_CHUNK_MAX_CHARS));
+    expect(Math.max(...chunks.map((chunk) => chunk.length))).toBeLessThanOrEqual(PDF_CHUNK_MAX_CHARS);
+  });
+
+  it.each(Object.entries(SAMPLE_TEXTS))("어느 청크도 상한을 넘지 않는다 — %s", (_name, text) => {
+    for (const maxChars of [20, 50, 137, 600]) {
+      const lengths = chunkPdfText(text, maxChars).map((chunk) => chunk.length);
+      expect(Math.max(...lengths), `상한 ${maxChars}`).toBeLessThanOrEqual(maxChars);
+      expect(Math.min(...lengths), `상한 ${maxChars}`).toBeGreaterThan(0);
+    }
+  });
+
+  it("상한 이하의 본문은 청크 하나로 둔다", () => {
+    const text = `${paragraphOfLines("첫 문단 줄", 2, 20)}\n\n${paragraphOfLines("둘째 문단 줄", 2, 20)}`;
+
+    expect(chunkPdfText(text, text.length)).toEqual([text]);
+  });
+
+  it("빈 본문과 공백뿐인 본문은 청크를 만들지 않는다", () => {
+    expect(chunkPdfText("")).toEqual([]);
+    expect(chunkPdfText(" \n\n\t \r\n ")).toEqual([]);
+  });
+});
+
+describe("chunkPdfText — 내용 보존", () => {
+  it.each(Object.entries(SAMPLE_TEXTS))("청크를 이으면 원문과 같다 (청크 사이에서는 공백만 빠진다) — %s", (_name, text) => {
+    for (const maxChars of [20, 50, 137, 600]) {
+      expectChunksCoverSource(text, chunkPdfText(text, maxChars));
+    }
+  });
+});
+
+describe("chunkPdfText — 나누는 자리", () => {
+  it("문단이 상한 안에 들어가면 문단 경계에서만 나눈다", () => {
+    // 문단 하나가 41자: 두 문단(84자)까지 한 청크에 들어가고 세 문단(127자)은 들어가지 않는다
+    const paragraphs = Array.from({ length: 5 }, (_, i) => paragraphOfLines(`문단${i + 1}줄`, 2, 20));
+
+    expect(chunkPdfText(paragraphs.join("\n\n"), 100)).toEqual([
+      `${paragraphs[0]}\n\n${paragraphs[1]}`,
+      `${paragraphs[2]}\n\n${paragraphs[3]}`,
+      paragraphs[4],
+    ]);
+  });
+
+  it("줄을 더 담을 자리가 남아도 상한 안에 드는 문단은 쪼개지 않는다", () => {
+    const first = paragraphOfLines("첫 문단 줄", 2, 20); // 41자
+    const second = paragraphOfLines("둘째 문단 줄", 3, 20); // 62자
+
+    // 첫 청크에는 둘째 문단의 두 줄이 더 들어갈 자리(49자)가 남지만, 둘째 문단을 통째로 다음 청크에 담는다
+    expect(chunkPdfText(`${first}\n\n${second}`, 90)).toEqual([first, second]);
+  });
+
+  it("상한보다 긴 문단은 줄 경계에서 나눈다", () => {
+    const lines = linesOf("줄", 10, 20); // 네 줄이 83자, 다섯 줄이 104자
+
+    expect(chunkPdfText(lines.join("\n"), 90)).toEqual([
+      lines.slice(0, 4).join("\n"),
+      lines.slice(4, 8).join("\n"),
+      lines.slice(8).join("\n"),
+    ]);
+  });
+
+  it("긴 문단은 앞 청크의 남은 자리부터 채운다 (긴 문단 앞에서 청크를 끊지 않는다)", () => {
+    const heading = "- 12 -"; // 6자
+    const lines = linesOf("줄", 9, 20);
+
+    // 긴 문단마다 새 청크에서 시작하면 쪽마다 몇 줄짜리 자투리 청크가 남는다
+    expect(chunkPdfText(`${heading}\n\n${lines.join("\n")}`, 90)).toEqual([
+      `${heading}\n\n${lines.slice(0, 3).join("\n")}`, // 6 + 2 + 62 = 70자, 한 줄을 더하면 91자
+      lines.slice(3, 7).join("\n"),
+      lines.slice(7).join("\n"),
+    ]);
+  });
+
+  it("상한보다 긴 줄은 문장 경계에서 나눈다", () => {
+    const sentences = Array.from({ length: 8 }, (_, i) => `${i + 1}번 문장은 여기에서 끝난다.`); // 문장 하나가 16자
+
+    // 세 문장이 50자
+    expect(chunkPdfText(sentences.join(" "), 50)).toEqual([
+      sentences.slice(0, 3).join(" "),
+      sentences.slice(3, 6).join(" "),
+      sentences.slice(6).join(" "),
+    ]);
+  });
+
+  it("물음표와 느낌표, 닫는 따옴표와 괄호 뒤도 문장 경계로 본다", () => {
+    const sentences = [
+      "첫 문장이다.",
+      '"둘째 문장이다."',
+      "셋째 문장입니까?",
+      "넷째 문장이다!",
+      "(다섯째 문장이다.)",
+      "여섯째 문장이다.",
+    ];
+
+    // 어느 두 문장도 12자 안에 함께 들어가지 않는다
+    expect(chunkPdfText(sentences.join(" "), 12)).toEqual(sentences);
+  });
+
+  it("문장 부호가 없는 긴 줄은 낱말 사이에서 나눈다", () => {
+    const words = Array.from({ length: 30 }, (_, i) => `낱말${i + 1}`);
+    const chunks = chunkPdfText(words.join(" "), 20);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.join(" ")).toBe(words.join(" "));
+    for (const chunk of chunks) {
+      expect(chunk).toMatch(/^낱말\d+( 낱말\d+)*$/);
+    }
+  });
+
+  it("공백이 없는 긴 글자열만 글자 수로 나누고, 비슷한 길이로 나눈다", () => {
+    const text = Array.from({ length: 13 }, (_, i) => `${String(i).padStart(2, "0")}가나다라마바사아`).join(""); // 130자
+
+    const chunks = chunkPdfText(text, 50);
+
+    // 50, 50, 30자가 아니라 세 조각을 고르게 나눈다 (끝에 몇 글자짜리 조각이 남지 않게)
+    expect(chunks.map((chunk) => chunk.length)).toEqual([44, 43, 43]);
+    expect(chunks.join("")).toBe(text);
+  });
+
+  it("글자 수로 나눌 때 서로게이트 쌍의 가운데에서 자르지 않는다", () => {
+    const text = "😀".repeat(33); // UTF-16 코드 단위로 66
+
+    const chunks = chunkPdfText(text, 13);
+
+    expect(chunks.join("")).toBe(text);
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(13);
+      expect(Array.from(chunk).every((character) => character === "😀")).toBe(true);
+    }
   });
 });
 
@@ -96,4 +289,82 @@ describe("pdfTextToKnowledge — 청크를 개발자 지식 입력으로 만든�
     expect(pdfTextToKnowledge(pdfPath, "")).toEqual([]);
     expect(pdfTextToKnowledge(pdfPath, " \n\n \t ")).toEqual([]);
   });
+});
+
+/** 인덱스 구축이 읽는 PDF: templates/developer_knowledge 바로 아래의 .pdf 파일 */
+const PDF_DIR = path.join(TEMPLATES_DIR, "developer_knowledge");
+const BUNDLED_PDFS = fs.existsSync(PDF_DIR)
+  ? fs
+      .readdirSync(PDF_DIR)
+      .filter((name) => name.toLowerCase().endsWith(".pdf"))
+      .map((name) => path.join(PDF_DIR, name))
+  : [];
+
+describe.skipIf(BUNDLED_PDFS.length === 0)("동봉 적용가이드 PDF 의 청크", () => {
+  /** PDF 파일별 지식 입력 */
+  let inputsByFile: AddKnowledgeInput[][];
+
+  beforeAll(async () => {
+    inputsByFile = [];
+    for (const pdfPath of BUNDLED_PDFS) {
+      inputsByFile.push(await readPdfKnowledge(pdfPath));
+    }
+  }, 120_000);
+
+  it("PDF 마다 청크가 나오고, 어느 청크도 PDF_CHUNK_MAX_CHARS 를 넘지 않는다", () => {
+    for (const inputs of inputsByFile) {
+      expect(inputs.length).toBeGreaterThan(0);
+      expect(Math.max(...inputs.map((input) => input.content.length))).toBeLessThanOrEqual(PDF_CHUNK_MAX_CHARS);
+    }
+  });
+
+  it("제목의 (순번/전체) 와 metadata 의 chunkIndex, chunkCount 가 청크 수와 맞는다", () => {
+    inputsByFile.forEach((inputs, fileIndex) => {
+      const baseTitle = path.basename(BUNDLED_PDFS[fileIndex], ".pdf").normalize("NFC");
+      inputs.forEach((input, index) => {
+        expect(input.title).toBe(`${baseTitle} (${index + 1}/${inputs.length})`);
+        expect(input.metadata?.chunkIndex).toBe(index + 1);
+        expect(input.metadata?.chunkCount).toBe(inputs.length);
+      });
+    });
+  });
+
+  // 토크나이저(models/ — git 미추적)가 있어야 토큰 수를 셀 수 있다
+  it.skipIf(!hasEmbeddingModel())(
+    "모든 청크의 임베딩 입력이 모델이 읽는 512 토큰 안에 들어간다",
+    async () => {
+      const inputs = inputsByFile.flat();
+
+      // 모델을 돌리지 않고, 색인 경로(addKnowledgeBatch)가 모델에 넘기는 입력만 기록한다.
+      // 제목·표지·상황·태그와 접두 "passage: " 까지 실제 색인과 같은 문자열이 기록된다.
+      const recorded: string[] = [];
+      const embedder = getEmbedder() as unknown as { model: unknown };
+      embedder.model = async (text: string) => {
+        recorded.push(text);
+        return { data: new Float32Array(384) };
+      };
+      const logs = vi.spyOn(console, "error").mockImplementation(() => {});
+      const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "egov-pdf-chunks-"));
+      try {
+        const manager = new DeveloperKnowledgeManager(tmpDir);
+        await manager.initialize();
+        await manager.addKnowledgeBatch(inputs);
+      } finally {
+        embedder.model = null;
+        logs.mockRestore();
+        await fs.remove(tmpDir);
+      }
+      expect(recorded).toHaveLength(inputs.length);
+      expect(recorded.every((text) => text.startsWith("passage: 제목: "))).toBe(true);
+
+      const tokenizer = await AutoTokenizer.from_pretrained(EMBEDDING_MODEL_ID);
+      expect(tokenizer.model_max_length).toBe(512);
+      // 특수 토큰(<s>, </s>)을 포함한 수다. 파이프라인은 이 수가 512 를 넘으면 뒤를 잘라 낸다
+      const tooLong = recorded
+        .map((text, index) => ({ title: inputs[index].title, tokens: tokenizer.encode(text).length }))
+        .filter((entry) => entry.tokens > tokenizer.model_max_length);
+      expect(tooLong).toEqual([]);
+    },
+    120_000,
+  );
 });

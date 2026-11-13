@@ -783,34 +783,142 @@ function normalizePdfText(text: string): string {
 }
 
 /**
- * 적용가이드 PDF 본문을 청크로 나눈다. 문단(빈 줄) 단위로 maxChars 까지 채운다.
+ * 적용가이드 PDF 청크 하나의 최대 글자 수.
+ *
+ * 임베딩 모델은 입력의 앞 512 토큰만 읽는다. 청크의 임베딩 입력(제목·표지·상황·태그를 붙이고 접두
+ * "passage: " 를 단 문자열)이 512 토큰을 넘으면 넘은 부분은 벡터에 반영되지 않아 의미 검색으로 찾을 수 없다.
+ * 1,800자로 나누던 때에는 청크 87개 가운데 67개가 512 토큰을 넘었고, 토큰의 23.6% 가 반영되지 않았다.
+ *
+ * 동봉 적용가이드(v5.0)로 잰 값:
+ * - 본문 밖의 몫(제목, 표지, 상황, 태그, 특수 토큰)은 52~54 토큰이다.
+ * - 본문은 평균 글자당 0.44 토큰이고, 가장 빽빽한 곳(붙임 4 의 테이블 이름 목록)은 글자당 0.67 토큰이다.
+ * - 줄 경계에서 시작해 줄 경계에서 끝나는 600자 이하의 구간은 어디를 잡아도 임베딩 입력이 452 토큰 이하다.
+ *   680자 이하의 구간은 500 토큰 이하이고, 700자에서 513 토큰으로 넘는다.
+ * 파일 이름이 길어지거나 다음 판의 본문이 더 빽빽해도 넘지 않도록 여유(60 토큰)를 두어 600자로 정한다.
+ *
+ * PDF 나 제목·상황·태그의 구성이 바뀌어 512 토큰을 넘게 되면 tests/unit/pdfKnowledgeChunks.test.ts 가 알린다.
  */
-export function chunkPdfText(text: string, maxChars = 1800): string[] {
-  const paragraphs = normalizePdfText(text).split(/\n{2,}/).filter(Boolean);
-  const chunks: string[] = [];
-  let current = '';
+export const PDF_CHUNK_MAX_CHARS = 600;
 
-  for (const paragraph of paragraphs) {
-    if (current && current.length + paragraph.length + 2 > maxChars) {
-      chunks.push(current);
-      current = '';
+/** 정리한 본문의 한 구간 [start, end). 청크를 본문의 구간으로 다루어, 나눈 뒤에도 본문의 글자가 그대로 남게 한다. */
+interface TextSpan {
+  start: number;
+  end: number;
+}
+
+/** 문단 경계: 빈 줄 */
+const PDF_PARAGRAPH_BREAK = /\n{2,}/g;
+
+/**
+ * 상한보다 긴 문단을 나눌 자리: 줄 → 문장(끝 부호와 닫는 따옴표·괄호 뒤의 공백) → 낱말.
+ * 앞의 자리부터 써 보고, 그래도 상한을 넘는 조각만 다음 자리에서 더 나눈다.
+ */
+const PDF_SPLIT_BREAKS: readonly RegExp[] = [/\n/g, /(?<=[.!?。！？]["'”’」』)\]]*)\s+/g, /\s+/g];
+
+/** 구간 양 끝의 공백을 뺀다. 남는 글자가 없으면 null. */
+function trimSpan(source: string, start: number, end: number): TextSpan | null {
+  while (start < end && /\s/.test(source[start])) start += 1;
+  while (end > start && /\s/.test(source[end - 1])) end -= 1;
+  return start < end ? { start, end } : null;
+}
+
+/** 구간을 separator 가 나오는 자리에서 나눈다. separator 와 조각 양 끝의 공백은 어느 조각에도 넣지 않는다. */
+function splitSpan(source: string, span: TextSpan, separator: RegExp): TextSpan[] {
+  const parts: TextSpan[] = [];
+  const pushPart = (start: number, end: number): void => {
+    const part = trimSpan(source, start, end);
+    if (part) parts.push(part);
+  };
+
+  const pattern = new RegExp(separator);
+  pattern.lastIndex = span.start;
+  let cursor = span.start;
+  for (let match = pattern.exec(source); match && match.index < span.end; match = pattern.exec(source)) {
+    pushPart(cursor, match.index);
+    cursor = match.index + match[0].length;
+  }
+  pushPart(cursor, span.end);
+  return parts;
+}
+
+/**
+ * 나눌 자리가 없는 구간을 글자 수로 자른다. 조각의 길이를 비슷하게 맞춰 끝에 몇 글자짜리 조각이 남지 않게 하고,
+ * 서로게이트 쌍의 가운데에서는 자르지 않는다.
+ */
+function sliceSpanEvenly(source: string, span: TextSpan, maxChars: number): TextSpan[] {
+  const parts: TextSpan[] = [];
+  let start = span.start;
+  let pieces = Math.ceil((span.end - start) / maxChars);
+  while (start < span.end) {
+    let end = Math.min(span.end, start + Math.ceil((span.end - start) / pieces));
+    const lastKept = source.charCodeAt(end - 1);
+    if (end < span.end && lastKept >= 0xd800 && lastKept <= 0xdbff) {
+      // 쌍의 앞쪽에서 끊겼다. 한 단위 앞에서 자르고, 쌍 하나가 조각의 전부이면 쌍을 통째로 담는다
+      end = end - 1 > start ? end - 1 : end + 1;
     }
+    parts.push({ start, end });
+    start = end;
+    pieces = Math.max(pieces - 1, Math.ceil((span.end - start) / maxChars));
+  }
+  return parts;
+}
 
-    if (paragraph.length > maxChars) {
-      for (let i = 0; i < paragraph.length; i += maxChars) {
-        chunks.push(paragraph.slice(i, i + maxChars));
-      }
-      continue;
+/**
+ * 구간을 상한 이하의 조각으로 나눈다. 상한 안에 드는 구간은 그대로 두고, 넘는 구간만 PDF_SPLIT_BREAKS 의
+ * level 번째 자리에서 나눈 뒤 여전히 넘는 조각을 다음 자리에서 더 나눈다. 나눌 자리가 남지 않은 조각만 글자 수로 자른다.
+ */
+function splitSpanToFit(source: string, span: TextSpan, level: number, maxChars: number): TextSpan[] {
+  if (span.end - span.start <= maxChars) {
+    return [span];
+  }
+  if (level >= PDF_SPLIT_BREAKS.length) {
+    return sliceSpanEvenly(source, span, maxChars);
+  }
+  return splitSpan(source, span, PDF_SPLIT_BREAKS[level]).flatMap((part) =>
+    splitSpanToFit(source, part, level + 1, maxChars),
+  );
+}
+
+/** 이어진 조각을 순서대로 상한까지 채워 묶는다. 묶음은 첫 조각의 시작부터 마지막 조각의 끝까지의 구간이다. */
+function packSpans(parts: TextSpan[], maxChars: number): TextSpan[] {
+  const packed: TextSpan[] = [];
+  for (const part of parts) {
+    const last = packed[packed.length - 1];
+    if (last && part.end - last.start <= maxChars) {
+      last.end = part.end;
+    } else {
+      packed.push({ ...part });
     }
+  }
+  return packed;
+}
 
-    current = current ? `${current}\n\n${paragraph}` : paragraph;
+/**
+ * 적용가이드 PDF 본문을 maxChars 글자 이하의 청크로 나눈다.
+ *
+ * - 문단(빈 줄로 나뉜 덩어리)을 순서대로 담다가 다음 문단이 들어가지 않으면 문단 경계에서 청크를 나눈다.
+ *   상한 안에 드는 문단은 쪼개지 않는다.
+ * - 상한보다 긴 문단만 줄 경계에서 나눈다. 줄 하나가 상한보다 길면 문장 경계에서, 문장도 길면 낱말 사이에서
+ *   나누고, 공백이 없는 글자열만 글자 수로 자른다.
+ * - 긴 문단의 조각도 문단과 같은 방법으로 담는다 (앞 청크에 자리가 남으면 거기부터 채운다). pdf-parse 가 뽑은
+ *   본문은 쪽 하나가 문단 하나라서, 긴 문단을 새 청크에서 시작하면 쪽마다 몇 줄짜리 자투리 청크가 남는다.
+ *
+ * 청크는 공백을 정리한 본문(normalizePdfText)의 이어진 구간이다. 청크 사이에서 빠지는 것은 공백뿐이다.
+ */
+export function chunkPdfText(text: string, maxChars: number = PDF_CHUNK_MAX_CHARS): string[] {
+  if (!Number.isFinite(maxChars) || maxChars < 1) {
+    throw new RangeError('maxChars 는 1 이상의 수여야 합니다.');
+  }
+  const limit = Math.floor(maxChars);
+  const source = normalizePdfText(text);
+  if (source === '') {
+    return [];
   }
 
-  if (current) {
-    chunks.push(current);
-  }
-
-  return chunks;
+  const parts = splitSpan(source, { start: 0, end: source.length }, PDF_PARAGRAPH_BREAK).flatMap((paragraph) =>
+    splitSpanToFit(source, paragraph, 0, limit),
+  );
+  return packSpans(parts, limit).map((chunk) => source.slice(chunk.start, chunk.end));
 }
 
 /**
