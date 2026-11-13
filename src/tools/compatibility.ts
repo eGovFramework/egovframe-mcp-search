@@ -127,42 +127,93 @@ export interface RelatedKnowledge {
 /** 한 번의 조회에서 관련 지식을 찾아보는 제품 수 (결과의 앞에서부터) */
 const MAX_KNOWLEDGE_PRODUCTS = 5;
 
+/** 제품 하나마다 의미 검색으로 가져와 제품명을 언급하는지 확인하는 후보 수 */
+const KNOWLEDGE_CANDIDATES_PER_PRODUCT = 50;
+
+/** 제품 하나에 싣는 관련 지식의 최대 건수 */
+const MAX_KNOWLEDGE_PER_PRODUCT = 5;
+
 /** 관련 지식 조회가 실패했을 때 응답에 싣는 안내. 상세 원인은 서버 로그(stderr)에만 남긴다. */
 const KNOWLEDGE_WARNING =
   '관련 지식을 조회하는 중 오류가 발생해 일부 또는 전부를 싣지 못했습니다. ' +
   '호환 소프트웨어 목록은 정상입니다. 자세한 내용은 MCP 서버 로그(stderr)를 확인하세요.';
 
+/** 괄호(전각 포함)와 그 안의 내용. 안에 다른 괄호가 없는 가장 안쪽 것과 일치한다. */
+const PARENTHESIZED = /[(\uFF08][^()\uFF08\uFF09]*[)\uFF09]/g;
+
 /**
- * 조회된 소프트웨어의 제품명으로 관련 지식을 찾는다.
+ * 제품명에서 괄호와 그 안의 내용을 뺀 이름. 지식 글이 제품을 부르는 이름과 견주는 데 쓴다.
  *
- * 벡터 검색은 관련이 없어도 가까운 순으로 항상 몇 건을 돌려주므로, 제목이나 본문에
- * 제품명이 들어 있는(대소문자 무시) 지식만 남기고, 하나도 없는 제품은 결과에 넣지 않는다.
- * 지식 쪽 오류는 던지지 않고 failed 로 알린다. 소프트웨어 조회 결과는 이미 구해져 있다.
+ * 제품명에는 설명이 괄호로 붙어 있는 것이 많다 ('Morpheus CMS(모피어스 CMS)', 'AI+(플러스) CMS',
+ * 'ALPAS v1.0 (도서관리 시스템)'). 글은 제품을 'Morpheus CMS' 처럼 부르므로 전체 이름으로는 찾지 못한다.
+ * 괄호를 빼고 남는 것이 없으면 제품명을 그대로 쓴다.
+ */
+function nameWithoutParentheses(productName: string): string {
+  let name = productName;
+  let previous: string;
+  // 겹친 괄호는 안쪽부터 차례로 뺀다
+  do {
+    previous = name;
+    name = name.replace(PARENTHESIZED, ' ');
+  } while (name !== previous);
+
+  name = name.replace(/\s+/g, ' ').trim();
+  return name === '' ? productName.trim() : name;
+}
+
+/**
+ * 개발자 지식 매니저를 준비한다 (LanceDB 테이블 열기).
+ * 실패하면 원인을 서버 로그에 남기고 null 을 돌려준다.
+ */
+async function openKnowledge(manager: HybridDatabaseManager) {
+  try {
+    await manager.initialize();
+    return manager.getKnowledge();
+  } catch (error) {
+    console.error('[egovframe-mcp-search] 관련 지식 조회를 준비하지 못했습니다:', error);
+    return null;
+  }
+}
+
+/**
+ * 제품명마다 그 제품을 언급하는 지식을 찾는다.
+ *
+ * 벡터 검색은 관련이 없어도 가까운 순으로 항상 요청한 건수를 돌려준다. 그래서 제품명으로 의미 검색한 후보
+ * 가운데 제목이나 본문에 제품의 이름(nameWithoutParentheses, 대소문자 무시)이 들어 있는 지식만 남긴다.
+ * 제품을 실제로 언급하는 글이 가까운 몇 건 안에 든다는 보장이 없으므로 (제품명이 짧으면 다른 글이 앞 순위를
+ * 차지한다), 후보를 KNOWLEDGE_CANDIDATES_PER_PRODUCT 건까지 보고 그 가운데 앞의 MAX_KNOWLEDGE_PER_PRODUCT 건을
+ * 싣는다. 그런 지식이 하나도 없는 제품은 결과에 넣지 않는다.
+ *
+ * 지식 쪽 오류는 던지지 않고 failed 로 알린다 (소프트웨어 조회 결과는 이미 구해져 있다).
+ * searchedProducts 는 조회를 마친 제품 수다. productNames 가 비어 있으면 지식 쪽을 초기화하지 않는다.
  */
 async function findRelatedKnowledge(
   manager: HybridDatabaseManager,
-  software: CompatibilitySoftwareInfo[],
-): Promise<{ relatedKnowledge: RelatedKnowledge[]; failed: boolean }> {
+  productNames: string[],
+): Promise<{ relatedKnowledge: RelatedKnowledge[]; searchedProducts: number; failed: boolean }> {
   const relatedKnowledge: RelatedKnowledge[] = [];
-
-  try {
-    await manager.initialize();
-  } catch (error) {
-    console.error('[egovframe-mcp-search] 관련 지식 조회를 준비하지 못했습니다:', error);
-    return { relatedKnowledge, failed: true };
+  if (productNames.length === 0) {
+    return { relatedKnowledge, searchedProducts: 0, failed: false };
   }
 
-  const productNames = [...new Set(software.map((item) => item.product_name))]
-    .filter((productName) => productName.trim() !== '')
-    .slice(0, MAX_KNOWLEDGE_PRODUCTS);
+  const knowledge = await openKnowledge(manager);
+  if (!knowledge) {
+    return { relatedKnowledge, searchedProducts: 0, failed: true };
+  }
+
+  let searchedProducts = 0;
   let failed = false;
 
   for (const productName of productNames) {
     try {
-      const needle = productName.toLowerCase();
-      const mentioning = (await manager.findKnowledgeForSoftware(productName)).filter((item) =>
-        [item.title, item.content].some((text) => typeof text === 'string' && text.toLowerCase().includes(needle)),
-      );
+      const needle = nameWithoutParentheses(productName).toLowerCase();
+      const candidates = await knowledge.searchKnowledge(productName, { limit: KNOWLEDGE_CANDIDATES_PER_PRODUCT });
+      const mentioning = candidates
+        .filter((item) =>
+          [item.title, item.content].some((text) => typeof text === 'string' && text.toLowerCase().includes(needle)),
+        )
+        .slice(0, MAX_KNOWLEDGE_PER_PRODUCT);
+      searchedProducts += 1;
       if (mentioning.length > 0) {
         relatedKnowledge.push({
           product: productName,
@@ -181,7 +232,7 @@ async function findRelatedKnowledge(
     }
   }
 
-  return { relatedKnowledge, failed };
+  return { relatedKnowledge, searchedProducts, failed };
 }
 
 /** 호환성 소프트웨어 검색 응답 */
@@ -210,8 +261,16 @@ export interface CompatibilitySearchResponse {
   available?: { frameworkVersions: string[]; categories: string[] };
   /** 조회된 소프트웨어. 내부용 필드(id, created_at)는 싣지 않는다 */
   software: CompatibilitySoftwareInfo[];
-  /** includeKnowledge 일 때: 제품명을 언급하는 지식. 그런 지식이 없는 제품은 빠진다 */
+  /**
+   * includeKnowledge 일 때: 제품명을 언급하는 지식 (제품마다 최대 5건). 그런 지식이 없는 제품은 빠진다.
+   * 조회된 소프트웨어가 없어도 빈 배열로 싣는다
+   */
   relatedKnowledge?: RelatedKnowledge[];
+  /**
+   * includeKnowledge 일 때: 관련 지식을 조회한 범위. 이번 페이지에 나온 제품(pageProducts, 제품명 기준) 가운데
+   * 앞에서부터 searchedProducts 개만 조회했다. 나머지 제품의 지식은 그 제품을 productName 으로 좁혀 조회한다
+   */
+  knowledgeLookup?: { searchedProducts: number; pageProducts: number };
   /** 관련 지식 조회가 일부라도 실패했을 때의 안내 (소프트웨어 목록에는 영향이 없다) */
   knowledgeWarning?: string;
 }
@@ -275,11 +334,19 @@ export async function searchCompatibleSoftware(args: {
     software: results,
   };
 
-  // includeKnowledge=true: 검색된 소프트웨어에 대한 개발자 경험 포함.
+  // includeKnowledge=true: 이번 페이지에 나온 제품 가운데 앞의 몇 개에 대해, 그 제품을 언급하는 지식을 함께 싣는다.
+  // 조회된 소프트웨어가 없어도 키는 싣는다 (응답의 모양이 결과 건수에 따라 달라지지 않게 한다).
   // 지식 조회가 실패해도 소프트웨어 결과는 그대로 돌려주고 knowledgeWarning 으로 알린다.
-  if (args.includeKnowledge && results.length > 0) {
-    const { relatedKnowledge, failed } = await findRelatedKnowledge(manager, results);
+  if (args.includeKnowledge) {
+    const pageProducts = [...new Set(results.map((item) => item.product_name))].filter(
+      (productName) => productName.trim() !== '',
+    );
+    const { relatedKnowledge, searchedProducts, failed } = await findRelatedKnowledge(
+      manager,
+      pageProducts.slice(0, MAX_KNOWLEDGE_PRODUCTS),
+    );
     response.relatedKnowledge = relatedKnowledge;
+    response.knowledgeLookup = { searchedProducts, pageProducts: pageProducts.length };
     if (failed) {
       response.knowledgeWarning = KNOWLEDGE_WARNING;
     }

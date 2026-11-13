@@ -4,7 +4,7 @@
  * 도구 함수는 싱글톤 HybridDatabaseManager 를 통해 저장소의 knowledge-base 를 연다.
  * 테스트가 그 파일을 건드리지 않도록 hybridManager 모듈만 대역으로 바꾼다.
  * - SQLite 쪽은 임시 디렉토리의 새 DB 를 여는 실제 SQLiteManager 를 그대로 쓴다.
- * - 지식 쪽(LanceDB + 임베딩 모델)은 호출 여부와 반환값만 흉내 낸다.
+ * - 지식 쪽(LanceDB + 임베딩 모델)은 의미 검색(searchKnowledge)의 호출과 반환값만 흉내 낸다.
  */
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import fs from "fs-extra";
@@ -15,15 +15,36 @@ import { CATALOGUE, DATED, versionsOf, type SoftwareSeed } from "./_compatibilit
 
 const hybrid = vi.hoisted(() => ({
   sqlite: undefined as unknown,
+  /** initialize 가 성공한 뒤에만 true. 실제 매니저처럼 그 전에는 지식 매니저를 내주지 않는다 */
+  initialized: false,
   initialize: vi.fn(async () => {}),
-  findKnowledgeForSoftware: vi.fn(async (_productName: string): Promise<unknown[]> => []),
+  /** 지식 매니저의 의미 검색 대역: (query, { limit }) 로 불리고, 가까운 순의 후보를 돌려준다 */
+  searchKnowledge: vi.fn(async (_query: string, _options?: { limit?: number }): Promise<unknown[]> => []),
 }));
 
 vi.mock("../../src/database/hybridManager.js", () => {
   const manager = {
     getSQLite: () => hybrid.sqlite,
-    initialize: () => hybrid.initialize(),
-    findKnowledgeForSoftware: (productName: string) => hybrid.findKnowledgeForSoftware(productName),
+    // 실제 매니저처럼 이미 초기화했으면 다시 하지 않는다
+    initialize: async () => {
+      if (!hybrid.initialized) {
+        await hybrid.initialize();
+        hybrid.initialized = true;
+      }
+    },
+    getKnowledge: () => {
+      if (!hybrid.initialized) {
+        throw new Error("데이터베이스가 초기화되지 않았습니다. initialize()를 먼저 호출하세요.");
+      }
+      return {
+        searchKnowledge: (query: string, options?: { limit?: number }) => hybrid.searchKnowledge(query, options),
+      };
+    },
+    // 실제 매니저의 구현 그대로: 가까운 5건만 가져온다
+    findKnowledgeForSoftware: async (productName: string) => {
+      await manager.initialize();
+      return hybrid.searchKnowledge(productName, { limit: 5 });
+    },
   };
   return {
     getHybridManager: () => manager,
@@ -54,6 +75,33 @@ function useCatalogue(rows: SoftwareSeed[]): { sqlite: () => SQLiteManager } {
   });
 
   return { sqlite: () => sqlite };
+}
+
+/** 의미 검색이 돌려주는 지식 한 건 */
+const knowledge = (id: string, title: string, content: string) => ({
+  id,
+  type: "solution",
+  title,
+  content,
+  tags: ["was"],
+  importance: 3,
+  score: 0.3,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  metadata: {},
+});
+
+/** 응답의 relatedKnowledge 에 실리는 지식 한 건 */
+const listed = (id: string, title: string) => ({ id, title, type: "solution", importance: 3, tags: ["was"] });
+
+/**
+ * 의미 검색이 돌려줄 후보를 정한다 (가까운 순). 실제 검색처럼 요청한 limit 건까지만 돌려준다.
+ * 함수를 주면 query(제품명)마다 후보를 달리 정할 수 있다.
+ */
+function setCandidates(candidates: unknown[] | ((query: string) => unknown[])): void {
+  hybrid.searchKnowledge.mockImplementation(async (query, options) => {
+    const all = typeof candidates === "function" ? candidates(query) : candidates;
+    return all.slice(0, options?.limit ?? 5);
+  });
 }
 
 /**
@@ -97,9 +145,10 @@ const BULK: SoftwareSeed[] = Array.from({ length: 120 }, (_, index): SoftwareSee
 
 describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () => {
   beforeEach(() => {
+    hybrid.initialized = false;
     hybrid.initialize.mockClear();
-    hybrid.findKnowledgeForSoftware.mockReset();
-    hybrid.findKnowledgeForSoftware.mockResolvedValue([]);
+    hybrid.searchKnowledge.mockReset();
+    setCandidates([]);
   });
 
   afterEach(() => {
@@ -395,18 +444,23 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       expect(searched.count).toBe(2);
 
       expect(hybrid.initialize).not.toHaveBeenCalled();
-      expect(hybrid.findKnowledgeForSoftware).not.toHaveBeenCalled();
+      expect(hybrid.searchKnowledge).not.toHaveBeenCalled();
+      for (const response of [filtered, searched]) {
+        expect(response).not.toHaveProperty("relatedKnowledge");
+        expect(response).not.toHaveProperty("knowledgeLookup");
+      }
     });
 
-    it("includeKnowledge 가 true 이면 초기화한 뒤 관련 지식을 조회한다", async () => {
+    it("includeKnowledge 가 true 이면 초기화한 뒤 제품명으로 관련 지식을 조회한다", async () => {
       const response = await searchCompatibleSoftware({ query: "JEUS", includeKnowledge: true });
       expect(response.count).toBe(2);
 
       expect(hybrid.initialize).toHaveBeenCalledTimes(1);
-      expect(hybrid.findKnowledgeForSoftware).toHaveBeenCalledWith("JEUS");
+      expect(hybrid.searchKnowledge).toHaveBeenCalledTimes(1);
+      expect(hybrid.searchKnowledge.mock.calls[0][0]).toBe("JEUS");
       // 초기화가 조회보다 먼저다
       expect(hybrid.initialize.mock.invocationCallOrder[0]).toBeLessThan(
-        hybrid.findKnowledgeForSoftware.mock.invocationCallOrder[0],
+        hybrid.searchKnowledge.mock.invocationCallOrder[0],
       );
     });
 
@@ -414,26 +468,15 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       const response = await searchCompatibleSoftware({ frameworkVersion: "5.0", includeKnowledge: true });
       expect(response.count).toBe(0);
       expect(hybrid.initialize).not.toHaveBeenCalled();
+      expect(hybrid.searchKnowledge).not.toHaveBeenCalled();
     });
   });
 
   describe("includeKnowledge 로 함께 돌려주는 관련 지식", () => {
     useCatalogue(CATALOGUE);
 
-    const knowledge = (id: string, title: string, content: string) => ({
-      id,
-      type: "solution",
-      title,
-      content,
-      tags: ["was"],
-      importance: 3,
-      score: 0.3,
-      createdAt: "2026-01-01T00:00:00.000Z",
-      metadata: {},
-    });
-
     it("제목이나 본문에 제품명이 들어 있는 지식만 남기고, 항목에 id 를 싣는다", async () => {
-      hybrid.findKnowledgeForSoftware.mockResolvedValue([
+      setCandidates([
         knowledge("k-title", "JEUS 데이터소스 설정 문의", "설정 방법이 궁금합니다."),
         knowledge("k-content", "WAS 기동 오류", "jeus 8 에서 기동할 때 오류가 납니다."),
         knowledge("k-unrelated", "게시판 샘플", "공통컴포넌트 게시판 샘플 문의"),
@@ -444,18 +487,15 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       expect(response.relatedKnowledge).toEqual([
         {
           product: "JEUS",
-          knowledge: [
-            { id: "k-title", title: "JEUS 데이터소스 설정 문의", type: "solution", importance: 3, tags: ["was"] },
-            { id: "k-content", title: "WAS 기동 오류", type: "solution", importance: 3, tags: ["was"] },
-          ],
+          knowledge: [listed("k-title", "JEUS 데이터소스 설정 문의"), listed("k-content", "WAS 기동 오류")],
         },
       ]);
       expect(response).not.toHaveProperty("knowledgeWarning");
     });
 
     it("제품명이 들어 있는 지식이 하나도 없는 제품은 항목을 넣지 않는다", async () => {
-      // 벡터 검색은 관련이 없어도 항상 가까운 순으로 5건을 돌려준다
-      hybrid.findKnowledgeForSoftware.mockResolvedValue([
+      // 벡터 검색은 관련이 없어도 항상 가까운 순으로 후보를 돌려준다
+      setCandidates([
         knowledge("k1", "게시판 샘플", "공통컴포넌트 게시판 샘플 문의"),
         knowledge("k2", "로그인 암호화", "사용자 테이블 암호화 관련"),
       ]);
@@ -466,9 +506,41 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       expect(response.relatedKnowledge).toEqual([]);
     });
 
+    it("가까운 5건 밖에 있는 글도 제품명을 언급하면 찾는다 (후보를 50건까지 본다)", async () => {
+      // 제품명이 짧으면 의미 검색의 앞 순위는 다른 글이 차지한다. 제품을 언급하는 글은 9번째와 11번째에 있다
+      const candidates = Array.from({ length: 60 }, (_, index) =>
+        knowledge(`k${index + 1}`, `WAS 일반 문의 ${index + 1}`, "서버 설정 문의"),
+      );
+      candidates[8] = knowledge("k9", "JEUS 세션 클러스터링", "세션이 공유되지 않습니다.");
+      candidates[10] = knowledge("k11", "배포 오류", "JEUS 21 에 배포할 때 오류가 납니다.");
+      // 51번째 이후는 보지 않는다
+      candidates[50] = knowledge("k51", "JEUS 로그 설정", "로그 경로를 바꾸고 싶습니다.");
+      setCandidates(candidates);
+
+      const response = await searchCompatibleSoftware({ query: "JEUS", includeKnowledge: true });
+
+      expect(hybrid.searchKnowledge).toHaveBeenCalledWith("JEUS", { limit: 50 });
+      expect(response.relatedKnowledge).toEqual([
+        { product: "JEUS", knowledge: [listed("k9", "JEUS 세션 클러스터링"), listed("k11", "배포 오류")] },
+      ]);
+    });
+
+    it("제품명을 언급하는 글이 많으면 가까운 순으로 5건만 싣는다", async () => {
+      setCandidates(
+        Array.from({ length: 30 }, (_, index) =>
+          // 짝수 번째만 제품을 언급한다
+          knowledge(`k${index + 1}`, index % 2 === 1 ? `JEUS 문의 ${index + 1}` : `다른 문의 ${index + 1}`, "본문"),
+        ),
+      );
+
+      const response = await searchCompatibleSoftware({ query: "JEUS", includeKnowledge: true });
+
+      expect(response.relatedKnowledge?.[0].knowledge.map((item) => item.id)).toEqual(["k2", "k4", "k6", "k8", "k10"]);
+    });
+
     it("한 제품의 지식 조회가 실패해도 소프트웨어 결과와 나머지 제품의 지식은 돌려준다", async () => {
       const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-      hybrid.findKnowledgeForSoftware.mockImplementation(async (productName: string) => {
+      hybrid.searchKnowledge.mockImplementation(async (productName: string) => {
         if (productName === "JEUS") {
           throw new Error("lance error: LanceError(IO): Permission denied, /Users/someone/secret/local.rs:124:24");
         }
@@ -480,11 +552,10 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       expect(response.success).toBe(true);
       expect(versionsOf(response.software).sort()).toEqual(["JEUS 21", "JEUS 8.5", "Tibero 7"]);
       expect(response.relatedKnowledge).toEqual([
-        {
-          product: "Tibero",
-          knowledge: [{ id: "k-tibero", title: "Tibero 연결 설정", type: "solution", importance: 3, tags: ["was"] }],
-        },
+        { product: "Tibero", knowledge: [listed("k-tibero", "Tibero 연결 설정")] },
       ]);
+      // 조회를 마친 제품만 센다
+      expect(response.knowledgeLookup).toEqual({ searchedProducts: 1, pageProducts: 2 });
 
       // 응답에는 일반적인 안내만, 상세 오류는 서버 로그(stderr)에만 남긴다
       expect(response.knowledgeWarning).toEqual(expect.stringContaining("관련 지식"));
@@ -504,10 +575,102 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
       expect(response.success).toBe(true);
       expect(response.count).toBe(2);
       expect(response.relatedKnowledge).toEqual([]);
+      expect(response.knowledgeLookup).toEqual({ searchedProducts: 0, pageProducts: 1 });
       expect(response.knowledgeWarning).toEqual(expect.stringContaining("관련 지식"));
       expect(JSON.stringify(response)).not.toContain("/opt/app");
-      expect(hybrid.findKnowledgeForSoftware).not.toHaveBeenCalled();
+      expect(hybrid.searchKnowledge).not.toHaveBeenCalled();
       expect(logged.mock.calls.flat().map(String).join("\n")).toContain("/opt/app/models");
+    });
+
+    it("조회된 소프트웨어가 없어도 relatedKnowledge 를 빈 배열로 싣는다", async () => {
+      const responses = [
+        await searchCompatibleSoftware({ query: "없는제품이름", includeKnowledge: true }),
+        await searchCompatibleSoftware({ frameworkVersion: "5.0", includeKnowledge: true }),
+      ];
+      for (const response of responses) {
+        expect(response.count).toBe(0);
+        expect(response.relatedKnowledge).toEqual([]);
+        expect(response.knowledgeLookup).toEqual({ searchedProducts: 0, pageProducts: 0 });
+        expect(response).not.toHaveProperty("knowledgeWarning");
+      }
+    });
+  });
+
+  describe("includeKnowledge — 괄호가 든 제품명", () => {
+    const seed = (product_name: string): SoftwareSeed => ({
+      ...CATALOGUE[4],
+      product_name,
+      product_version: `${product_name} 1.0`,
+    });
+    useCatalogue([
+      seed("Morpheus CMS(모피어스 CMS)"),
+      seed("AI+(플러스) CMS"),
+      seed("ALPAS v1.0 (도서관리 시스템)"),
+      seed("UCARE(콜센터상담시스템)"),
+    ]);
+
+    /** 제품 하나를 조회해 그 제품의 관련 지식 id 를 돌려준다 */
+    const relatedIds = async (productName: string, candidates: unknown[]) => {
+      setCandidates(candidates);
+      const response = await searchCompatibleSoftware({ productName, includeKnowledge: true });
+      expect(response.count).toBe(1);
+      return (response.relatedKnowledge ?? []).flatMap((entry) => entry.knowledge.map((item) => item.id));
+    };
+
+    it("괄호와 그 안의 내용을 뺀 이름이 들어 있는 글을 찾는다", async () => {
+      // 글은 제품을 'Morpheus CMS' 로 부른다. 괄호까지 붙인 전체 이름으로 견주면 하나도 남지 않는다
+      expect(
+        await relatedIds("Morpheus", [
+          knowledge("k1", "Morpheus CMS 설치 문의", "설치 중 오류"),
+          knowledge("k2", "CMS 일반 문의", "morpheus cms 2.0 에서 메뉴가 보이지 않습니다"),
+          knowledge("k3", "다른 CMS 문의", "모피어스 제품이 아닙니다"),
+        ]),
+      ).toEqual(["k1", "k2"]);
+    });
+
+    it("이름 가운데나 끝의 괄호를 빼고 남은 낱말 사이의 공백은 하나로 줄인다", async () => {
+      expect(await relatedIds("AI+", [knowledge("k1", "AI+ CMS 권한 설정", "본문")])).toEqual(["k1"]);
+      expect(await relatedIds("ALPAS", [knowledge("k1", "도서관리", "ALPAS v1.0 에서 대출 반납이 안 됩니다")])).toEqual([
+        "k1",
+      ]);
+      expect(await relatedIds("UCARE", [knowledge("k1", "ucare 연동", "본문")])).toEqual(["k1"]);
+    });
+
+    it("의미 검색에는 제품명을 그대로 쓰고, 응답의 product 도 제품명 그대로다", async () => {
+      setCandidates([knowledge("k1", "UCARE 연동", "본문")]);
+      const response = await searchCompatibleSoftware({ productName: "UCARE", includeKnowledge: true });
+      expect(hybrid.searchKnowledge).toHaveBeenCalledWith("UCARE(콜센터상담시스템)", { limit: 50 });
+      expect(response.relatedKnowledge).toEqual([
+        { product: "UCARE(콜센터상담시스템)", knowledge: [listed("k1", "UCARE 연동")] },
+      ]);
+    });
+  });
+
+  describe("includeKnowledge — 조회한 제품 수 (knowledgeLookup)", () => {
+    useCatalogue(BULK);
+
+    it("한 페이지의 앞 5개 제품만 조회하고, 그 수와 페이지의 제품 수를 알린다", async () => {
+      const response = await searchCompatibleSoftware({ limit: 7, includeKnowledge: true });
+      expect(response.count).toBe(7);
+      expect(hybrid.searchKnowledge).toHaveBeenCalledTimes(5);
+      expect(response.knowledgeLookup).toEqual({ searchedProducts: 5, pageProducts: 7 });
+    });
+
+    it("제품이 5개 이하이면 모두 조회한다", async () => {
+      const response = await searchCompatibleSoftware({ limit: 3, includeKnowledge: true });
+      expect(response.knowledgeLookup).toEqual({ searchedProducts: 3, pageProducts: 3 });
+    });
+  });
+
+  describe("includeKnowledge — 같은 제품의 여러 버전", () => {
+    useCatalogue(CATALOGUE);
+
+    it("제품 수는 제품명 기준으로 센다 (버전이 여럿이어도 한 번만 조회한다)", async () => {
+      // JEUS 두 행과 Tibero 한 행
+      const response = await searchCompatibleSoftware({ query: "티맥스", includeKnowledge: true });
+      expect(response.count).toBe(3);
+      expect(hybrid.searchKnowledge).toHaveBeenCalledTimes(2);
+      expect(response.knowledgeLookup).toEqual({ searchedProducts: 2, pageProducts: 2 });
     });
   });
 
