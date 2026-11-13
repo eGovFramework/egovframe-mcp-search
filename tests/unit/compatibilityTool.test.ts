@@ -286,6 +286,100 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
     });
   });
 
+  describe("includeKnowledge 로 함께 돌려주는 관련 지식", () => {
+    useCatalogue(CATALOGUE);
+
+    const knowledge = (id: string, title: string, content: string) => ({
+      id,
+      type: "solution",
+      title,
+      content,
+      tags: ["was"],
+      importance: 3,
+      score: 0.3,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      metadata: {},
+    });
+
+    it("제목이나 본문에 제품명이 들어 있는 지식만 남기고, 항목에 id 를 싣는다", async () => {
+      hybrid.findKnowledgeForSoftware.mockResolvedValue([
+        knowledge("k-title", "JEUS 데이터소스 설정 문의", "설정 방법이 궁금합니다."),
+        knowledge("k-content", "WAS 기동 오류", "jeus 8 에서 기동할 때 오류가 납니다."),
+        knowledge("k-unrelated", "게시판 샘플", "공통컴포넌트 게시판 샘플 문의"),
+      ]);
+
+      const response = await searchCompatibleSoftware({ query: "JEUS", includeKnowledge: true });
+
+      expect(response.relatedKnowledge).toEqual([
+        {
+          product: "JEUS",
+          knowledge: [
+            { id: "k-title", title: "JEUS 데이터소스 설정 문의", type: "solution", importance: 3, tags: ["was"] },
+            { id: "k-content", title: "WAS 기동 오류", type: "solution", importance: 3, tags: ["was"] },
+          ],
+        },
+      ]);
+      expect(response).not.toHaveProperty("knowledgeWarning");
+    });
+
+    it("제품명이 들어 있는 지식이 하나도 없는 제품은 항목을 넣지 않는다", async () => {
+      // 벡터 검색은 관련이 없어도 항상 가까운 순으로 5건을 돌려준다
+      hybrid.findKnowledgeForSoftware.mockResolvedValue([
+        knowledge("k1", "게시판 샘플", "공통컴포넌트 게시판 샘플 문의"),
+        knowledge("k2", "로그인 암호화", "사용자 테이블 암호화 관련"),
+      ]);
+
+      const response = await searchCompatibleSoftware({ productName: "Tibero", includeKnowledge: true });
+
+      expect(response.count).toBe(1);
+      expect(response.relatedKnowledge).toEqual([]);
+    });
+
+    it("한 제품의 지식 조회가 실패해도 소프트웨어 결과와 나머지 제품의 지식은 돌려준다", async () => {
+      const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+      hybrid.findKnowledgeForSoftware.mockImplementation(async (productName: string) => {
+        if (productName === "JEUS") {
+          throw new Error("lance error: LanceError(IO): Permission denied, /Users/someone/secret/local.rs:124:24");
+        }
+        return [knowledge("k-tibero", "Tibero 연결 설정", "Tibero 7 JDBC 설정")];
+      });
+
+      const response = await searchCompatibleSoftware({ query: "티맥스", includeKnowledge: true });
+
+      expect(response.success).toBe(true);
+      expect(versionsOf(response.software).sort()).toEqual(["JEUS 21", "JEUS 8.5", "Tibero 7"]);
+      expect(response.relatedKnowledge).toEqual([
+        {
+          product: "Tibero",
+          knowledge: [{ id: "k-tibero", title: "Tibero 연결 설정", type: "solution", importance: 3, tags: ["was"] }],
+        },
+      ]);
+
+      // 응답에는 일반적인 안내만, 상세 오류는 서버 로그(stderr)에만 남긴다
+      expect(response.knowledgeWarning).toEqual(expect.stringContaining("관련 지식"));
+      expect(JSON.stringify(response)).not.toContain("/Users/someone");
+      expect(JSON.stringify(response)).not.toContain("LanceError");
+      expect(logged.mock.calls.flat().map(String).join("\n")).toContain("LanceError");
+    });
+
+    it("지식 쪽 초기화가 실패해도 소프트웨어 결과는 그대로 돌려준다", async () => {
+      const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+      hybrid.initialize.mockRejectedValueOnce(
+        new Error('임베딩 모델 로드 실패: file was not found locally at "/opt/app/models/tokenizer.json"'),
+      );
+
+      const response = await searchCompatibleSoftware({ query: "JEUS", includeKnowledge: true });
+
+      expect(response.success).toBe(true);
+      expect(response.count).toBe(2);
+      expect(response.relatedKnowledge).toEqual([]);
+      expect(response.knowledgeWarning).toEqual(expect.stringContaining("관련 지식"));
+      expect(JSON.stringify(response)).not.toContain("/opt/app");
+      expect(hybrid.findKnowledgeForSoftware).not.toHaveBeenCalled();
+      expect(logged.mock.calls.flat().map(String).join("\n")).toContain("/opt/app/models");
+    });
+  });
+
   describe("응답의 software 항목", () => {
     useCatalogue(CATALOGUE);
 

@@ -3,7 +3,7 @@
  * 호환성 소프트웨어 관리 도구
  */
 
-import { getHybridManager } from '../database/hybridManager.js';
+import { getHybridManager, type HybridDatabaseManager } from '../database/hybridManager.js';
 import type { SQLiteManager } from '../database/sqliteManager.js';
 import { CompatibilitySearchFilter, CompatibilitySoftwareInfo, KeywordMatchMode } from '../types/database.js';
 
@@ -111,10 +111,77 @@ function normalizeOffset(offset: number | undefined): number {
 
 /** includeKnowledge 로 함께 돌려주는 관련 지식 한 건 */
 export interface RelatedKnowledgeItem {
+  id: string;
   title: string;
   type: string;
   importance: number;
   tags: string[];
+}
+
+/** 제품 하나와 그 제품을 언급하는 지식 */
+export interface RelatedKnowledge {
+  product: string;
+  knowledge: RelatedKnowledgeItem[];
+}
+
+/** 한 번의 조회에서 관련 지식을 찾아보는 제품 수 (결과의 앞에서부터) */
+const MAX_KNOWLEDGE_PRODUCTS = 5;
+
+/** 관련 지식 조회가 실패했을 때 응답에 싣는 안내. 상세 원인은 서버 로그(stderr)에만 남긴다. */
+const KNOWLEDGE_WARNING =
+  '관련 지식을 조회하는 중 오류가 발생해 일부 또는 전부를 싣지 못했습니다. ' +
+  '호환 소프트웨어 목록은 정상입니다. 자세한 내용은 MCP 서버 로그(stderr)를 확인하세요.';
+
+/**
+ * 조회된 소프트웨어의 제품명으로 관련 지식을 찾는다.
+ *
+ * 벡터 검색은 관련이 없어도 가까운 순으로 항상 몇 건을 돌려주므로, 제목이나 본문에
+ * 제품명이 들어 있는(대소문자 무시) 지식만 남기고, 하나도 없는 제품은 결과에 넣지 않는다.
+ * 지식 쪽 오류는 던지지 않고 failed 로 알린다. 소프트웨어 조회 결과는 이미 구해져 있다.
+ */
+async function findRelatedKnowledge(
+  manager: HybridDatabaseManager,
+  software: CompatibilitySoftwareInfo[],
+): Promise<{ relatedKnowledge: RelatedKnowledge[]; failed: boolean }> {
+  const relatedKnowledge: RelatedKnowledge[] = [];
+
+  try {
+    await manager.initialize();
+  } catch (error) {
+    console.error('[egovframe-mcp-search] 관련 지식 조회를 준비하지 못했습니다:', error);
+    return { relatedKnowledge, failed: true };
+  }
+
+  const productNames = [...new Set(software.map((item) => item.product_name))]
+    .filter((productName) => productName.trim() !== '')
+    .slice(0, MAX_KNOWLEDGE_PRODUCTS);
+  let failed = false;
+
+  for (const productName of productNames) {
+    try {
+      const needle = productName.toLowerCase();
+      const mentioning = (await manager.findKnowledgeForSoftware(productName)).filter((item) =>
+        [item.title, item.content].some((text) => typeof text === 'string' && text.toLowerCase().includes(needle)),
+      );
+      if (mentioning.length > 0) {
+        relatedKnowledge.push({
+          product: productName,
+          knowledge: mentioning.map((item) => ({
+            id: item.id,
+            title: item.title,
+            type: item.type,
+            importance: item.importance,
+            tags: item.tags,
+          })),
+        });
+      }
+    } catch (error) {
+      failed = true;
+      console.error(`[egovframe-mcp-search] 관련 지식 조회 실패 (${productName}):`, error);
+    }
+  }
+
+  return { relatedKnowledge, failed };
 }
 
 /** 호환성 소프트웨어 검색 응답 */
@@ -136,7 +203,10 @@ export interface CompatibilitySearchResponse {
   available?: { frameworkVersions: string[]; categories: string[] };
   /** 조회된 소프트웨어. 내부용 필드(id, created_at)는 싣지 않는다 */
   software: CompatibilitySoftwareInfo[];
-  relatedKnowledge?: Array<{ product: string; knowledge: RelatedKnowledgeItem[] }>;
+  /** includeKnowledge 일 때: 제품명을 언급하는 지식. 그런 지식이 없는 제품은 빠진다 */
+  relatedKnowledge?: RelatedKnowledge[];
+  /** 관련 지식 조회가 일부라도 실패했을 때의 안내 (소프트웨어 목록에는 영향이 없다) */
+  knowledgeWarning?: string;
 }
 
 /**
@@ -191,29 +261,14 @@ export async function searchCompatibleSoftware(args: {
     software: results,
   };
 
-  // includeKnowledge=true: 검색된 소프트웨어에 대한 개발자 경험 포함
+  // includeKnowledge=true: 검색된 소프트웨어에 대한 개발자 경험 포함.
+  // 지식 조회가 실패해도 소프트웨어 결과는 그대로 돌려주고 knowledgeWarning 으로 알린다.
   if (args.includeKnowledge && results.length > 0) {
-    await manager.initialize();
-
-    const productNames = [...new Set(results.map((software) => software.product_name))].slice(0, 5);
-    const knowledgeResults: Array<{ product: string; knowledge: RelatedKnowledgeItem[] }> = [];
-
-    for (const productName of productNames) {
-      const knowledge = await manager.findKnowledgeForSoftware(productName);
-      if (knowledge.length > 0) {
-        knowledgeResults.push({
-          product: productName,
-          knowledge: knowledge.map((k) => ({
-            title: k.title,
-            type: k.type,
-            importance: k.importance,
-            tags: k.tags,
-          })),
-        });
-      }
+    const { relatedKnowledge, failed } = await findRelatedKnowledge(manager, results);
+    response.relatedKnowledge = relatedKnowledge;
+    if (failed) {
+      response.knowledgeWarning = KNOWLEDGE_WARNING;
     }
-
-    response.relatedKnowledge = knowledgeResults;
   }
 
   return response;
