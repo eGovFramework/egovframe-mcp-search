@@ -172,9 +172,55 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       }
     });
 
+    it("category 는 대소문자를 구분하지 않고 일치시킨다", () => {
+      for (const category of ["WAS", "was", "Was"]) {
+        const result = sqlite.queryCompatibleSoftware({ filters: { category } });
+        expect(versionsOf(result.rows), `category=${category}`).toEqual(["JEUS 21", "JEUS 8.5", "WebLogic 12c"]);
+      }
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "티맥스", filters: { category: "dbms" } }).rows)).toEqual([
+        "Tibero 7",
+      ]);
+      // 부분 일치는 아니다
+      expect(sqlite.queryCompatibleSoftware({ filters: { category: "CMS" } }).rows).toEqual([]);
+    });
+
+    it("문자열 필터는 앞뒤 공백을 떼고 비교한다", () => {
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ filters: { category: " WAS\n" } }).rows)).toHaveLength(3);
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ filters: { frameworkVersion: " 4.3 " } }).rows)).toEqual([
+        "JEUS 21",
+        "SampleCMS 1.0",
+      ]);
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ filters: { vendor: " 샘플벤더 " } }).rows)).toEqual([
+        "SampleCMS 1.0",
+      ]);
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ filters: { productName: "\tTibero " } }).rows)).toEqual([
+        "Tibero 7",
+      ]);
+      // 공백뿐인 필터는 주지 않은 것과 같다
+      expect(sqlite.queryCompatibleSoftware({ filters: { vendor: "   " } }).rows).toHaveLength(CATALOGUE.length);
+    });
+
     it("searchCompatibleSoftware 는 같은 필터 조회 결과를 배열로 돌려준다", () => {
       expect(versionsOf(sqlite.searchCompatibleSoftware({ category: "WAS" }, 2))).toEqual(["JEUS 21", "JEUS 8.5"]);
       expect(sqlite.searchCompatibleSoftware()).toHaveLength(CATALOGUE.length);
+    });
+  });
+
+  describe("필터에 쓸 수 있는 값 목록", () => {
+    it("getFrameworkVersions 는 major, minor 를 정수로 비교해 최신 버전부터 돌려준다", () => {
+      // 문자열로 정렬하면 3.10 이 3.2 와 3.9 보다 작은 값으로 취급된다
+      sqlite.addCompatibilitySoftwareBatch(
+        ["3.10", "3.9", "3.2", "3.1", "2.7"].map((framework_version) => ({
+          ...CATALOGUE[0],
+          product_name: `Extra ${framework_version}`,
+          framework_version,
+        })),
+      );
+      expect(sqlite.getFrameworkVersions()).toEqual(["4.3", "4.2", "4.0", "3.10", "3.9", "3.6", "3.2", "3.1", "2.7"]);
+    });
+
+    it("getCategories 는 카테고리 이름을 중복 없이 돌려준다", () => {
+      expect(sqlite.getCategories()).toEqual(["CMS Solution", "DBMS", "WAS"]);
     });
   });
 

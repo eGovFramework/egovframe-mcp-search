@@ -340,19 +340,25 @@ export class SQLiteManager {
     return { rows };
   }
 
-  /** 호환성 소프트웨어 필터를 WHERE 절에 덧붙일 조건으로 바꾼다 (테이블 별칭 cs 기준). */
+  /**
+   * 호환성 소프트웨어 필터를 WHERE 절에 덧붙일 조건으로 바꾼다 (테이블 별칭 cs 기준).
+   * 문자열 필터는 앞뒤 공백을 떼고, 비어 있으면 주지 않은 것으로 본다.
+   */
   private buildCompatibilityFilter(filters: CompatibilitySearchFilter): SqlCondition {
     const clauses: string[] = [];
     const params: unknown[] = [];
 
-    if (filters.frameworkVersion) {
+    const frameworkVersion = trimFilter(filters.frameworkVersion);
+    if (frameworkVersion) {
       clauses.push('cs.framework_version = ?');
-      params.push(filters.frameworkVersion);
+      params.push(frameworkVersion);
     }
 
-    if (filters.category) {
-      clauses.push('cs.category = ?');
-      params.push(filters.category);
+    // 카테고리는 대소문자를 구분하지 않는다 ('cms solution' = 'CMS Solution')
+    const category = trimFilter(filters.category);
+    if (category) {
+      clauses.push('cs.category = ? COLLATE NOCASE');
+      params.push(category);
     }
 
     if (filters.minLevel) {
@@ -360,14 +366,16 @@ export class SQLiteManager {
       params.push(filters.minLevel);
     }
 
-    if (filters.vendor) {
+    const vendor = trimFilter(filters.vendor);
+    if (vendor) {
       clauses.push("cs.vendor LIKE ? ESCAPE '\\'");
-      params.push(`%${escapeLikePattern(filters.vendor)}%`);
+      params.push(`%${escapeLikePattern(vendor)}%`);
     }
 
-    if (filters.productName) {
+    const productName = trimFilter(filters.productName);
+    if (productName) {
       clauses.push("cs.product_name LIKE ? ESCAPE '\\'");
-      params.push(`%${escapeLikePattern(filters.productName)}%`);
+      params.push(`%${escapeLikePattern(productName)}%`);
     }
 
     return { sql: clauses.map((clause) => ` AND ${clause}`).join(''), params };
@@ -529,15 +537,15 @@ export class SQLiteManager {
   }
 
   /**
-   * 프레임워크 버전 목록 조회
+   * 프레임워크 버전 목록 조회 — 최신 버전부터.
+   * major, minor 를 정수로 비교한다 (문자열로 정렬하면 3.10 이 3.2 보다 작게 취급된다).
    */
   getFrameworkVersions(): string[] {
     const results = this.db.prepare(`
       SELECT DISTINCT framework_version FROM compatibility_software
-      ORDER BY framework_version DESC
     `).all() as Array<{ framework_version: string }>;
 
-    return results.map(r => r.framework_version);
+    return results.map(r => r.framework_version).sort(compareVersionsDescending);
   }
 
   /**
@@ -1030,4 +1038,35 @@ function toSqlLimit(limit: number | undefined): number {
 /** FTS5 가 MATCH 식을 해석하지 못해 낸 오류인지 판별한다. */
 function isFts5QueryError(error: unknown): boolean {
   return error instanceof Database.SqliteError && error.message.startsWith('fts5:');
+}
+
+/** 문자열 필터 값의 앞뒤 공백을 뗀다. 문자열이 아니거나 비어 있으면 빈 문자열. */
+function trimFilter(value: string | undefined): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+/** '4.3', '3.10' 같은 버전을 정수 배열로 바꾼다. 그런 꼴이 아니면 null. */
+function parseVersion(version: string): number[] | null {
+  return /^\d+(\.\d+)*$/.test(version) ? version.split('.').map(Number) : null;
+}
+
+/**
+ * 버전 문자열을 최신순(내림차순)으로 정렬하는 비교 함수.
+ * 자리마다 정수로 비교하고, 버전 꼴이 아닌 값은 뒤로 보낸다.
+ */
+function compareVersionsDescending(a: string, b: string): number {
+  const partsA = parseVersion(a);
+  const partsB = parseVersion(b);
+  if (partsA && partsB) {
+    for (let i = 0; i < Math.max(partsA.length, partsB.length); i += 1) {
+      const difference = (partsB[i] ?? 0) - (partsA[i] ?? 0);
+      if (difference !== 0) {
+        return difference;
+      }
+    }
+    return 0;
+  }
+  if (partsA) return -1;
+  if (partsB) return 1;
+  return a < b ? -1 : a > b ? 1 : 0;
 }

@@ -34,7 +34,7 @@ vi.mock("../../src/database/hybridManager.js", () => {
   };
 });
 
-import { searchCompatibleSoftware } from "../../src/tools/compatibility.js";
+import { normalizeFrameworkVersion, searchCompatibleSoftware } from "../../src/tools/compatibility.js";
 
 /** describe 블록 하나가 쓸 임시 DB 를 만들고, 도구가 그 DB 를 보게 한다. */
 function useCatalogue(rows: SoftwareSeed[]): { sqlite: () => SQLiteManager } {
@@ -133,6 +133,112 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
     it("필터도 없으면 전체 목록을 돌려준다", async () => {
       const response = await searchCompatibleSoftware({ query: "*" });
       expect(response.count).toBe(CATALOGUE.length);
+    });
+  });
+
+  describe("필터 값 다듬기", () => {
+    useCatalogue(CATALOGUE);
+
+    it("frameworkVersion 의 앞 v 와 패치 자리를 떼고 major.minor 로 비교한다", async () => {
+      for (const frameworkVersion of ["4.3", "v4.3", "V4.3", "4.3.0", "v4.3.1", " 4.3\n"]) {
+        const response = await searchCompatibleSoftware({ frameworkVersion });
+        expect(versionsOf(response.software), `frameworkVersion=${JSON.stringify(frameworkVersion)}`).toEqual([
+          "JEUS 21",
+          "SampleCMS 1.0",
+        ]);
+        // 응답은 실제로 적용한 값을 되돌려준다
+        expect(response.filters.frameworkVersion).toBe("4.3");
+      }
+    });
+
+    it("category 는 대소문자와 앞뒤 공백이 달라도 일치시킨다", async () => {
+      for (const category of ["CMS Solution", "cms solution", " CMS SOLUTION "]) {
+        const response = await searchCompatibleSoftware({ category });
+        expect(versionsOf(response.software), `category=${JSON.stringify(category)}`).toEqual([
+          "SampleCMS 1.0",
+          "OtherCMS 2.0",
+        ]);
+      }
+    });
+
+    it("vendor 와 productName 의 앞뒤 공백을 뗀다", async () => {
+      expect(versionsOf((await searchCompatibleSoftware({ vendor: " 샘플벤더 " })).software)).toEqual(["SampleCMS 1.0"]);
+      expect(versionsOf((await searchCompatibleSoftware({ productName: " Tibero " })).software)).toEqual(["Tibero 7"]);
+    });
+
+    it("공백뿐인 필터는 주지 않은 것으로 보고 응답의 filters 에도 넣지 않는다", async () => {
+      const response = await searchCompatibleSoftware({ frameworkVersion: "  ", category: "", vendor: " " });
+      expect(response.count).toBe(CATALOGUE.length);
+      expect(response.filters).toEqual({});
+    });
+  });
+
+  describe("normalizeFrameworkVersion", () => {
+    it("앞의 v 또는 V 를 떼고 x.y.z 를 x.y 로 줄인다", () => {
+      expect(normalizeFrameworkVersion("4.3")).toBe("4.3");
+      expect(normalizeFrameworkVersion("v4.3")).toBe("4.3");
+      expect(normalizeFrameworkVersion("V4.3")).toBe("4.3");
+      expect(normalizeFrameworkVersion("4.3.0")).toBe("4.3");
+      expect(normalizeFrameworkVersion("v4.3.1")).toBe("4.3");
+      expect(normalizeFrameworkVersion("  4.3 \n")).toBe("4.3");
+    });
+
+    it("버전은 숫자가 아니라 문자열로 다룬다 (3.10 과 3.1 은 다른 버전)", () => {
+      expect(normalizeFrameworkVersion("3.10")).toBe("3.10");
+      expect(normalizeFrameworkVersion("3.10.2")).toBe("3.10");
+      expect(normalizeFrameworkVersion("3.1")).toBe("3.1");
+    });
+
+    it("그 밖의 꼴은 공백만 떼고 그대로 둔다", () => {
+      expect(normalizeFrameworkVersion("4")).toBe("4");
+      expect(normalizeFrameworkVersion("4.3.0.1")).toBe("4.3.0.1");
+      expect(normalizeFrameworkVersion("latest")).toBe("latest");
+      expect(normalizeFrameworkVersion("version 4.3")).toBe("version 4.3");
+    });
+  });
+
+  describe("결과가 없을 때의 available 안내", () => {
+    useCatalogue(CATALOGUE);
+
+    const AVAILABLE = {
+      frameworkVersions: ["4.3", "4.2", "4.0", "3.6"],
+      categories: ["CMS Solution", "DBMS", "WAS"],
+    };
+
+    it("데이터에 없는 frameworkVersion 이면 쓸 수 있는 값을 알려 준다", async () => {
+      const response = await searchCompatibleSoftware({ frameworkVersion: "5.0" });
+      expect(response.count).toBe(0);
+      expect(response.available).toEqual(AVAILABLE);
+    });
+
+    it("데이터에 없는 category 이면 쓸 수 있는 값을 알려 준다", async () => {
+      const response = await searchCompatibleSoftware({ category: "CMS" });
+      expect(response.count).toBe(0);
+      expect(response.available).toEqual(AVAILABLE);
+    });
+
+    it("query 와 함께 줘도 알려 준다", async () => {
+      const response = await searchCompatibleSoftware({ query: "JEUS", frameworkVersion: "4" });
+      expect(response.count).toBe(0);
+      expect(response.available).toEqual(AVAILABLE);
+    });
+
+    it("필터 값은 모두 유효한데 조합에 맞는 행이 없을 뿐이면 넣지 않는다", async () => {
+      const response = await searchCompatibleSoftware({ frameworkVersion: "v3.6", category: "dbms" });
+      expect(response.count).toBe(0);
+      expect(response).not.toHaveProperty("available");
+    });
+
+    it("필터 없이 키워드만으로 결과가 없으면 넣지 않는다", async () => {
+      const response = await searchCompatibleSoftware({ query: "없는제품이름" });
+      expect(response.count).toBe(0);
+      expect(response).not.toHaveProperty("available");
+    });
+
+    it("결과가 있으면 넣지 않는다", async () => {
+      const response = await searchCompatibleSoftware({ frameworkVersion: "4.3" });
+      expect(response.count).toBe(2);
+      expect(response).not.toHaveProperty("available");
     });
   });
 
