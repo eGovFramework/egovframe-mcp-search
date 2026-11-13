@@ -448,7 +448,7 @@ function requireComponentSrcRoot(): string {
 
 /**
  * 컴포넌트의 소스 파일 목록 조회
- * 패키지명 기반으로 Java, Mapper XML, JSP, CSS, Config, Message 파일을 탐색
+ * 패키지명 기반으로 Java, Mapper XML, JSP, CSS, JavaScript, Config, Message 파일을 탐색
  */
 export interface ComponentSourceFiles {
   componentId: string;
@@ -458,6 +458,7 @@ export interface ComponentSourceFiles {
   mapperXml: string[];
   jsp: string[];
   css: string[];
+  javascript: string[];
   images: string[];
   config: string[];
   message: string[];
@@ -488,12 +489,8 @@ export function collectComponentSourceFiles(
 ): ComponentSourceFiles {
   const pkgName = component.package_name;
 
-  // 패키지명에서 상대 경로 추출: egovframework.com.cop.bbs → com/cop/bbs
   const pkgParts = pkgName.split('.');
-  const egovIdx = pkgParts.indexOf('egovframework');
-  const subPath = egovIdx >= 0 
-    ? pkgParts.slice(egovIdx + 1).join('/') 
-    : pkgParts.join('/');
+  const subPath = packageSubPath(pkgName);
   const fullPkgPath = pkgParts.join('/');
   const schedulingConfigName = getSchedulingConfigName(pkgParts);
 
@@ -522,6 +519,12 @@ export function collectComponentSourceFiles(
     srcRoot
   );
   
+  const javascript = listFilesRecursive(
+    path.join(srcRoot, 'src/main/webapp/js/egovframework', subPath),
+    ['.js'],
+    srcRoot
+  );
+
   const images = listFilesRecursive(
     path.join(srcRoot, 'src/main/webapp/images/egovframework', subPath),
     ['.jpg', '.png', '.gif', '.svg', '.ico'],
@@ -572,13 +575,25 @@ export function collectComponentSourceFiles(
     mapperXml: toRelative(mapperXml),
     jsp: toRelative(jsp),
     css: toRelative(css),
+    javascript: toRelative(javascript),
     images: toRelative(images),
     config: toRelative(config),
     message: toRelative(message),
-    total: java.length + mapperXml.length + jsp.length + css.length + images.length + config.length + message.length,
+    total:
+      java.length + mapperXml.length + jsp.length + css.length + javascript.length + images.length + config.length + message.length,
   };
   
   return result;
+}
+
+/**
+ * 패키지명에서 리소스 디렉토리의 상대 경로를 얻는다: egovframework.com.cop.bbs → com/cop/bbs
+ * (Mapper XML, JSP, CSS, JavaScript, 이미지, 메시지가 이 경로 아래에 있다)
+ */
+function packageSubPath(packageName: string): string {
+  const pkgParts = packageName.split('.');
+  const egovIdx = pkgParts.indexOf('egovframework');
+  return egovIdx >= 0 ? pkgParts.slice(egovIdx + 1).join('/') : pkgParts.join('/');
 }
 
 /**
@@ -1024,6 +1039,7 @@ export function formatComponentSourceFiles(result: ComponentSourceFiles): string
     { title: 'MyBatis Mapper XML', files: result.mapperXml, icon: '🗄️' },
     { title: 'JSP 뷰', files: result.jsp, icon: '🌐' },
     { title: 'CSS 스타일', files: result.css, icon: '🎨' },
+    { title: 'JavaScript', files: result.javascript, icon: '📜' },
     { title: 'Spring 설정', files: result.config, icon: '⚙️' },
     { title: '메시지 리소스', files: result.message, icon: '📝' },
     { title: '이미지', files: result.images, icon: '🖼️' },
@@ -1040,6 +1056,8 @@ export function formatComponentSourceFiles(result: ComponentSourceFiles): string
   }
   
   output += '> 개별 파일 내용은 `egov_search_knowledge` 를 `scope: "components"`, `action: "readSource"`, `filters.filePath: <위 경로>` 로 호출해 조회할 수 있습니다.\n';
+  // 목록이 완전하다고 오해하지 않도록 수집 범위를 밝힌다
+  output += `>\n> 이 목록은 패키지 경로(\`${packageSubPath(result.packageName)}\`)와 같은 디렉토리에 있는 파일과 이 컴포넌트에 귀속되는 Spring 설정만 싣습니다. 다른 경로에 있는 파일(다른 컴포넌트의 화면·스크립트·메시지, 전역 Spring 설정, 프로퍼티 파일)은 이 컴포넌트가 쓰더라도 나오지 않습니다.\n`;
   
   return output;
 }

@@ -366,6 +366,7 @@ describe('collectComponentSourceFiles — macOS AppleDouble 파일 제외', () =
     writeWithTwin(path.join('src', 'main', 'resources', 'egovframework', 'mapper', SUB_DIR), 'Board_SQL_mysql.xml');
     writeWithTwin(path.join('src', 'main', 'webapp', 'WEB-INF', 'jsp', 'egovframework', SUB_DIR), 'BoardList.jsp');
     writeWithTwin(path.join('src', 'main', 'webapp', 'css', 'egovframework', SUB_DIR), 'board.css');
+    writeWithTwin(path.join('src', 'main', 'webapp', 'js', 'egovframework', SUB_DIR), 'board.js');
     writeWithTwin(path.join('src', 'main', 'webapp', 'images', 'egovframework', SUB_DIR), 'icon.png');
     writeWithTwin(path.join('src', 'main', 'resources', 'egovframework', 'message', SUB_DIR), 'message_ko.properties');
     writeWithTwin(path.join(SPRING_DIR, 'scheduling'), 'context-scheduling-cop-bbs.xml', '<beans/>\n');
@@ -384,10 +385,29 @@ describe('collectComponentSourceFiles — macOS AppleDouble 파일 제외', () =
     expect(names(files.mapperXml)).toEqual(['Board_SQL_mysql.xml']);
     expect(names(files.jsp)).toEqual(['BoardList.jsp']);
     expect(names(files.css)).toEqual(['board.css']);
+    expect(names(files.javascript)).toEqual(['board.js']);
     expect(names(files.images)).toEqual(['icon.png']);
     expect(names(files.message)).toEqual(['message_ko.properties']);
     expect(names(files.config)).toEqual(['context-scheduling-cop-bbs.xml']);
-    expect(files.total).toBe(8);
+    expect(files.total).toBe(9);
+  });
+
+  it('JavaScript 파일은 js/egovframework 아래의 패키지 경로에서 모으고, 경로는 소스 루트 기준이다', () => {
+    const files = collectComponentSourceFiles(root, component('egovframework.com.cop.bbs'));
+
+    expect(files.javascript).toEqual([path.join('src', 'main', 'webapp', 'js', 'egovframework', SUB_DIR, 'board.js')]);
+  });
+});
+
+describe.skipIf(!hasComponentSources)('collectComponentSourceFiles — JavaScript 파일 (동봉 소스 트리)', () => {
+  it('메뉴관리(mpm)의 JSP 가 불러오는 스크립트를 목록에 넣는다', () => {
+    const files = collectComponentSourceFiles(SRC_ROOT, component('egovframework.com.sym.mnu.mpm'));
+
+    expect(files.javascript.map((file) => path.basename(file)).sort()).toEqual(['EgovMainMenu.js', 'EgovMenuList.js']);
+  });
+
+  it('스크립트 디렉토리가 없는 컴포넌트는 빈 목록이다', () => {
+    expect(collectComponentSourceFiles(SRC_ROOT, component('egovframework.com.cop.bbs')).javascript).toEqual([]);
   });
 });
 

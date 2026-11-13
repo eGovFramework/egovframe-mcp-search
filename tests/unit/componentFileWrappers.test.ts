@@ -215,6 +215,21 @@ describe('공통컴포넌트 파일 기능 공개 함수 (임시 DB + 임시 소
       expect(text).toContain('filters.filePath');
       expect(text).not.toContain('read_component_source');
     });
+
+    it('포맷한 목록은 패키지 경로의 파일만 나열한다는 것을 알린다', () => {
+      const text = tools.formatComponentSourceFiles(tools.getComponentSourceFiles('brd')!);
+
+      // 다른 경로의 파일(다른 컴포넌트의 화면, 전역 설정)이 빠져 있어도 목록이 완전하다고 오해하지 않게 한다
+      expect(text).toContain('패키지 경로(`com/cop/brd`)');
+      expect(text).toContain('전역 Spring 설정');
+    });
+
+    it('JavaScript 파일이 있으면 그 섹션을 싣는다', () => {
+      const result = { ...tools.getComponentSourceFiles('brd')!, javascript: ['src/main/webapp/js/egovframework/com/cop/brd/board.js'] };
+
+      expect(tools.formatComponentSourceFiles(result)).toContain('JavaScript (1개)');
+      expect(tools.formatComponentSourceFiles(result)).toContain('com/cop/brd/board.js');
+    });
   });
 
   describe('readComponentSource', () => {
