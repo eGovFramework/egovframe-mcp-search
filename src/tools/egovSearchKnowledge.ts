@@ -102,15 +102,29 @@ type LimitScope = keyof typeof LIMIT_RULES;
 /** 통합 검색(scope all)에서 limit 을 주지 않았을 때 출처별로 돌려주는 건수. */
 const ALL_SCOPE_SECTION_LIMIT = 5;
 
+/**
+ * 통합 검색(scope all)에서 출처 하나가 싣는 최대 건수.
+ *
+ * 출처마다 그 범위의 최댓값(호환 소프트웨어 100건, 공통컴포넌트 200건)까지 실으면 네 출처를 합친 응답이
+ * 수만 자를 넘어 MCP 클라이언트의 출력 상한에 걸린다. 통합 검색은 어느 출처에 무엇이 있는지 훑어보는 용도이므로
+ * 출처별 건수를 작게 묶고, 한 출처의 결과를 더 보려면 그 출처를 scope 로 지정해 조회하게 한다.
+ */
+const ALL_SCOPE_SECTION_MAX = 10;
+
 /** 통합 검색(scope all)의 개발자 지식 섹션에 싣는 본문 발췌의 최대 길이(문자 수). */
 const ALL_SCOPE_KNOWLEDGE_EXCERPT_LENGTH = 600;
 
 /** 출처 하나를 검색할 때의 부가 조건. 통합 검색이 출처별 응답 크기를 줄이는 데 쓴다. */
 interface SectionOptions {
   defaultLimit?: number;
+  /** 이 출처가 싣는 최대 건수. 범위의 최댓값보다 작을 때만 쓰인다. */
+  maxLimit?: number;
   /** 개발자 지식의 본문을 이 길이 이내의 발췌로 줄인다. */
   knowledgeExcerptLength?: number;
-  /** 통합 검색의 한 섹션으로 실행되는지. 다음 구간을 조회하는 방법의 안내가 달라진다. */
+  /**
+   * 통합 검색의 한 섹션으로 실행되는지. 다음 구간을 조회하는 방법의 안내가 달라지고,
+   * limit 을 줄였다는 안내는 섹션마다 붙이지 않는다 (통합 검색이 한 번만 알린다).
+   */
   inUnifiedSearch?: boolean;
 }
 
@@ -300,10 +314,13 @@ function resolveLimit(args: EgovSearchKnowledgeArgs, scope: LimitScope, options:
   if (requested === undefined) {
     return { value: options.defaultLimit ?? rule.fallback };
   }
-  if (requested > rule.max) {
+  const max = Math.min(rule.max, options.maxLimit ?? rule.max);
+  if (requested > max) {
     return {
-      value: rule.max,
-      note: `> 요청한 limit ${requested} 은(는) ${scope} 범위의 최댓값 ${rule.max} 으로 줄여 적용했습니다.`,
+      value: max,
+      note: options.inUnifiedSearch
+        ? undefined
+        : `> 요청한 limit ${requested} 은(는) ${scope} 범위의 최댓값 ${max} 으로 줄여 적용했습니다.`,
     };
   }
   return { value: requested };
@@ -1267,6 +1284,7 @@ async function searchAll(args: EgovSearchKnowledgeArgs): Promise<string> {
   });
   const options: SectionOptions = {
     defaultLimit: ALL_SCOPE_SECTION_LIMIT,
+    maxLimit: ALL_SCOPE_SECTION_MAX,
     knowledgeExcerptLength: ALL_SCOPE_KNOWLEDGE_EXCERPT_LENGTH,
     inUnifiedSearch: true,
   };
@@ -1307,7 +1325,14 @@ async function searchAll(args: EgovSearchKnowledgeArgs): Promise<string> {
     "limit",
   ]);
 
-  return withNotes(body, ignored);
+  // 출처마다 줄여 적용한 limit 은 여기에서 한 번만 알린다.
+  const requested = requestedLimit(args);
+  const limitNote =
+    requested !== undefined && requested > ALL_SCOPE_SECTION_MAX
+      ? `> 통합 검색은 출처마다 최대 ${ALL_SCOPE_SECTION_MAX}건을 싣습니다. 요청한 limit ${requested} 은(는) ${ALL_SCOPE_SECTION_MAX} 으로 줄여 적용했습니다. 한 출처의 결과를 더 보려면 \`scope\` 로 그 출처를 지정해 조회하세요.`
+      : undefined;
+
+  return withNotes(body, limitNote, ignored);
 }
 
 /**

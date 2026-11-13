@@ -1290,6 +1290,42 @@ describe("integration — egov_search_knowledge 개발자 지식·통합 검색"
     },
   );
 
+  it("통합 검색은 limit 이 10 을 넘으면 출처마다 10건까지만 싣고 줄였다고 한 번만 알린다", async () => {
+    // 출처마다 범위의 최댓값(호환 소프트웨어 100건, 공통컴포넌트 200건)까지 실으면 응답 하나가 수만 자를 넘는다
+    const res = await search({ scope: "all", query: "CMS", limit: 200 });
+    expect(res.isError).toBe(false);
+    const compatibility = splitSections(res.text).find((part) => part.includes("호환 소프트웨어 검색 결과")) ?? "";
+    const body = parseJsonBlock(compatibility);
+    expect(body.total).toBeGreaterThan(10);
+    expect(body.limit).toBe(10);
+    expect(body.software).toHaveLength(10);
+    // 나머지를 보는 방법은 줄인 건수를 기준으로 안내한다
+    expect(compatibility).toContain("filters.offset: 10");
+
+    const notes = res.text.split("\n").filter((line) => line.includes("줄여 적용했습니다"));
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain("요청한 limit 200");
+    expect(notes[0]).toContain("출처마다 최대 10건");
+    expect(notes[0]).toContain("`scope`");
+    expect(res.text.length).toBeLessThan(40_000);
+  });
+
+  it("통합 검색의 filters.limit 도 출처마다 10건으로 줄인다", async () => {
+    const res = await search({ scope: "all", query: "CMS", filters: { limit: 50 } });
+    expect(res.isError).toBe(false);
+    const compatibility = splitSections(res.text).find((part) => part.includes("호환 소프트웨어 검색 결과")) ?? "";
+    expect(parseJsonBlock(compatibility).software).toHaveLength(10);
+    expect(res.text).toContain("요청한 limit 50");
+  });
+
+  it("통합 검색의 limit 이 10 이하면 그대로 적용하고 줄였다는 안내를 붙이지 않는다", async () => {
+    const res = await search({ scope: "all", query: "CMS", limit: 10 });
+    expect(res.isError).toBe(false);
+    const compatibility = splitSections(res.text).find((part) => part.includes("호환 소프트웨어 검색 결과")) ?? "";
+    expect(parseJsonBlock(compatibility).software).toHaveLength(10);
+    expect(res.text).not.toContain("줄여 적용했습니다");
+  });
+
   it("통합 검색의 호환 소프트웨어 구간 안내는 scope 를 compatibility 로 지정하라고 알린다", async () => {
     // 통합 검색은 filters.offset 을 쓰지 않으므로 '같은 호출에 offset 을 주라' 고 안내하면 안 된다
     const res = await search({ scope: "all", query: "CMS", limit: 2 });

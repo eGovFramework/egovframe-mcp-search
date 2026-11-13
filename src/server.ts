@@ -266,7 +266,7 @@ server.registerTool(
         ),
       limit: absentIfEmpty(z.number().int().min(1).max(200).optional())
         .describe(
-          "Maximum number of results (integer). Defaults: guide 5, knowledge 5, components keyword search 20 (a filter-only component list returns every match), compatibility 20; with scope all, 5 per source. Per-scope maximum: guide 20, knowledge 20, components 200, compatibility 100; a larger value is reduced to the maximum and the response says so. With action dml and filters.table it is the number of INSERT statements per call (default and maximum 100).",
+          "Maximum number of results (integer). Defaults: guide 5, knowledge 5, components keyword search 20 (a filter-only component list returns every match), compatibility 20; with scope all, 5 per source. Per-scope maximum: guide 20, knowledge 20, components 200, compatibility 100; with scope all, 10 per source. A larger value is reduced to the maximum and the response says so. With action dml and filters.table it is the number of INSERT statements per call (default and maximum 100).",
         ),
       strictScope: absentIfEmpty(z.boolean().optional())
         .describe(
