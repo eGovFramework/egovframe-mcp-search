@@ -477,7 +477,8 @@ export class SQLiteManager {
     let distinctiveTerms = 0;
     const patterns: string[] = [];
     for (const term of terms) {
-      if (term.length < 2) {
+      // 글자 수는 코드 포인트로 센다 (String.length 는 UTF-16 단위라 한 글자가 2 로 나올 수 있다)
+      if (Array.from(term).length < 2) {
         continue;
       }
       const pattern = containsPattern(term);

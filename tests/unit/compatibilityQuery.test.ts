@@ -81,6 +81,13 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(versionsOf(result.rows)).toEqual(["WebLogic 12c"]);
     });
 
+    it("글자 수는 코드 포인트로 센다 (UTF-16 두 단위로 표현되는 한 글자도 한 글자다)", () => {
+      // '𠀀', '𠀁' 는 한 글자지만 String.length 는 2 다
+      expect("𠀀".length).toBe(2);
+      const result = sqlite.queryCompatibleSoftware({ query: "𠀀 𠀁 오라클" });
+      expect(versionsOf(result.rows)).toEqual(["WebLogic 12c"]);
+    });
+
     it("검색어의 LIKE 와일드카드는 글자 그대로 비교한다", () => {
       // '_' 가 와일드카드였다면 '티맥스소프트' 가 일치했을 것
       expect(sqlite.queryCompatibleSoftware({ query: "티맥_소프트" }).rows).toEqual([]);
