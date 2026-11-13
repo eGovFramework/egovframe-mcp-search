@@ -5,7 +5,6 @@
 
 import { SQLiteManager } from './sqliteManager.js';
 import { DeveloperKnowledgeManager } from '../rag/knowledgeManager.js';
-import { getEmbedder } from '../rag/embedder.js';
 import { fileURLToPath } from 'url';
 import { getKnowledgeBasePath } from '../utils/projectPath.js';
 import { resolveDeveloperKnowledgeDbDir, resolveSQLiteDbPath } from '../utils/dataPaths.js';
@@ -35,10 +34,16 @@ export interface HybridSearchResult {
   totalResults: number;
 }
 
+/**
+ * 검색 서버가 쓰는 조회 전용 매니저.
+ * SQLite 는 읽기 전용으로 열고, LanceDB 테이블이 없어도 새로 만들지 않는다.
+ * (인덱스 구축과 update CLI 는 이 클래스를 거치지 않고 각 매니저를 직접 쓴다.)
+ */
 export class HybridDatabaseManager {
   private sqlite: SQLiteManager;
   private knowledge: DeveloperKnowledgeManager;
   private isInitialized = false;
+  private initializing: Promise<void> | null = null;
 
   constructor(basePath?: string) {
     // 현재 파일 위치를 기준으로 프로젝트 루트 찾기
@@ -47,11 +52,13 @@ export class HybridDatabaseManager {
     
     console.error(`📂 현재 파일: ${currentFile}`);
     console.error(`📂 Knowledge Base 경로: ${dbPath}`);
-    console.error(`🔍 process.cwd(): ${process.cwd()}`);
     
-    // SQLite 초기화 (동기)
+    // SQLite 초기화 (동기, 읽기 전용)
     // basePath 미지정 시 SQLite 도 오버레이(compatibility 적용분) 우선
-    this.sqlite = new SQLiteManager(basePath ? path.join(basePath, 'egovframe.db') : resolveSQLiteDbPath(currentFile));
+    this.sqlite = new SQLiteManager(
+      basePath ? path.join(basePath, 'egovframe.db') : resolveSQLiteDbPath(currentFile),
+      { readonly: true },
+    );
     
     // LanceDB 초기화 (비동기 - initialize()에서 처리)
     // basePath 미지정 시 오버레이(사용자 update 적용분) 우선 해석
@@ -61,24 +68,31 @@ export class HybridDatabaseManager {
   }
 
   /**
-   * 데이터베이스 초기화
+   * 개발자 지식(LanceDB) 테이블을 연다.
+   *
+   * - 동시에 여러 호출이 들어와도 한 번만 초기화하고, 실패하면 다음 호출에서 다시 시도한다.
+   * - 임베딩 모델은 여기서 미리 불러오지 않는다. 의미 검색을 처음 실행할 때 임베더가 스스로
+   *   불러오므로, 모델이 필요 없는 조회(최근 순 목록 등)는 모델 없이도 동작한다.
    */
   async initialize(): Promise<void> {
     if (this.isInitialized) {
       return;
     }
-
-    console.error('🚀 하이브리드 데이터베이스 초기화 중...');
-    
-    // LanceDB 초기화
-    await this.knowledge.initialize();
-    
-    // 임베더 사전 로드 (첫 사용 시 지연 방지)
-    const embedder = getEmbedder();
-    await embedder.initialize();
-    
-    this.isInitialized = true;
-    console.error('✅ 하이브리드 데이터베이스 초기화 완료');
+    if (!this.initializing) {
+      console.error('🚀 하이브리드 데이터베이스 초기화 중...');
+      this.initializing = this.knowledge.initialize({ createIfMissing: false }).then(
+        () => {
+          this.isInitialized = true;
+          this.initializing = null;
+          console.error('✅ 하이브리드 데이터베이스 초기화 완료');
+        },
+        (error: unknown) => {
+          this.initializing = null;
+          throw error;
+        },
+      );
+    }
+    return this.initializing;
   }
 
   /**

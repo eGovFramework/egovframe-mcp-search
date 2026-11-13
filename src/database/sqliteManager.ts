@@ -10,6 +10,7 @@ import { fileURLToPath } from 'url';
 import { getSQLiteDBPath } from '../utils/projectPath.js';
 import { buildFts5MatchQuery, extractSearchTerms } from '../utils/fts5Query.js';
 import { escapeLikePattern } from '../utils/sqlLike.js';
+import { UserFacingError } from '../utils/errors.js';
 import {
   CompatibilitySoftware,
   CompatibilitySearchFilter,
@@ -22,16 +23,40 @@ import {
   DependencyResolution,
 } from '../types/database.js';
 
+export interface SQLiteManagerOptions {
+  /**
+   * true 면 기존 DB 를 읽기 전용으로 연다 (MCP 서버의 조회 경로).
+   * 파일이 없어도 만들지 않고, 저널 모드 변경이나 테이블·트리거 생성 같은 쓰기를 하지 않는다.
+   * 인덱스 구축(build-index)과 update CLI 는 기본값(false)인 쓰기 모드를 쓴다.
+   */
+  readonly?: boolean;
+}
+
+/** 읽기 전용 모드에서 DB 파일이 없을 때의 안내. 절대 경로는 넣지 않는다. */
+const MISSING_DB_MESSAGE =
+  '지식베이스 DB(knowledge-base/egovframe.db)를 찾을 수 없습니다. 설치한 패키지에 knowledge-base 디렉토리가 ' +
+  '포함되어 있는지 확인하세요. 저장소를 클론해 쓰는 경우에는 npm run build-index 로 인덱스를 구축할 수 있습니다.';
+
 export class SQLiteManager {
   private db: Database.Database;
   private dbPath: string;
 
-  constructor(dbPath?: string) {
+  constructor(dbPath?: string, options: SQLiteManagerOptions = {}) {
     // 프로젝트 루트 기준의 절대 경로 사용
     // 현재 파일 위치를 기준으로 프로젝트 루트 찾기
     const currentFile = fileURLToPath(import.meta.url);
     this.dbPath = dbPath || getSQLiteDBPath(currentFile);
-    
+
+    if (options.readonly) {
+      // 조회 전용: 파일을 만들지 않고, WAL 전환과 테이블·트리거 생성을 하지 않는다.
+      // (쓰기 모드로 열면 조회만 해도 배포된 DB 파일이 바뀌고, 쓰기 권한이 없는 설치 위치에서는 실패한다.)
+      if (!fs.existsSync(this.dbPath)) {
+        throw new UserFacingError(MISSING_DB_MESSAGE);
+      }
+      this.db = new Database(this.dbPath, { readonly: true, fileMustExist: true });
+      return;
+    }
+
     // 디렉토리가 없으면 생성
     const dbDir = path.dirname(this.dbPath);
     if (!fs.existsSync(dbDir)) {
@@ -52,7 +77,9 @@ export class SQLiteManager {
     // (components_fts) 인덱스에 옛 토큰이 남는 드리프트가 누적된다.
     this.db.pragma('recursive_triggers = ON');
 
-    this.initializeTables();
+    // 여러 프로세스가 같은 DB 를 동시에 쓰기 모드로 열어도 트리거 DROP/CREATE 가 서로 끼어들지
+    // 않도록 스키마 스크립트 전체를 하나의 IMMEDIATE 트랜잭션으로 실행한다.
+    this.db.transaction(() => this.initializeTables()).immediate();
   }
 
   private initializeTables() {
@@ -824,6 +851,18 @@ export class SQLiteManager {
   optimize(): void {
     this.db.pragma('optimize');
     this.db.pragma('wal_checkpoint(TRUNCATE)');
+  }
+
+  /**
+   * 배포용 마무리: WAL 을 체크포인트하고 저널 모드를 DELETE 로 되돌린다.
+   *
+   * WAL 모드로 남은 DB 는 읽기 전용 연결도 -shm/-wal 부속 파일을 만들어야 해서, 쓰기 권한이 없는
+   * 설치 위치에서는 열리지 않는다. build-index 가 SQLite 적재를 마친 뒤 닫기 직전에 호출한다.
+   * (그 뒤에 쓰기 모드로 다시 열면 생성자가 WAL 로 되돌리므로, 반드시 마지막 단계여야 한다.)
+   */
+  finalizeForDistribution(): void {
+    this.db.pragma('wal_checkpoint(TRUNCATE)');
+    this.db.pragma('journal_mode = DELETE');
   }
 
   close() {

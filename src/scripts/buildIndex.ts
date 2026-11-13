@@ -652,6 +652,8 @@ async function buildIndex(options: BuildIndexOptions) {
     await writeStateAndArtifacts(plan, knowledgeStats, guideStats, {
       compat: compatCount,
     });
+    // 배포되는 DB 는 읽기 전용으로 열리므로 WAL 이 아닌 DELETE 저널 모드로 마무리한다
+    sqlite.finalizeForDistribution();
     sqlite.close();
     await verifyStaging(plan);
     await swapStagingIntoPlace();

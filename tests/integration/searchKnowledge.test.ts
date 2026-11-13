@@ -10,6 +10,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import {
@@ -416,5 +417,28 @@ describe("integration — egov_search_knowledge 공개 스키마", () => {
   it("서버 버전은 package.json 의 버전과 같다", () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf-8")) as { version: string };
     expect(client.getServerVersion()?.version).toBe(pkg.version);
+  });
+});
+
+describe("integration — 지식베이스 파일 보존", () => {
+  const dbPath = path.join(REPO_ROOT, "knowledge-base", "egovframe.db");
+  const sha256 = () => crypto.createHash("sha256").update(fs.readFileSync(dbPath)).digest("hex");
+
+  it("조회 호출은 git 이 추적하는 SQLite 지식베이스 파일을 바꾸지 않는다", async () => {
+    const before = sha256();
+
+    // 서버 프로세스가 종료될 때까지(WAL 체크포인트 시점 포함) 확인하도록 전용 클라이언트를 쓴다
+    const client = await createMcpClient();
+    const components = await callSearchKnowledge(client, { scope: "components", query: "게시판" });
+    const compatibility = await callSearchKnowledge(client, {
+      scope: "compatibility",
+      filters: { frameworkVersion: "4.3" },
+    });
+    await client.close();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    expect(components.isError).toBe(false);
+    expect(compatibility.isError).toBe(false);
+    expect(sha256()).toBe(before);
   });
 });

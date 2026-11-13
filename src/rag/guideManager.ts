@@ -7,10 +7,12 @@
 
 import * as lancedb from '@lancedb/lancedb';
 import { getEmbedder } from './embedder.js';
+import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import { resolveGuideDbDir } from '../utils/dataPaths.js';
+import { UserFacingError } from '../utils/errors.js';
 
 // ─── 타입 정의 ────────────────────────────────────────────
 
@@ -230,15 +232,32 @@ export class GuideSearchManager {
 
   /**
    * 데이터베이스 초기화
+   *
+   * createIfMissing (기본 true): 테이블이 없으면 새로 만든다. 인덱스 구축과 update CLI 가 쓴다.
+   * 검색 서버는 false 로 호출한다. 이때는 테이블을 만들지 않고, 인덱스가 설치되지 않았다는
+   * 안내 오류를 던진다 (빈 테이블을 만들어 "결과 0건"으로 보이게 하지 않는다).
    */
-  async initialize(): Promise<void> {
+  async initialize(options: { createIfMissing?: boolean } = {}): Promise<void> {
+    const createIfMissing = options.createIfMissing ?? true;
+
+    if (!createIfMissing && !fs.existsSync(path.join(this.dbPath, `${this.tableName}.lance`))) {
+      throw new UserFacingError(
+        `공식 가이드 인덱스(knowledge-base/${this.tableName}.lance)를 찾을 수 없습니다. 설치한 패키지에 ` +
+          'knowledge-base 디렉토리가 포함되어 있는지 확인하세요. 저장소를 클론해 쓰는 경우에는 ' +
+          'npm run build-index 로 인덱스를 구축할 수 있습니다.',
+      );
+    }
+
     try {
       this.db = await lancedb.connect(this.dbPath);
 
       try {
         this.table = await this.db.openTable(this.tableName);
         console.error(`✅ eGovFrame 가이드 검색 테이블 로드 완료 (${this.tableName})`);
-      } catch {
+      } catch (error) {
+        if (!createIfMissing) {
+          throw error;
+        }
         console.error(`📝 eGovFrame 가이드 테이블을 새로 생성합니다...`);
         await this.createTable();
       }
@@ -451,11 +470,24 @@ export function getGuideManager(): GuideSearchManager {
   return guideManagerInstance;
 }
 
+let guideManagerReady: Promise<GuideSearchManager> | null = null;
+
 /**
- * 초기화된 GuideSearchManager 인스턴스 반환
+ * 초기화된 GuideSearchManager 인스턴스 반환 (검색 서버용)
+ *
+ * 테이블은 한 번만 열어 재사용하고, 없는 테이블을 새로 만들지 않는다.
+ * 초기화에 실패하면 다음 호출에서 다시 시도한다.
  */
 export async function getInitializedGuideManager(): Promise<GuideSearchManager> {
-  const manager = getGuideManager();
-  await manager.initialize();
-  return manager;
+  if (!guideManagerReady) {
+    const manager = getGuideManager();
+    guideManagerReady = manager.initialize({ createIfMissing: false }).then(
+      () => manager,
+      (error: unknown) => {
+        guideManagerReady = null;
+        throw error;
+      },
+    );
+  }
+  return guideManagerReady;
 }

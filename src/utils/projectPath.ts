@@ -19,7 +19,6 @@ export function findProjectRoot(startPath?: string): string {
   }
   
   console.error(`🔍 프로젝트 루트 찾기 시작: ${currentDir}`);
-  console.error(`🔍 process.cwd(): ${process.cwd()}`);
   
   // 최대 10단계까지 상위 디렉토리 탐색
   for (let i = 0; i < 10; i++) {

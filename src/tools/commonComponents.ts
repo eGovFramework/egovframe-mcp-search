@@ -23,7 +23,8 @@ let dbInstance: SQLiteManager | null = null;
 
 function getDB(): SQLiteManager {
   if (!dbInstance) {
-    dbInstance = new SQLiteManager(resolveSQLiteDbPath(currentFile));
+    // 검색 서버의 조회 경로이므로 읽기 전용으로 연다
+    dbInstance = new SQLiteManager(resolveSQLiteDbPath(currentFile), { readonly: true });
   }
   return dbInstance;
 }
