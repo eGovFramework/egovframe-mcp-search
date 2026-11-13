@@ -732,27 +732,86 @@ export function getComponentDDL(componentId: string, dbType: string = 'mysql'): 
   };
 }
 
-/**
- * 컴포넌트에 필요한 DML(INSERT 초기 데이터) 추출
- */
-export function getComponentDML(componentId: string, dbType: string = 'mysql'): {
+/** 기본 보기에서 테이블마다 보여 주는 INSERT 문 수 */
+export const DML_PREVIEW_ROWS_PER_TABLE = 20;
+
+/** table 지정 조회가 한 번에 돌려주는 INSERT 문 수의 기본값이자 상한 */
+export const DML_TABLE_PAGE_SIZE = 100;
+
+/** getComponentDML 의 조회 옵션 */
+export interface ComponentDMLOptions {
+  /**
+   * 이 테이블의 INSERT 문만 조회한다 (대소문자 구분 없음).
+   * 생략하면 기본 보기: 테이블마다 처음 20건만 보여 준다.
+   */
+  table?: string;
+  /** table 지정 시 한 번에 돌려줄 건수 (기본 100, 최대 100). 기본 보기에서는 쓰지 않는다 */
+  limit?: number;
+  /** table 지정 시 건너뛸 건수 (기본 0). 기본 보기에서는 쓰지 않는다 */
+  offset?: number;
+}
+
+/** 테이블별 INSERT 문 건수 */
+export interface DMLTableCount {
+  table: string;
+  /** 스크립트에 있는 전체 건수 */
+  total: number;
+  /** 이번 결과의 dml 에 담긴 건수 */
+  shown: number;
+}
+
+/** extractTableDMLs 의 결과 */
+export interface ExtractedDML {
+  dml: string;
+  /** dml 에 담긴 INSERT 문 수 */
+  statementCount: number;
+  /** 조회 대상의 전체 INSERT 문 수 (기본 보기: 요청한 테이블 전체, table 지정: 그 테이블) */
+  totalCount: number;
+  /**
+   * 테이블별 건수.
+   * 기본 보기: 데이터가 있는 테이블(스크립트 순서) 다음에 데이터가 없는 테이블.
+   * table 지정: 그 테이블 한 건.
+   */
+  tableCounts: DMLTableCount[];
+  /** table 지정 조회에서 선택된 테이블 이름. 기본 보기는 null */
+  table: string | null;
+  /** table 지정 조회에서 적용된 시작 위치 (0 부터). 기본 보기는 0 */
+  offset: number;
+  /** 적용된 건수 상한. 기본 보기는 테이블당 미리보기 건수, table 지정 조회는 limit */
+  limit: number;
+}
+
+/** getComponentDML 의 결과 */
+export interface ComponentDMLResult extends ExtractedDML {
   componentId: string;
   componentName: string;
   dbType: string;
+  /** 컴포넌트가 사용하는 테이블·뷰 이름 (use_tables) */
   tables: string[];
-  dml: string;
-  statementCount: number;
-} | null {
+}
+
+/**
+ * 컴포넌트에 필요한 DML(INSERT 초기 데이터) 추출
+ *
+ * 공통코드·ID 생성 테이블 때문에 전체 INSERT 문은 컴포넌트당 600건(12만 자)을 넘는다.
+ * 기본 보기는 테이블마다 처음 20건만 돌려주고, options.table 을 주면 그 테이블의
+ * INSERT 문을 offset 부터 limit(최대 100)건씩 나눠 돌려준다.
+ */
+export function getComponentDML(
+  componentId: string,
+  dbType: string = 'mysql',
+  options: ComponentDMLOptions = {}
+): ComponentDMLResult | null {
   // 지원하지 않는 dbType 은 컴포넌트 없음(null)과 구분되도록 오류로 알린다
   const normalizedDbType = requireDbType(dbType);
-  
+
   const db = getDB();
   let component = db.getComponentById(componentId);
   if (!component) {
     component = db.getComponentByPackage(componentId);
     if (!component) return null;
   }
-  
+
   // useTables 파싱
   let tables: string[] = [];
   if (component.use_tables) {
@@ -762,43 +821,40 @@ export function getComponentDML(componentId: string, dbType: string = 'mysql'): 
       tables = [];
     }
   }
-  
-  if (tables.length === 0) {
-    return {
-      componentId: component.component_id,
-      componentName: component.name,
-      dbType: normalizedDbType,
-      tables: [],
-      dml: '-- 이 컴포넌트에는 사용 테이블이 정의되어 있지 않습니다.',
-      statementCount: 0,
-    };
-  }
-  
-  // DML 파일 읽기
-  const srcRoot = getComponentSrcRoot();
-  const dmlFilePath = path.join(srcRoot, 'script', 'dml', normalizedDbType, `com_DML_${normalizedDbType}.sql`);
-  
-  if (!fs.existsSync(dmlFilePath)) {
-    return {
-      componentId: component.component_id,
-      componentName: component.name,
-      dbType: normalizedDbType,
-      tables,
-      dml: `-- DML 파일을 찾을 수 없습니다: ${normalizedDbType}`,
-      statementCount: 0,
-    };
-  }
-  
-  const fullDML = fs.readFileSync(dmlFilePath, 'utf-8');
-  const extractedDML = extractTableDMLs(fullDML, tables);
-  
-  return {
+
+  const base = {
     componentId: component.component_id,
     componentName: component.name,
     dbType: normalizedDbType,
     tables,
-    dml: extractedDML.dml,
-    statementCount: extractedDML.statementCount,
+  };
+
+  // 컴포넌트가 쓰지 않는 테이블을 지정했으면 스크립트를 읽기 전에 알린다
+  const selectedTable = resolveDmlTable(tables, options.table);
+
+  if (tables.length === 0) {
+    return {
+      ...base,
+      ...emptyDml('-- 이 컴포넌트에는 사용 테이블이 정의되어 있지 않습니다.', selectedTable),
+    };
+  }
+
+  // DML 파일 읽기
+  const srcRoot = getComponentSrcRoot();
+  const dmlFilePath = path.join(srcRoot, 'script', 'dml', normalizedDbType, `com_DML_${normalizedDbType}.sql`);
+
+  if (!fs.existsSync(dmlFilePath)) {
+    return {
+      ...base,
+      ...emptyDml(`-- DML 파일을 찾을 수 없습니다: ${normalizedDbType}`, selectedTable),
+    };
+  }
+
+  const fullDML = fs.readFileSync(dmlFilePath, 'utf-8');
+
+  return {
+    ...base,
+    ...extractTableDMLs(fullDML, tables, options),
   };
 }
 
@@ -821,18 +877,22 @@ export function normalizeDbType(dbType: string): DbType | null {
   return supported ?? DB_TYPE_ALIASES.get(normalized) ?? null;
 }
 
-/** 오류 문구에 싣는 dbType 입력값의 최대 길이 */
-const DB_TYPE_ECHO_MAX_LENGTH = 40;
+/** 오류 문구에 싣는 입력값의 최대 길이 */
+const INPUT_ECHO_MAX_LENGTH = 40;
+
+/** 호출자가 준 값을 오류 문구에 실을 수 있게 다듬는다 (앞뒤 공백 제거, 길이 제한) */
+function echoInput(value: unknown): string {
+  const text = String(value).trim();
+  return text.length > INPUT_ECHO_MAX_LENGTH ? `${text.slice(0, INPUT_ECHO_MAX_LENGTH)}…` : text;
+}
 
 /** DB 타입을 정규화하고, 지원하지 않는 값이면 지원 목록을 담은 오류를 던진다 */
 function requireDbType(dbType: string): DbType {
   const normalized = normalizeDbType(dbType);
   if (normalized) return normalized;
-  
-  const given = String(dbType).trim();
-  const shown = given.length > DB_TYPE_ECHO_MAX_LENGTH ? `${given.slice(0, DB_TYPE_ECHO_MAX_LENGTH)}…` : given;
+
   throw new UserFacingError(
-    `지원하지 않는 DB 타입입니다: ${shown} ` +
+    `지원하지 않는 DB 타입입니다: ${echoInput(dbType)} ` +
     `(지원: ${SUPPORTED_DB_TYPES.join(', ')}. 별칭: ${[...DB_TYPE_ALIASES.keys()].join(', ')})`
   );
 }
@@ -964,64 +1024,228 @@ export function extractTableDDLs(fullDDL: string, tableNames: string[]): Extract
   };
 }
 
-/**
- * 전체 DML에서 특정 테이블의 INSERT 문 추출
- */
-function extractTableDMLs(fullDML: string, tableNames: string[]): { dml: string; statementCount: number } {
-  const upperTableNames = new Set(tableNames.map(t => t.toUpperCase()));
-  const lines = fullDML.split('\n');
-  const extractedLines: string[] = [];
-  let statementCount = 0;
+/** 스크립트에서 읽은 INSERT 문 한 줄 */
+interface DmlStatement {
+  /** 대상 테이블 이름 — 대문자 */
+  table: string;
+  line: string;
+  /** 바로 앞줄에 있던 구역 주석 (없으면 빈 문자열) */
+  comment: string;
+}
+
+/** 요청한 테이블의 INSERT 문을 스크립트 순서대로 읽는다 */
+function parseDmlStatements(fullDML: string, upperTableNames: Set<string>): DmlStatement[] {
+  const statements: DmlStatement[] = [];
   let prevComment = '';
-  
-  for (const line of lines) {
+
+  for (const line of fullDML.split('\n')) {
     const trimmedLine = line.trim();
-    
+
     // 코멘트 라인 보존
     if (trimmedLine.startsWith('--')) {
       prevComment = line;
       continue;
     }
-    
+
     if (trimmedLine === '') {
       prevComment = '';
       continue;
     }
-    
+
     // INSERT INTO TABLENAME 패턴 매칭
     const match = trimmedLine.match(/INSERT\s+INTO\s+(\w+)/i);
     if (match) {
-      const tableName = match[1].toUpperCase();
-      if (upperTableNames.has(tableName)) {
-        // 섹션 코멘트가 있으면 먼저 추가
-        if (prevComment && extractedLines.length > 0 && 
-            extractedLines[extractedLines.length - 1] !== prevComment) {
-          extractedLines.push('');
-          extractedLines.push(prevComment);
-        } else if (prevComment && extractedLines.length === 0) {
-          extractedLines.push(prevComment);
-        }
-        extractedLines.push(line);
-        statementCount++;
+      const table = match[1].toUpperCase();
+      if (upperTableNames.has(table)) {
+        statements.push({ table, line, comment: prevComment });
       }
     }
-    
+
     prevComment = '';
   }
-  
-  if (extractedLines.length === 0) {
+
+  return statements;
+}
+
+/** INSERT 문을 줄 목록에 덧붙인다. 구역 주석이 있으면 빈 줄로 띄우고 먼저 넣는다 */
+function pushDmlStatement(lines: string[], statement: DmlStatement): void {
+  if (statement.comment) {
+    if (lines.length > 0) lines.push('');
+    lines.push(statement.comment);
+  }
+  lines.push(statement.line);
+}
+
+/** INSERT 문 없이 안내 주석만 담은 결과 */
+function emptyDml(dml: string, table: string | null): ExtractedDML {
+  return {
+    dml,
+    statementCount: 0,
+    totalCount: 0,
+    tableCounts: [],
+    table,
+    offset: 0,
+    limit: table === null ? DML_PREVIEW_ROWS_PER_TABLE : DML_TABLE_PAGE_SIZE,
+  };
+}
+
+/**
+ * table 옵션을 컴포넌트의 테이블 이름으로 바꾼다 (대소문자 구분 없음).
+ * 지정하지 않았으면 null, 컴포넌트가 쓰지 않는 테이블이면 사용 가능한 이름을 담은 오류.
+ */
+function resolveDmlTable(tableNames: string[], table: string | undefined): string | null {
+  const requested = typeof table === 'string' ? table.trim() : '';
+  if (requested === '') return null;
+
+  const found = tableNames.find(name => name.toUpperCase() === requested.toUpperCase());
+  if (found) return found;
+
+  const available = tableNames.length > 0
+    ? `사용 가능한 테이블: ${tableNames.join(', ')}`
+    : '이 컴포넌트에는 사용 테이블이 정의되어 있지 않습니다.';
+  throw new UserFacingError(
+    `'${echoInput(requested)}' 은(는) 이 컴포넌트가 사용하는 테이블이 아닙니다. ${available}`
+  );
+}
+
+/** limit 을 1~100 의 정수로 맞춘다 (숫자가 아니면 기본값 100) */
+function normalizeDmlLimit(limit: number | undefined): number {
+  if (typeof limit !== 'number' || Number.isNaN(limit)) return DML_TABLE_PAGE_SIZE;
+  return Math.min(DML_TABLE_PAGE_SIZE, Math.max(1, Math.floor(limit)));
+}
+
+/** offset 을 0 이상의 정수로 맞춘다 (유한한 숫자가 아니면 0) */
+function normalizeDmlOffset(offset: number | undefined): number {
+  if (typeof offset !== 'number' || !Number.isFinite(offset)) return 0;
+  return Math.max(0, Math.floor(offset));
+}
+
+/** 기본 보기: 테이블마다 처음 몇 건만 담고 테이블별 전체 건수를 함께 돌려준다 */
+function previewDmlByTable(statements: DmlStatement[], tableNames: string[]): ExtractedDML {
+  // 요청한 표기 (대소문자만 다른 중복 요청은 처음 것)
+  const spelling = new Map<string, string>();
+  for (const name of tableNames) {
+    const upper = name.toUpperCase();
+    if (!spelling.has(upper)) spelling.set(upper, name);
+  }
+
+  const totals = new Map<string, number>();
+  for (const statement of statements) {
+    totals.set(statement.table, (totals.get(statement.table) ?? 0) + 1);
+  }
+
+  const shown = new Map<string, number>();
+  const lines: string[] = [];
+  for (const statement of statements) {
+    const count = shown.get(statement.table) ?? 0;
+    if (count >= DML_PREVIEW_ROWS_PER_TABLE) continue;
+
+    pushDmlStatement(lines, statement);
+    shown.set(statement.table, count + 1);
+
+    // 미리보기 건수를 채운 자리에 생략 건수를 남긴다
+    const total = totals.get(statement.table) ?? 0;
+    if (count + 1 === DML_PREVIEW_ROWS_PER_TABLE && total > DML_PREVIEW_ROWS_PER_TABLE) {
+      const name = spelling.get(statement.table) ?? statement.table;
+      lines.push(`-- (${name}: 전체 ${total}건 중 ${total - DML_PREVIEW_ROWS_PER_TABLE}건 생략)`);
+    }
+  }
+
+  const tableCounts: DMLTableCount[] = [
+    ...[...totals].map(([upper, total]) => ({
+      table: spelling.get(upper) ?? upper,
+      total,
+      shown: shown.get(upper) ?? 0,
+    })),
+    ...[...spelling]
+      .filter(([upper]) => !totals.has(upper))
+      .map(([, name]) => ({ table: name, total: 0, shown: 0 })),
+  ];
+  const totalCount = statements.length;
+  const statementCount = tableCounts.reduce((sum, count) => sum + count.shown, 0);
+  const result = {
+    statementCount,
+    totalCount,
+    tableCounts,
+    table: null,
+    offset: 0,
+    limit: DML_PREVIEW_ROWS_PER_TABLE,
+  };
+
+  if (statementCount === 0) {
     return {
+      ...result,
       dml: `-- 요청된 테이블(${tableNames.join(', ')})에 대한 초기 데이터가 없습니다.`,
-      statementCount: 0,
     };
   }
-  
-  const header = `-- =============================================\n-- ${tableNames.length}개 테이블 관련 초기 데이터 (${statementCount}건)\n-- 테이블: ${tableNames.join(', ')}\n-- =============================================\n`;
-  
+
+  const counts = statementCount < totalCount
+    ? `전체 ${totalCount}건 중 ${statementCount}건 — 테이블마다 처음 ${DML_PREVIEW_ROWS_PER_TABLE}건`
+    : `${statementCount}건`;
+  const header = `-- =============================================\n-- ${tableNames.length}개 테이블 관련 초기 데이터 (${counts})\n-- 테이블: ${tableNames.join(', ')}\n-- =============================================\n`;
+
   return {
-    dml: header + '\n' + extractedLines.join('\n'),
-    statementCount,
+    ...result,
+    dml: header + '\n' + lines.join('\n'),
   };
+}
+
+/** table 지정 조회: 한 테이블의 INSERT 문을 offset 부터 limit 건 돌려준다 */
+function pageDmlOfTable(statements: DmlStatement[], table: string, options: ComponentDMLOptions): ExtractedDML {
+  const upper = table.toUpperCase();
+  const rows = statements.filter(statement => statement.table === upper);
+  const limit = normalizeDmlLimit(options.limit);
+  const offset = normalizeDmlOffset(options.offset);
+  const page = rows.slice(offset, offset + limit);
+  const result = {
+    statementCount: page.length,
+    totalCount: rows.length,
+    tableCounts: [{ table, total: rows.length, shown: page.length }],
+    table,
+    offset,
+    limit,
+  };
+
+  if (rows.length === 0) {
+    return { ...result, dml: `-- ${table} 테이블에는 초기 데이터가 없습니다.` };
+  }
+  if (page.length === 0) {
+    return {
+      ...result,
+      dml: `-- ${table} 초기 데이터: 총 ${rows.length}건 — offset ${offset} 부터는 남은 INSERT 문이 없습니다.`,
+    };
+  }
+
+  const lines: string[] = [];
+  for (const statement of page) {
+    pushDmlStatement(lines, statement);
+  }
+  const header = `-- =============================================\n-- ${table} 초기 데이터: 총 ${rows.length}건 중 ${offset + 1}~${offset + page.length}\n-- =============================================\n`;
+
+  return {
+    ...result,
+    dml: header + '\n' + lines.join('\n'),
+  };
+}
+
+/**
+ * 전체 DML에서 특정 테이블의 INSERT 문 추출
+ *
+ * options.table 이 없으면 테이블마다 처음 20건만(기본 보기), 있으면 그 테이블의
+ * INSERT 문을 offset 부터 limit 건 돌려준다.
+ */
+export function extractTableDMLs(
+  fullDML: string,
+  tableNames: string[],
+  options: ComponentDMLOptions = {}
+): ExtractedDML {
+  const selectedTable = resolveDmlTable(tableNames, options.table);
+  const upperTableNames = new Set(tableNames.map(t => t.toUpperCase()));
+  const statements = parseDmlStatements(fullDML, upperTableNames);
+
+  return selectedTable === null
+    ? previewDmlByTable(statements, tableNames)
+    : pageDmlOfTable(statements, selectedTable, options);
 }
 
 /**
@@ -1051,22 +1275,60 @@ export function formatComponentDDL(result: ComponentDDLResult): string {
 /**
  * DML 결과 포맷팅
  */
-export function formatComponentDML(result: {
-  componentId: string;
-  componentName: string;
-  dbType: string;
-  tables: string[];
-  dml: string;
-  statementCount: number;
-}): string {
+export function formatComponentDML(result: ComponentDMLResult): string {
   let output = `## ${result.componentName} 초기 데이터 (${result.dbType})\n\n`;
   output += `- **컴포넌트**: ${result.componentId}\n`;
   output += `- **DB 종류**: ${result.dbType}\n`;
+
+  if (result.table !== null) {
+    // 한 테이블의 구간 조회
+    const last = result.offset + result.statementCount;
+    output += `- **테이블**: ${result.table}\n`;
+    if (result.statementCount > 0) {
+      output += `- **INSERT 문**: 총 ${result.totalCount}건 중 ${result.offset + 1}~${last}\n\n`;
+    } else if (result.totalCount > 0) {
+      output += `- **INSERT 문**: 총 ${result.totalCount}건 (offset ${result.offset} 부터는 남은 INSERT 문이 없습니다)\n\n`;
+    } else {
+      output += '- **INSERT 문**: 총 0건\n\n';
+    }
+    output += '```sql\n';
+    output += result.dml;
+    output += '\n```\n';
+    if (result.statementCount > 0 && last < result.totalCount) {
+      output += `\n> 남은 ${result.totalCount - last}건은 같은 호출에 \`filters.offset: ${last}\` 을 주어 이어서 조회할 수 있습니다.\n`;
+    }
+    return output;
+  }
+
+  // 기본 보기: 테이블마다 처음 몇 건
+  const omitted = result.totalCount - result.statementCount;
   output += `- **관련 테이블**: ${result.tables.length}개\n`;
-  output += `- **INSERT 문**: ${result.statementCount}건\n\n`;
+  output += omitted > 0
+    ? `- **INSERT 문**: 전체 ${result.totalCount}건 중 ${result.statementCount}건 표시 (테이블마다 처음 ${result.limit}건)\n\n`
+    : `- **INSERT 문**: ${result.statementCount}건\n\n`;
+
+  const withData = result.tableCounts.filter(count => count.total > 0);
+  if (withData.length > 0) {
+    output += '| 테이블 | 전체 | 표시 | 생략 |\n';
+    output += '|--------|------|------|------|\n';
+    for (const count of withData) {
+      output += `| ${count.table} | ${count.total} | ${count.shown} | ${count.total - count.shown} |\n`;
+    }
+    output += '\n';
+
+    const withoutData = result.tableCounts.filter(count => count.total === 0);
+    if (withoutData.length > 0) {
+      output += `초기 데이터가 없는 테이블: ${withoutData.map(count => count.table).join(', ')}\n\n`;
+    }
+  }
+
   output += '```sql\n';
   output += result.dml;
   output += '\n```\n';
-  
+
+  if (omitted > 0) {
+    output += '\n> 생략된 INSERT 문이 있습니다. 특정 테이블의 전체 내용은 `egov_search_knowledge` 를 `scope: "components"`, `action: "dml"`, 같은 `filters.componentId`·`filters.dbType` 에 `filters.table: <테이블명>` 을 더해 호출하고, `limit`(한 번에 최대 100건)과 `filters.offset` 으로 구간을 나눠 조회할 수 있습니다.\n';
+  }
+
   return output;
 }
