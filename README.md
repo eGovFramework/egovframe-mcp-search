@@ -483,7 +483,7 @@ egovframe-mcp-search/
 
 ## 🧪 테스트 (Testing)
 
-자동화 테스트는 [Vitest](https://vitest.dev/) 로 작성되어 있고, 단위 테스트(`tests/unit`)와 통합 테스트(`tests/integration`)로 나뉩니다. 통합 테스트에는 빌드된 서버를 stdio 로 실행해 `egov_search_knowledge` 를 실제로 호출하는 테스트가 들어 있습니다. 임베딩 모델이나 서브모듈이 없으면 그것이 필요한 테스트는 건너뜁니다.
+자동화 테스트는 [Vitest](https://vitest.dev/) 로 작성되어 있고, 단위 테스트(`tests/unit`)와 통합 테스트(`tests/integration`)로 나뉩니다. 통합 테스트에는 빌드된 서버를 stdio 로 실행해 `egov_search_knowledge` 를 실제로 호출하는 테스트가 들어 있습니다. 이 서버는 빈 임시 디렉토리를 오버레이(`EGOV_MCP_DATA_DIR`)로 받아 실행되므로, `update` 로 받아 둔 갱신분은 테스트 결과에 영향을 주지 않습니다. 임베딩 모델이나 서브모듈이 없으면 그것이 필요한 테스트는 건너뜁니다.
 
 | 명령어                | 동작                                                |
 |----------------------|----------------------------------------------------|
