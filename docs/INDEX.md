@@ -6,7 +6,7 @@
 
 | 문서 | 설명 |
 |------|------|
-| [MCP_SETUP_GUIDE.md](./MCP_SETUP_GUIDE.md) | 설치 형태별 준비 사항과 Cursor, Claude Desktop 등 MCP 클라이언트 등록 방법 |
+| [MCP_SETUP_GUIDE.md](./MCP_SETUP_GUIDE.md) | 설치 형태별 준비 사항, Cursor, Claude Desktop 등 MCP 클라이언트 등록 방법, 환경 변수, 문제 해결 |
 | [MCP_REFERENCE.md](./MCP_REFERENCE.md) | MCP API 요약: 파라미터, 필터, 응답과 오류의 형태 |
 | [EXPOSED_TOOLS.md](./EXPOSED_TOOLS.md) | `tools/list` 기준 노출 도구와 노출되지 않는 옛 도구 이름 |
 | [EGOV_SEARCH_KNOWLEDGE_TOOL.md](./EGOV_SEARCH_KNOWLEDGE_TOOL.md) | `egov_search_knowledge` 의 scope 별 사용법과 호출 예시 |
@@ -17,7 +17,7 @@
 | 문서 | 설명 |
 |------|------|
 | [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md) | 플랫폼별 배포 tgz 의 제작과 설치, 저장소 클론 실행, 지식베이스 갱신 |
-| [HYBRID_SYSTEM_GUIDE.md](./HYBRID_SYSTEM_GUIDE.md) | SQLite, LanceDB, 공통컴포넌트 소스 트리로 이루어진 저장소 구조 |
+| [HYBRID_SYSTEM_GUIDE.md](./HYBRID_SYSTEM_GUIDE.md) | SQLite, LanceDB, 공통컴포넌트 소스 트리로 이루어진 저장 구조와 검색 방식, 인덱스 재구축, 번들과 오버레이 |
 | [DATABASE_SCHEMA.md](./DATABASE_SCHEMA.md) | SQLite 와 LanceDB 테이블의 스키마 |
 | [TESTING_GUIDE.md](./TESTING_GUIDE.md) | 빌드와 테스트 실행 방법, 테스트 구성 |
 | [tests/](./tests/) | 테스트 코드를 설명하는 문서 |
