@@ -9,8 +9,15 @@
 export const MAX_SEARCH_TERMS = 16;
 
 /**
+ * 키워드 추출에 쓰는 query 의 최대 길이 (String.length 기준, UTF-16 코드 단위).
+ * 이보다 긴 query 는 앞부분만 읽는다. 검색어 하나의 길이와 추출에 드는 시간이 입력 크기와 무관하게 묶인다.
+ */
+export const MAX_KEYWORD_QUERY_LENGTH = 2000;
+
+/**
  * 키워드 질의에서 검색어를 추출한다.
  *
+ * - query 의 앞 MAX_KEYWORD_QUERY_LENGTH 자만 읽는다 (경계에 걸친 낱말은 잘린 부분까지만 검색어가 된다).
  * - 유니코드 NFC 로 정규화한다 (자모가 분리된 한글 입력 대응).
  * - 문자·숫자와 검색어 안쪽의 `.` `-` `_` 만 남기고, 그 밖의 문장부호와 공백은 구분자로 본다.
  *   (`4.3`, `egovframework.com.cop.bbs`, `spring-boot` 같은 식별자는 한 검색어로 유지된다.)
@@ -20,7 +27,10 @@ export function extractSearchTerms(raw: string, maxTerms: number = MAX_SEARCH_TE
   const terms: string[] = [];
   const seen = new Set<string>();
 
-  for (const candidate of raw.normalize('NFC').split(/[^\p{L}\p{N}._-]+/u)) {
+  // 정규화보다 먼저 자른다 (긴 입력 전체를 정규화하지 않는다)
+  const text = raw.slice(0, MAX_KEYWORD_QUERY_LENGTH).normalize('NFC');
+
+  for (const candidate of text.split(/[^\p{L}\p{N}._-]+/u)) {
     const term = trimEdgeSeparators(candidate);
     if (!term || !/[\p{L}\p{N}]/u.test(term)) {
       continue;

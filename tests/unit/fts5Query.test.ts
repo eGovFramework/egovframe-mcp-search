@@ -9,6 +9,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import Database from "better-sqlite3";
 import {
+  MAX_KEYWORD_QUERY_LENGTH,
   MAX_SEARCH_TERMS,
   buildFts5MatchQuery,
   extractSearchTerms,
@@ -65,6 +66,30 @@ describe("extractSearchTerms", () => {
     const nfd = "게시판".normalize("NFD");
     expect(nfd).not.toBe("게시판");
     expect(extractSearchTerms(nfd)).toEqual(["게시판"]);
+  });
+});
+
+describe("extractSearchTerms 가 읽는 query 의 길이", () => {
+  it("읽는 길이의 상한은 2,000자다", () => {
+    expect(MAX_KEYWORD_QUERY_LENGTH).toBe(2000);
+  });
+
+  it("query 의 앞 2,000자에서만 검색어를 추출한다", () => {
+    // 'a ' 1,000번이 정확히 2,000자다. 그 뒤의 낱말은 읽지 않는다
+    expect(extractSearchTerms(`${"a ".repeat(1000)}뒤쪽`)).toEqual(["a"]);
+    // 2,000번째 글자까지는 읽는다 ('x' 1,997자 + 공백 + 'ab' = 2,000자)
+    expect(extractSearchTerms(`${"x".repeat(1997)} abcd`)).toEqual(["x".repeat(1997), "ab"]);
+  });
+
+  it("경계에 걸친 낱말은 앞 2,000자에 든 부분까지만 검색어가 된다", () => {
+    expect(extractSearchTerms("가".repeat(2500))).toEqual(["가".repeat(2000)]);
+    expect(extractSearchTerms(`a${".".repeat(80000)}a`)).toEqual(["a"]);
+  });
+
+  it("2,000자 이하의 query 는 그대로 읽는다", () => {
+    const words = Array.from({ length: 10 }, (_, index) => `낱말${index}`);
+    expect(extractSearchTerms(words.join(" "))).toEqual(words);
+    expect(extractSearchTerms("가".repeat(2000))).toEqual(["가".repeat(2000)]);
   });
 });
 
