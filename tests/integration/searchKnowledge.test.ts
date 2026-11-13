@@ -667,6 +667,16 @@ describe("integration — egov_search_knowledge 공통컴포넌트 조회", () =
     expect(res.text).not.toContain("비슷한 컴포넌트");
   });
 
+  it("기호로 이은 입력을 조각으로 나눠 후보를 찾지 않는다", async () => {
+    // '-' 나 '.' 에서 나눈 조각으로 찾던 때에는 '없는' 이 설명에 든 컴포넌트 한 건이, 'com' 이 패키지명에 든 컴포넌트
+    // 다섯 건이 후보로 붙었다
+    for (const componentId of ["zzz-없는-컴포넌트", "egovframework.com.zzz"]) {
+      const res = await search({ scope: "components", filters: { componentId } });
+      expect(res.isError, componentId).toBe(false);
+      expect(res.text, componentId).toBe(`컴포넌트를 찾을 수 없습니다: ${componentId}`);
+    }
+  });
+
   it.skipIf(!hasComponentSources())("컴포넌트 이름으로도 ddl 을 조회할 수 있다", async () => {
     const byName = await search({ scope: "components", action: "ddl", filters: { componentId: "블로그관리" } });
     expect(byName.isError).toBe(false);
@@ -812,6 +822,96 @@ describe("integration — egov_search_knowledge 공통컴포넌트 조회", () =
     expect(note).toContain("(검색어: 증서, 통계, 권한관리)");
   });
 
+  /** 응답에서 marker 가 든 안내 줄들 */
+  const noteLines = (text: string, marker: string) => text.split("\n").filter((line) => line.includes(marker));
+  /** 일부 검색어만 일치한 결과(any-term)임을 알리는 안내 줄의 표지 */
+  const ANY_TERM_MARKER = "들어 있는 항목을 표시합니다";
+  /** 일치하는 항목이 없어 쓰지 않은 낱말을 알리는 안내 줄의 표지 */
+  const IGNORED_MARKER = "일치하는 항목이 없어 검색에 쓰지 않은 낱말";
+  /** 일치하는 항목이 있는지와 관계없이 뺀 낱말을 알리는 안내 줄의 표지 */
+  const DROPPED_MARKER = "목록의 모든 항목에 해당해 검색에 쓰지 않은 낱말";
+  /** 응답의 표에 실린 컴포넌트 ID (실린 순서) */
+  const listedIds = (text: string) => [...text.matchAll(/^\| `([^`]+)` \|/gm)].map((match) => match[1]);
+
+  it("query 에 OR 가 있으면 OR 로 찾았다고 알리고, 모든 검색어가 든 항목이 없다고 적지 않는다", async () => {
+    const res = await search({ scope: "components", query: "게시판 OR 댓글", limit: 3 });
+    expect(res.isError).toBe(false);
+    // 두 낱말이 모두 든 댓글관리(cmt)가 맨 앞이다. "모든 검색어가 들어 있는 항목이 없어" 는 이 결과에서 사실과 다르다
+    expect(listedIds(res.text)[0]).toBe("cmt");
+    expect(noteLines(res.text, ANY_TERM_MARKER)).toEqual([
+      "> query 에 OR 가 있어, 검색어 2개 가운데 1개 이상이 들어 있는 항목을 표시합니다 (검색어: 게시판, 댓글).",
+    ]);
+    expect(res.text).not.toContain("모든 검색어가 들어 있는 항목이 없어");
+  });
+
+  it("검색에서 뺀 낱말은 모든 검색어가 일치한 결과에도 따로 알린다", async () => {
+    const res = await search({ scope: "components", query: "게시판 컴포넌트", limit: 3 });
+    expect(res.isError).toBe(false);
+    expect(listedIds(res.text)[0]).toBe("bbs");
+    expect(noteLines(res.text, DROPPED_MARKER)).toEqual([
+      "> 한 글자이거나, 영어 기능어이거나, 목록의 모든 항목에 해당해 검색에 쓰지 않은 낱말: 컴포넌트.",
+    ]);
+    // 남은 검색어는 모두 일치했으므로 다른 안내는 없다
+    expect(noteLines(res.text, ANY_TERM_MARKER)).toEqual([]);
+    expect(noteLines(res.text, IGNORED_MARKER)).toEqual([]);
+
+    // 영어 문장으로 물어도 같다: 영어 기능어와 목록의 모든 항목에 해당하는 낱말을 뺐다고 알린다
+    const sentence = await search({ scope: "components", query: "What's the login component?", limit: 3 });
+    expect(sentence.isError).toBe(false);
+    expect(noteLines(sentence.text, DROPPED_MARKER)).toHaveLength(1);
+    expect(noteLines(sentence.text, DROPPED_MARKER)[0]).toMatch(/: What, the, component\.$/);
+  });
+
+  it("결과가 없으면 일치하는 항목이 없어 쓰지 않은 낱말과 검색에서 뺀 낱말을 모두 알린다", async () => {
+    const res = await search({ scope: "components", query: "Is the zzzqqq with x" });
+    expect(res.isError).toBe(false);
+    expect(res.text).toContain("공통컴포넌트 목록 (0개)");
+    expect(noteLines(res.text, IGNORED_MARKER)).toEqual(["> 일치하는 항목이 없어 검색에 쓰지 않은 낱말: zzzqqq."]);
+    expect(noteLines(res.text, DROPPED_MARKER)).toHaveLength(1);
+    expect(noteLines(res.text, DROPPED_MARKER)[0]).toMatch(/: Is, the, with, x\.$/);
+    expect(noteLines(res.text, ANY_TERM_MARKER)).toEqual([]);
+  });
+
+  it("필터 때문에 0건이면 필터를 뺐을 때 같은 query 에 일치하는 건수를 알린다", async () => {
+    /** 필터를 뺀 조회를 권하는 안내 줄의 표지 */
+    const WITHOUT_FILTERS_MARKER = "필터를 빼면";
+    const everywhere = await search({ scope: "components", query: "로그인", limit: 1 });
+    const total = Number(everywhere.text.match(/공통컴포넌트 목록 \((\d+)개 중 1개 표시\)/)?.[1]);
+    expect(total).toBeGreaterThan(1);
+
+    // '로그인' 이 든 컴포넌트는 있지만 게시판 카테고리 안에는 없다. 쓰지 않은 낱말의 안내만으로는 0건의 원인이
+    // 낱말인지 필터인지 알 수 없다
+    const res = await search({ scope: "components", query: "로그인", filters: { categoryId: "게시판" } });
+    expect(res.isError).toBe(false);
+    expect(res.text).toContain("공통컴포넌트 목록 (0개)");
+    expect(noteLines(res.text, IGNORED_MARKER)).toEqual(["> 일치하는 항목이 없어 검색에 쓰지 않은 낱말: 로그인."]);
+    expect(noteLines(res.text, WITHOUT_FILTERS_MARKER)).toEqual([
+      `> 필터(categoryId)를 적용한 범위에는 일치하는 컴포넌트가 없습니다. 필터를 빼면 같은 query 로 ${total}개를 찾습니다.`,
+    ]);
+
+    // 필터를 빼도 일치하는 컴포넌트가 없거나, 필터를 주지 않았거나, 결과가 있으면 이 안내를 붙이지 않는다
+    for (const args of [
+      { scope: "components", query: "zzzqqq", filters: { categoryId: "게시판" } },
+      { scope: "components", query: "zzzqqq" },
+      { scope: "components", query: "게시판", filters: { categoryId: "게시판" } },
+    ]) {
+      const other = await search(args);
+      expect(other.isError, JSON.stringify(args)).toBe(false);
+      expect(noteLines(other.text, WITHOUT_FILTERS_MARKER), JSON.stringify(args)).toEqual([]);
+    }
+  });
+
+  it("목록의 모든 항목에 해당하는 낱말은 쓸 수 있는 다른 검색어가 없으면 빼지 않고 검색어로 쓴다", async () => {
+    // 'zzzqqq' 는 어느 컴포넌트에도 없다. '컴포넌트' 까지 빼면 0건이 되므로 빼지 않고, 그 낱말이 든 컴포넌트를 돌려준다
+    const res = await search({ scope: "components", query: "zzzqqq 컴포넌트" });
+    expect(res.isError).toBe(false);
+    expect(listedIds(res.text).length).toBeGreaterThan(0);
+    expect(noteLines(res.text, ANY_TERM_MARKER)).toHaveLength(1);
+    expect(noteLines(res.text, ANY_TERM_MARKER)[0]).toContain("(검색어: 컴포넌트)");
+    expect(noteLines(res.text, IGNORED_MARKER)).toEqual(["> 일치하는 항목이 없어 검색에 쓰지 않은 낱말: zzzqqq."]);
+    expect(noteLines(res.text, DROPPED_MARKER)).toEqual([]);
+  });
+
   it("검색어를 추출할 수 없는 query 는 없는 것으로 보고 필터 목록을 돌려준다", async () => {
     const res = await search({ scope: "components", query: "*", filters: { categoryId: "로그인" } });
     expect(res.isError).toBe(false);
@@ -945,6 +1045,50 @@ describe("integration — egov_search_knowledge 호환 소프트웨어 조회", 
     const names = new Set(body.software.map((s: any) => s.product_name));
     expect(names.has("JEUS")).toBe(true);
     expect(names.has("Tibero")).toBe(true);
+  });
+
+  it("query 에 OR 가 있으면 orQuery 를 싣고, 낱말 가운데 하나라도 든 행을 돌려준다", async () => {
+    const res = await search({ scope: "compatibility", query: "티맥스 OR LG", limit: 50 });
+    expect(res.isError).toBe(false);
+    const body = parseJsonBlock(res.text);
+    expect(body.matchMode).toBe("any-term");
+    expect(body.orQuery).toBe(true);
+    expect(body.usedTerms).toEqual(["티맥스", "LG"]);
+    expect(body.requiredMatches).toBe(1);
+    expect(body.droppedTerms).toBeUndefined();
+    // 두 업체의 행이 섞여 확인일자 순으로 나온다. 영문 검색어(LG)가 일치한 행이 앞을 모두 차지하지 않는다
+    const vendors: string[] = body.software.map((s: any) => s.vendor);
+    expect(vendors.some((vendor) => vendor.includes("티맥스"))).toBe(true);
+    expect(vendors.some((vendor) => vendor.includes("LG"))).toBe(true);
+    const dates: string[] = body.software.map((s: any) => s.verified_date);
+    expect(dates).toEqual([...dates].sort().reverse());
+
+    // OR 가 없는 조회에는 orQuery 가 없다
+    const plain = parseJsonBlock((await search({ scope: "compatibility", query: "JEUS Tibero WebLogic" })).text);
+    expect(plain.orQuery).toBeUndefined();
+  });
+
+  it("검색에서 뺀 검색어는 droppedTerms 로 싣고, 뺀 낱말이 제품명에 든 제품을 맨 앞에 싣는다", async () => {
+    const res = await search({ scope: "compatibility", query: "eGov CMS", limit: 5 });
+    expect(res.isError).toBe(false);
+    const body = parseJsonBlock(res.text);
+    // 'eGov' 를 뺀 나머지 검색어(CMS)가 모두 일치한 결과다
+    expect(body.matchMode).toBe("all-terms");
+    expect(body.droppedTerms).toEqual(["eGov"]);
+    expect(body.usedTerms).toBeUndefined();
+    expect(body.ignoredTerms).toBeUndefined();
+    expect(body.total).toBeGreaterThan(100);
+    expect(body.software.map((s: any) => /egov/i.test(s.product_name))).toEqual([true, true, true, true, false]);
+
+    // 영어 문장: 영어 기능어와 프레임워크를 가리키는 낱말은 droppedTerms, 일치하는 행이 없는 낱말은 ignoredTerms 다
+    const sentence = parseJsonBlock(
+      (await search({ scope: "compatibility", query: "Is Tibero compatible with eGovFrame 4.3?", limit: 3 })).text,
+    );
+    expect(sentence.matchMode).toBe("any-term");
+    expect(sentence.usedTerms).toEqual(["Tibero", "4.3"]);
+    expect(sentence.ignoredTerms).toEqual(["compatible"]);
+    expect(sentence.droppedTerms).toEqual(["Is", "with", "eGovFrame"]);
+    expect(sentence.software.filter((s: any) => s.product_name === "Tibero")).toHaveLength(2);
   });
 
   it("vendor 필터는 법인 표기가 달라도 같은 업체의 제품을 모두 돌려준다", async () => {
@@ -1342,6 +1486,37 @@ describe("integration — egov_search_knowledge 개발자 지식·통합 검색"
     expect(parseJsonBlock(compatibility).software).toHaveLength(10);
     expect(res.text).not.toContain("줄여 적용했습니다");
   });
+
+  it('통합 검색의 호환 소프트웨어 섹션은 "eGov CMS" 에서 제품명에 eGov 가 든 제품을 맨 앞에 싣는다', async () => {
+    // 'eGov' 를 빼기만 하던 때에는 확인일자가 최근인 CMS 제품 다섯 건이 실려, 제품명에 eGov 가 든 제품이 보이지 않았다
+    const res = await search({ scope: "all", query: "eGov CMS" });
+    expect(res.isError).toBe(false);
+    const section = splitSections(res.text).find((part) => part.includes("호환 소프트웨어 검색 결과")) ?? "";
+    const body = parseJsonBlock(section);
+    expect(body.matchMode).toBe("all-terms");
+    expect(body.droppedTerms).toEqual(["eGov"]);
+    expect(body.limit).toBe(5);
+    expect(body.software.map((s: any) => /egov/i.test(s.product_name))).toEqual([true, true, true, true, false]);
+    expect(body.software.slice(0, 4).map((s: any) => s.product_name)).toEqual([
+      "MC@CMS eGov",
+      "MC@CMS eGov",
+      "MC@CMS eGov",
+      "DL-WCMS for eGovframe",
+    ]);
+  });
+
+  it.skipIf(!hasEmbeddingModel())(
+    'knowledgeScope all 의 호환 소프트웨어도 "eGov CMS" 에서 제품명에 eGov 가 든 제품을 맨 앞에 싣는다',
+    async () => {
+      // 이 목록은 모든 검색어가 일치하는 행만 찾는 조회(queryCompatibleSoftwareAllTerms)가 만든다
+      const res = await search({ scope: "knowledge", query: "eGov CMS", filters: { knowledgeScope: "all" }, limit: 5 });
+      expect(res.isError).toBe(false);
+      const body = parseJsonBlock(res.text);
+      expect(body.compatibilityTotal).toBeGreaterThan(100);
+      // 이 목록의 product 는 제품 버전 표기다 (예: 'MC@CMS eGov 1.5.0')
+      expect(body.compatibility.map((s: any) => /egov/i.test(s.product))).toEqual([true, true, true, true, false]);
+    },
+  );
 
   it("통합 검색의 호환 소프트웨어 구간 안내는 scope 를 compatibility 로 지정하라고 알린다", async () => {
     // 통합 검색은 filters.offset 을 쓰지 않으므로 '같은 호출에 offset 을 주라' 고 안내하면 안 된다

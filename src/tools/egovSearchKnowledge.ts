@@ -1064,14 +1064,22 @@ function formatComponentListLookup(
 
   if (query) {
     const limit = resolveLimit(args, "components", options);
-    const { results, total, matchMode, usedTerms, requiredMatches, ignoredTerms } = searchComponents(
-      query,
-      limit.value,
-      listFilters,
-    );
+    const { results, total, matchMode, orQuery, usedTerms, requiredMatches, ignoredTerms, droppedTerms } =
+      searchComponents(query, limit.value, listFilters);
+    // 찾은 방식과 쓰지 않은 낱말을 모두 넘긴다. orQuery 를 빼면 OR 로 찾은 결과에 "모든 검색어가 들어 있는 항목이 없어"
+    // 라는 사실과 다른 안내가 나오고, droppedTerms 를 빼면 검색에서 뺀 낱말이 응답에 드러나지 않는다
     return withNotes(
-      formatComponentList(results, false, { total, matchMode, usedTerms, requiredMatches, ignoredTerms }),
+      formatComponentList(results, false, {
+        total,
+        matchMode,
+        orQuery,
+        usedTerms,
+        requiredMatches,
+        ignoredTerms,
+        droppedTerms,
+      }),
       limit.note,
+      total === 0 && hasFilters ? withoutFiltersNote(query, listFilters) : undefined,
       ...(total === 0 ? unknownComponentFilterNotes(listFilters) : []),
       ignoredFiltersNote(filters, COMPONENT_LIST_FILTER_KEYS, options),
     );
@@ -1104,6 +1112,25 @@ function formatComponentListLookup(
       options,
     ),
     unusedParamsNote(args, { query: false, limit: false }, options),
+  );
+}
+
+/**
+ * 필터를 준 키워드 검색이 0건일 때, 필터를 빼면 같은 query 에 일치하는 컴포넌트가 있는지 알린다.
+ *
+ * 0건인 응답에는 쓰지 않은 낱말이 "일치하는 항목이 없어" 라고 실리는데, 필터를 적용한 범위 안에 없다는 뜻이라
+ * 그것만으로는 0건의 원인이 낱말인지 필터인지 알 수 없다. 필터를 빼면 일치하는 컴포넌트가 있을 때만 그 건수와
+ * 적용한 필터의 키를 적는다. 필터를 빼도 없으면 적지 않는다 (낱말을 바꿔야 한다는 것은 쓰지 않은 낱말의 안내로 알 수 있다).
+ */
+function withoutFiltersNote(query: string, listFilters: Record<string, unknown>): string | undefined {
+  const { total } = searchComponents(query, 1);
+  if (total === 0) {
+    return undefined;
+  }
+  const applied = Object.keys(listFilters).filter((key) => listFilters[key] !== undefined);
+  return (
+    `> 필터(${applied.join(", ")})를 적용한 범위에는 일치하는 컴포넌트가 없습니다. ` +
+    `필터를 빼면 같은 query 로 ${total}개를 찾습니다.`
   );
 }
 
