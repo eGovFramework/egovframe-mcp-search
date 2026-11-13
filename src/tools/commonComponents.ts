@@ -877,6 +877,9 @@ function resolveSourcePath(srcRoot: string, filePath: string): ResolvedSourcePat
 /** 텍스트로 읽어 볼 인코딩 (앞에서부터 시도한다) */
 const SOURCE_TEXT_ENCODINGS: readonly SourceTextEncoding[] = ['utf-8', 'euc-kr'];
 
+/** C1 제어 문자 (U+0080~U+009F). 텍스트 파일에는 나오지 않는다 */
+const C1_CONTROL_CHARACTERS = /[\u0080-\u009f]/;
+
 /** 디코딩한 텍스트와 그 인코딩 */
 interface DecodedSourceText {
   text: string;
@@ -902,14 +905,18 @@ function decodeStrict(buffer: Buffer, encoding: SourceTextEncoding): string | nu
  *
  * 확장자가 아니라 내용으로 판정한다: NUL 바이트가 있으면 바이너리다. 없으면 UTF-8 로,
  * UTF-8 로 유효하지 않으면 EUC-KR 로 디코딩해 보고(EUC-KR 로 남아 있는 오래된 JSP 가
- * 있다) 둘 다 실패하면 바이너리다. 확장자 목록에 없는 글꼴(.ttf, .woff)·문서(.hwp, .xls)도
+ * 있다) 둘 다 실패하거나 EUC-KR 디코딩 결과에 C1 제어 문자가 섞이면 바이너리다. 확장자 목록에 없는 글꼴(.ttf, .woff)·문서(.hwp, .xls)도
  * 걸러지고, 텍스트인 .svg 는 읽을 수 있다. 맨 앞의 UTF-8 BOM 은 디코더가 떼어 낸다.
  */
 function decodeSourceText(buffer: Buffer): DecodedSourceText | null {
   if (buffer.includes(0)) return null;
   for (const encoding of SOURCE_TEXT_ENCODINGS) {
     const text = decodeStrict(buffer, encoding);
-    if (text !== null) return { text, encoding };
+    if (text === null) continue;
+    // ICU 의 EUC-KR 디코더는 0x80~0x9F 단독 바이트를 오류 없이 C1 제어 문자로 바꾼다.
+    // 실제 EUC-KR 텍스트에는 없는 글자이므로, 이 글자가 나오면 텍스트가 아닌 바이트열로 본다.
+    if (encoding !== 'utf-8' && C1_CONTROL_CHARACTERS.test(text)) continue;
+    return { text, encoding };
   }
   return null;
 }

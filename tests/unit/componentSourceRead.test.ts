@@ -514,6 +514,15 @@ describe('readSourceFileInRoot — EUC-KR 텍스트', () => {
     expect(result!.nextOffset).toBeNull();
   });
 
+  it('EUC-KR 로 디코딩되더라도 C1 제어 문자가 나오면 텍스트로 보지 않는다', () => {
+    // Node(ICU)의 euc-kr 디코더는 0x80~0x9F 단독 바이트를 오류 없이 C1 제어 문자(U+0080~U+009F)로 바꾼다.
+    // 실제 EUC-KR 텍스트에는 나오지 않는 글자이므로, NUL 이 없는 바이너리가 텍스트로 읽히지 않게 걸러야 한다.
+    fs.writeFileSync(path.join(root, 'c1.dat'), Buffer.from([0x8c, 0x63, 0x0a, 0x41, 0x9f, 0x42]));
+    expect(new TextDecoder('euc-kr', { fatal: true }).decode(Buffer.from([0x8c, 0x63]))).toBe('\u008cc');
+
+    expect(readSourceFileInRoot(root, 'c1.dat')).toMatchObject({ language: 'binary', encoding: null, totalChars: 0 });
+  });
+
   it('totalChars 는 디코딩한 문자 수, size 는 파일의 바이트 수다', () => {
     const result = readSourceFileInRoot(root, 'legacy.jsp');
 
