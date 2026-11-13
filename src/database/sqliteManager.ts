@@ -11,6 +11,7 @@ import { getSQLiteDBPath } from '../utils/projectPath.js';
 import { codePointLength, extractSearchTerms, particleStrippedForms } from '../utils/fts5Query.js';
 import { escapeLikePattern } from '../utils/sqlLike.js';
 import { UserFacingError } from '../utils/errors.js';
+import { normalizeFrameworkVersion } from '../utils/frameworkVersion.js';
 import {
   CompatibilitySoftware,
   CompatibilitySearchFilter,
@@ -327,8 +328,9 @@ export class SQLiteManager {
    *
    * 필터는 키워드 검색과 같은 SQL 문에서 적용하고 LIMIT 은 그 뒤에 적용한다.
    * - query 에서 검색어가 추출되면 키워드 검색(keywordSearch)으로 찾는다. 검색어는 제품명·제품 버전 표기·
-   *   업체명·분류·설명에 부분 문자열로 들어 있으면 일치한다. 모든 검색어가 일치하는 행을 먼저 찾고(all-terms),
-   *   그런 행이 없으면 대체 검색으로 찾는다(any-term).
+   *   업체명·분류·설명에 부분 문자열로 들어 있으면 일치한다. 프레임워크 버전과 확인일자는 부분 문자열로
+   *   견주지 않고 따로 정한 규칙으로 견준다 (compatibilityTermConditions). 모든 검색어가 일치하는 행을 먼저
+   *   찾고(all-terms), 그런 행이 없으면 대체 검색으로 찾는다(any-term).
    * - query 가 없거나 검색어가 하나도 추출되지 않으면("*", "?" 등) 필터에 맞는 행을
    *   확인일자가 최근인 순으로 돌려준다.
    * - 확인일자 순은 어느 경로에서나 같다 (COMPATIBILITY_NEWEST_FIRST): verified_date 가 날짜 꼴이 아닌 행은
@@ -419,6 +421,8 @@ export class SQLiteManager {
    * 들어 있다는 뜻이다 (LIKE. ASCII 영문자는 대소문자를 가리지 않는다). FTS5 인덱스는 쓰지 않는다:
    * 낱말 단위 접두 일치로는 한국어 복합어의 뒤쪽이나 가운데에 든 낱말('공통코드' 의 '코드')을 찾지 못하고,
    * 두 표 모두 수백 행이라 전체를 훑어도 느리지 않다.
+   * 부분 문자열로 견주면 안 되는 컬럼은 대상이 따로 정한 조건(termConditions)으로 견준다. 일치 판정은
+   * 아래의 모든 단계가 termMatcher 가 만든 조건 하나를 쓴다.
    *
    * 한 글자 검색어는 두 글자 이상인 검색어가 있으면 쓰지 않는다 (dropSingleCharacterTerms).
    * 1) 모든 검색어가 일치하는 행을 찾는다 (allTermsSearch).
@@ -456,44 +460,46 @@ export class SQLiteManager {
     filter: SqlCondition,
     page: SqlPage,
   ): { rows: Row[]; total: number } | null {
-    const patterns: string[] = [];
+    const matchers: TermMatcher[] = [];
     for (const term of terms) {
-      const pattern = containsPattern(term);
-      // LIKE 패턴을 만들 수 없는 검색어는 어떤 행과도 일치하지 않으므로, 모든 검색어가 일치하는 행도 없다
-      if (pattern === null) {
+      const matcher = termMatcher(target, term);
+      // 견줄 조건을 만들 수 없는 검색어는 어떤 행과도 일치하지 않으므로, 모든 검색어가 일치하는 행도 없다
+      if (matcher === null) {
         return null;
       }
-      patterns.push(pattern);
+      matchers.push(matcher);
     }
-    if (patterns.length === 0) {
+    if (matchers.length === 0) {
       return null;
     }
 
-    const found = this.selectByMatchedTerms<Row>(target, patterns, patterns.length, filter, page);
+    const found = this.selectByMatchedTerms<Row>(target, matchers, matchers.length, filter, page);
     return found.total > 0 ? found : null;
   }
 
   /**
-   * 검색어(LIKE 패턴) 가운데 required 개 이상이 일치하는 행을 조회한다. 필터는 같은 SQL 문에서 적용한다.
+   * 검색어(matchers) 가운데 required 개 이상이 일치하는 행을 조회한다. 필터는 같은 SQL 문에서 적용한다.
    *
    * 정렬: (1) 일치한 검색어 수가 많은 행, (2) 이름 컬럼에 일치한 검색어 수가 많은 행, (3) 대상의 기본 정렬,
    * (4) rowid. 흔한 낱말만 일치한 행이나 설명에만 검색어가 든 행은 버리지 않고 뒤로 보낸다.
    */
   private selectByMatchedTerms<Row>(
     target: KeywordSearchTarget,
-    patterns: string[],
+    matchers: TermMatcher[],
     required: number,
     filter: SqlCondition,
     page: SqlPage,
   ): { rows: Row[]; total: number } {
-    // columns 가운데 하나라도 일치한 검색어의 수. 패턴은 검색어마다 컬럼 수만큼 바인딩한다.
-    const matchedCount = (columns: string[]) =>
-      patterns.map(() => `(CASE WHEN ${likeAnyColumn(columns)} THEN 1 ELSE 0 END)`).join(' + ');
-    const matchedCountParams = (columns: string[]) => patterns.flatMap((pattern) => columns.map(() => pattern));
+    // 조건을 채운 검색어의 수를 세는 식. 바인딩 값은 식에 적힌 순서대로 잇는다.
+    const countOf = (pick: (matcher: TermMatcher) => SqlExpression): SqlExpression => ({
+      sql: matchers.map((matcher) => `(CASE WHEN ${pick(matcher).sql} THEN 1 ELSE 0 END)`).join(' + '),
+      params: matchers.flatMap((matcher) => pick(matcher).params),
+    });
+    const matchedTerms = countOf((matcher) => matcher.matches);
+    const matchedInName = countOf((matcher) => matcher.inName);
 
-    const matchedTerms = matchedCount(target.searchColumns);
-    const from = `FROM ${target.table} ${target.joins ?? ''} WHERE (${matchedTerms}) >= ?${filter.sql}`;
-    const fromParams = [...matchedCountParams(target.searchColumns), required, ...filter.params];
+    const from = `FROM ${target.table} ${target.joins ?? ''} WHERE (${matchedTerms.sql}) >= ?${filter.sql}`;
+    const fromParams = [...matchedTerms.params, required, ...filter.params];
 
     const total = (this.db.prepare(`SELECT COUNT(*) AS count ${from}`).get(...fromParams) as { count: number })
       .count;
@@ -504,17 +510,11 @@ export class SQLiteManager {
     const rows = this.db
       .prepare(
         `SELECT ${target.columns} ${from}
-         ORDER BY (${matchedTerms}) DESC, (${matchedCount(target.nameColumns)}) DESC,
+         ORDER BY (${matchedTerms.sql}) DESC, (${matchedInName.sql}) DESC,
                   ${target.defaultOrder}, ${target.rowid}
          LIMIT ? OFFSET ?`,
       )
-      .all(
-        ...fromParams,
-        ...matchedCountParams(target.searchColumns),
-        ...matchedCountParams(target.nameColumns),
-        page.limit,
-        page.offset,
-      ) as Row[];
+      .all(...fromParams, ...matchedTerms.params, ...matchedInName.params, page.limit, page.offset) as Row[];
     return { rows, total };
   }
 
@@ -537,31 +537,21 @@ export class SQLiteManager {
     filter: SqlCondition,
     page: SqlPage,
   ): { rows: Row[]; total: number; terms: KeywordTermUsage } {
-    const existsInScope = this.db.prepare(
-      `SELECT EXISTS(
-         SELECT 1 FROM ${target.table} ${target.joins ?? ''}
-         WHERE ${likeAnyColumn(target.searchColumns)}${filter.sql}
-       ) AS found`,
-    );
-    /** forms 가운데 필터를 적용한 대상 안에 일치하는 행이 있는 첫 꼴과 그 LIKE 패턴. 없으면 null */
-    const firstMatching = (forms: string[]): { form: string; pattern: string } | null => {
+    /** forms 가운데 필터를 적용한 대상 안에 일치하는 행이 있는 첫 꼴과 그 꼴을 견주는 조건. 없으면 null */
+    const firstMatching = (forms: string[]): { form: string; matcher: TermMatcher } | null => {
       for (const form of forms) {
-        const pattern = containsPattern(form);
-        // LIKE 패턴을 만들 수 없는 값은 어떤 행과도 일치하지 않는다
-        if (pattern === null) {
-          continue;
-        }
-        const params = [...target.searchColumns.map(() => pattern), ...filter.params];
-        if ((existsInScope.get(...params) as { found: number }).found) {
-          return { form, pattern };
+        const matcher = termMatcher(target, form);
+        // 견줄 조건을 만들 수 없는 값은 어떤 행과도 일치하지 않는다
+        if (matcher !== null && this.existsInScope(target, matcher.matches, filter)) {
+          return { form, matcher };
         }
       }
       return null;
     };
 
-    // 쓰기로 한 검색어(used)와 그 LIKE 패턴. 두 배열의 길이가 k 다.
+    // 쓰기로 한 검색어(used)와 그 검색어를 견주는 조건. 두 배열의 길이가 k 다.
     const usage: KeywordTermUsage = { used: [], ignored: [] };
-    const patterns: string[] = [];
+    const matchers: TermMatcher[] = [];
     // 조사를 뗀 꼴이 다른 검색어와 같으면 한 번만 센다 (LIKE 처럼 영문자의 대소문자는 가리지 않는다)
     const usedKeys = new Set<string>();
     for (const term of terms) {
@@ -572,15 +562,28 @@ export class SQLiteManager {
       } else if (!usedKeys.has(match.form.toLowerCase())) {
         usedKeys.add(match.form.toLowerCase());
         usage.used.push(match.form);
-        patterns.push(match.pattern);
+        matchers.push(match.matcher);
       }
     }
 
-    if (patterns.length === 0) {
+    if (matchers.length === 0) {
       return { rows: [], total: 0, terms: usage };
     }
-    const found = this.selectByMatchedTerms<Row>(target, patterns, Math.ceil(patterns.length / 2), filter, page);
+    const found = this.selectByMatchedTerms<Row>(target, matchers, Math.ceil(matchers.length / 2), filter, page);
     return { ...found, terms: usage };
+  }
+
+  /** 조건(condition)을 채우는 행이 필터를 적용한 대상 안에 하나라도 있는지. */
+  private existsInScope(target: KeywordSearchTarget, condition: SqlExpression, filter: SqlCondition): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT EXISTS(
+           SELECT 1 FROM ${target.table} ${target.joins ?? ''}
+           WHERE ${condition.sql}${filter.sql}
+         ) AS found`,
+      )
+      .get(...condition.params, ...filter.params) as { found: number };
+    return row.found === 1;
   }
 
   /**
@@ -1159,6 +1162,12 @@ interface SqlCondition {
 /** 덧붙일 조건이 없는 경우 */
 const NO_FILTER: SqlCondition = { sql: '', params: [] };
 
+/** 바인딩 값이 딸린 SQL 조건식 하나. params 는 sql 에 적힌 '?' 의 순서대로다. */
+interface SqlExpression {
+  sql: string;
+  params: unknown[];
+}
+
 /** 키워드 검색 대상 하나를 기술하는 SQL 조각. */
 interface KeywordSearchTarget {
   /** 조회할 컬럼 목록 */
@@ -1174,10 +1183,70 @@ interface KeywordSearchTarget {
   /** searchColumns 가운데 이름에 해당하는 컬럼. 여기에 일치한 검색어가 많은 행을 먼저 돌려준다 */
   nameColumns: string[];
   /**
+   * 부분 문자열이 아닌 규칙으로 검색어와 견주는 컬럼의 조건. 이 가운데 하나를 채워도 그 검색어가 일치한 것이다.
+   * 검색어가 어떤 컬럼과 견줄 수 없는 꼴이면 그 컬럼의 조건은 돌려주지 않는다. 그런 컬럼이 없는 대상은 생략한다
+   */
+  termConditions?: (term: string) => SqlExpression[];
+  /**
    * 기본 정렬. 키워드 검색에서 일치한 검색어 수와 이름에 일치한 검색어 수 다음에 적용하고,
    * 호환성 소프트웨어는 키워드 없는 필터 조회에도 이 정렬을 쓴다
    */
   defaultOrder: string;
+}
+
+/** 검색어 하나를 행과 견주는 조건 */
+interface TermMatcher {
+  /** 검색어가 행과 일치한다 */
+  matches: SqlExpression;
+  /** 검색어가 이름 컬럼(nameColumns)에 부분 문자열로 들어 있다 */
+  inName: SqlExpression;
+}
+
+/**
+ * 검색어 하나를 대상의 행과 견주는 조건을 만든다.
+ *
+ * 검색어는 searchColumns 가운데 하나에 부분 문자열로 들어 있거나 대상이 따로 정한 조건(termConditions)
+ * 가운데 하나를 채우면 일치한다. 키워드 검색의 모든 단계(all-terms, any-term, 일치하는 행이 있는 검색어인지의
+ * 판정)가 이 조건을 쓰므로, 일치 규칙을 바꿀 때는 여기만 바꾼다.
+ *
+ * LIKE 패턴을 만들 수 없는 값(containsPattern)은 어떤 행과도 일치하지 않는 것으로 보고 null 을 돌려준다.
+ */
+function termMatcher(target: KeywordSearchTarget, term: string): TermMatcher | null {
+  const pattern = containsPattern(term);
+  if (pattern === null) {
+    return null;
+  }
+  const conditions = [likeAnyColumn(target.searchColumns, pattern), ...(target.termConditions?.(term) ?? [])];
+  return {
+    matches: {
+      sql: `(${conditions.map((condition) => condition.sql).join(' OR ')})`,
+      params: conditions.flatMap((condition) => condition.params),
+    },
+    inName: likeAnyColumn(target.nameColumns, pattern),
+  };
+}
+
+/** 확인일자와 견줄 수 있는 검색어의 꼴: YYYY, YYYY-MM, YYYY-MM-DD */
+const DATE_PREFIX_TERM = /^\d{4}(?:-\d{2}(?:-\d{2})?)?$/;
+
+/**
+ * 호환성 소프트웨어의 프레임워크 버전과 확인일자를 검색어와 견주는 조건.
+ *
+ * 응답에 보이는 두 컬럼으로도 찾을 수 있어야 하지만("4.3", "2025"), 부분 문자열로 견주면 버전 숫자가 다른
+ * 값의 일부와 우연히 일치한다 ('JEUS 21' 의 '21' 이 확인일자 '2019-03-21' 과, '10' 이 프레임워크 버전 '3.10' 과).
+ * - framework_version: 검색어가 그 행의 버전과 같을 때만 일치한다. 검색어는 frameworkVersion 필터와 같은
+ *   정규화(normalizeFrameworkVersion)를 거친다 ('v4.3', '4.3.0' → '4.3').
+ * - verified_date: 검색어가 YYYY, YYYY-MM, YYYY-MM-DD 꼴일 때만 견주고, 확인일자가 그 값으로 시작하면 일치한다.
+ */
+function compatibilityTermConditions(term: string): SqlExpression[] {
+  const conditions: SqlExpression[] = [
+    { sql: 'cs.framework_version = ?', params: [normalizeFrameworkVersion(term)] },
+  ];
+  if (DATE_PREFIX_TERM.test(term)) {
+    // 꼴이 ASCII 숫자와 '-' 뿐이라 글자 수(term.length)가 SQLite 의 substr 이 세는 문자 수와 같다
+    conditions.push({ sql: 'substr(cs.verified_date, 1, ?) = ?', params: [term.length, term] });
+  }
+  return conditions;
 }
 
 /**
@@ -1209,6 +1278,8 @@ const COMPATIBILITY_SEARCH: KeywordSearchTarget = {
   // 제품 버전 표기(product_version, 예: 'JEUS 8')에만 든 낱말로도 찾을 수 있어야 한다
   searchColumns: ['cs.product_name', 'cs.product_version', 'cs.vendor', 'cs.category', 'cs.description'],
   nameColumns: ['cs.product_name', 'cs.product_version'],
+  // 프레임워크 버전과 확인일자는 부분 문자열이 아닌 규칙으로 견준다
+  termConditions: compatibilityTermConditions,
   defaultOrder: COMPATIBILITY_NEWEST_FIRST,
 };
 
@@ -1247,8 +1318,11 @@ function containsPattern(value: string): string | null {
 }
 
 /** 컬럼 가운데 하나라도 LIKE 패턴과 일치한다는 조건. 패턴은 컬럼마다 한 번씩 바인딩한다. */
-function likeAnyColumn(columns: string[]): string {
-  return `(${columns.map((column) => `${column} LIKE ? ESCAPE '\\'`).join(' OR ')})`;
+function likeAnyColumn(columns: string[], pattern: string): SqlExpression {
+  return {
+    sql: `(${columns.map((column) => `${column} LIKE ? ESCAPE '\\'`).join(' OR ')})`,
+    params: columns.map(() => pattern),
+  };
 }
 
 /**
@@ -1262,8 +1336,9 @@ function addContainsClause(clauses: string[], params: unknown[], columns: string
     clauses.push('1=0');
     return;
   }
-  clauses.push(likeAnyColumn(columns));
-  params.push(...columns.map(() => pattern));
+  const condition = likeAnyColumn(columns, pattern);
+  clauses.push(condition.sql);
+  params.push(...condition.params);
 }
 
 /** 조회할 범위. SQL 의 LIMIT / OFFSET 에 그대로 넣는 정수다. */

@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SQLiteManager } from "../../src/database/sqliteManager.js";
-import { CATALOGUE, DATED, SAME_DAY, versionsOf } from "./_compatibilityFixture.js";
+import { CATALOGUE, DATED, SAME_DAY, versionsOf, type SoftwareSeed } from "./_compatibilityFixture.js";
 import { connectionOf, orderByClausesOf, statementsOf } from "./_sqlStatements.js";
 import fs from "fs-extra";
 import path from "node:path";
@@ -60,23 +60,14 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       }
     });
 
-    it("제품명·제품 버전 표기·업체명·분류·설명에서 찾는다", () => {
+    it("제품명·제품 버전 표기·업체명·분류·설명에 부분 문자열로 든 검색어를 찾는다", () => {
       const found = (query: string) => versionsOf(sqlite.queryCompatibleSoftware({ query }).rows);
       expect(found("WebLog")).toEqual(["WebLogic 12c"]); // product_name
       expect(found("12c")).toEqual(["WebLogic 12c"]); // product_version 에만 있다
       expect(found("샘플벤")).toEqual(["SampleCMS 1.0"]); // vendor
       expect(found("DBMS")).toEqual(["Tibero 7"]); // category
-      expect(found("3.6")).toEqual(["WebLogic 12c"]); // description 에만 있다
-    });
-
-    it("프레임워크 버전·확인일자 컬럼에서는 찾지 않는다", () => {
-      // '4.2' 는 OtherCMS 의 framework_version 과 설명에 있지만, '2023-03-03' 은 verified_date 에만 있다
-      expect(sqlite.queryCompatibleSoftware({ query: "2023-03-03" }).rows).toEqual([]);
-      // framework_version 이 '4.3' 인 두 행은 설명에도 '4.3' 이 있어 찾힌다. 설명을 바꾼 행은 찾히지 않는다
-      sqlite.addCompatibilitySoftwareBatch([
-        { ...CATALOGUE[4], product_name: "NoVersionText", product_version: "NoVersionText 1.0", description: "설명 없음" },
-      ]);
-      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "4.3" }).rows)).toEqual(["JEUS 21", "SampleCMS 1.0"]);
+      // '워크' 는 여섯 행 모두의 설명('표준프레임워크 …')에만 있다
+      expect(found("워크")).toHaveLength(CATALOGUE.length); // description
     });
 
     it("제품 버전 표기에 든 검색어로 그 버전의 행을 가려낸다", () => {
@@ -131,6 +122,157 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     it("조회 중 오류는 결과 없음으로 가리지 않고 그대로 던진다", () => {
       connectionOf(sqlite).exec("DROP TABLE compatibility_software");
       expect(() => sqlite.queryCompatibleSoftware({ query: "JEUS" })).toThrow(/compatibility_software/);
+    });
+  });
+
+  describe("프레임워크 버전과 확인일자로 찾기", () => {
+    /** 프레임워크 버전은 4.3 이지만 다른 컬럼 어디에도 '4.3' 이 적혀 있지 않은 행 */
+    const UNLABELLED_43: SoftwareSeed = {
+      ...CATALOGUE[4],
+      product_name: "NoVersionText",
+      product_version: "NoVersionText 1.0",
+      description: "설명 없음",
+    };
+
+    it("검색어가 프레임워크 버전과 같으면 설명에 버전이 적혀 있지 않은 행도 찾는다", () => {
+      sqlite.addCompatibilitySoftwareBatch([UNLABELLED_43]);
+      // 세 행 모두 이름에는 '4.3' 이 없어 확인일자 순이고, 확인일자가 같은 두 행은 적재 순이다
+      const result = sqlite.queryCompatibleSoftware({ query: "4.3" });
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "SampleCMS 1.0", "NoVersionText 1.0"]);
+      expect(result.total).toBe(3);
+      expect(result.matchMode).toBe("all-terms");
+    });
+
+    it("앞에 v 를 붙였거나 패치 자리까지 적은 검색어도 같은 프레임워크 버전의 행을 찾는다", () => {
+      sqlite.addCompatibilitySoftwareBatch([UNLABELLED_43]);
+      // frameworkVersion 필터와 같은 정규화를 거친다: 'v4.3', '4.3.0' → '4.3'
+      for (const query of ["v4.3", "V4.3", "4.3.0", "v4.3.1"]) {
+        const result = sqlite.queryCompatibleSoftware({ query });
+        expect(versionsOf(result.rows), `query=${query}`).toEqual(["JEUS 21", "SampleCMS 1.0", "NoVersionText 1.0"]);
+        expect(result.matchMode, `query=${query}`).toBe("all-terms");
+      }
+    });
+
+    it("프레임워크 버전은 부분 문자열로 견주지 않는다", () => {
+      // 프레임워크 3.10 의 행. 다른 컬럼에는 '10' 도 '3.1' 도 없다
+      sqlite.addCompatibilitySoftwareBatch([
+        UNLABELLED_43,
+        { ...UNLABELLED_43, product_name: "OldTool", product_version: "OldTool 2", framework_version: "3.10" },
+      ]);
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "3.10" }).rows)).toEqual(["OldTool 2"]);
+      // 버전의 뒷부분('10')이나 앞부분('3.1')은 그 버전과 같지 않다
+      expect(sqlite.queryCompatibleSoftware({ query: "10" }).rows).toEqual([]);
+      expect(sqlite.queryCompatibleSoftware({ query: "3.1" }).rows).toEqual([]);
+      // '.3' 에서 추출되는 검색어는 '3' 이다. 설명에 '4.3'·'3.6' 이 적힌 행은 찾지만,
+      // 프레임워크 버전에만 3 이 든 두 행(NoVersionText, OldTool)은 찾지 않는다
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: ".3" }).rows)).toEqual([
+        "JEUS 21",
+        "SampleCMS 1.0",
+        "WebLogic 12c",
+      ]);
+    });
+
+    it("YYYY, YYYY-MM, YYYY-MM-DD 꼴의 검색어는 확인일자가 그 값으로 시작하는 행을 찾는다", () => {
+      // OtherCMS 의 확인일자가 2023-03-03 이다. 다른 컬럼에는 '2023' 이 없다
+      for (const query of ["2023", "2023-03", "2023-03-03"]) {
+        const result = sqlite.queryCompatibleSoftware({ query });
+        expect(versionsOf(result.rows), `query=${query}`).toEqual(["OtherCMS 2.0"]);
+        expect(result.matchMode, `query=${query}`).toBe("all-terms");
+      }
+      // 2022년에 확인된 행은 둘이고, 그 가운데 11월은 하나다
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "2022" }).rows)).toEqual(["Tibero 7", "JEUS 8.5"]);
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "2022-11" }).rows)).toEqual(["JEUS 8.5"]);
+      // 일자가 다르면 일치하지 않는다
+      expect(sqlite.queryCompatibleSoftware({ query: "2023-03-04" }).rows).toEqual([]);
+    });
+
+    it("날짜 꼴이 아닌 검색어는 확인일자와 견주지 않는다", () => {
+      // 확인일자(2019-03-21)에만 '03'·'21' 이 든 행
+      sqlite.addCompatibilitySoftwareBatch([
+        { ...UNLABELLED_43, product_name: "DateOnly", product_version: "DateOnly 5", verified_date: "2019-03-21" },
+      ]);
+      expect(sqlite.queryCompatibleSoftware({ query: "03" }).rows).toEqual([]);
+      // '21' 은 제품 버전 표기 'JEUS 21' 과만 일치한다. 확인일자 2019-03-21, 2025-08-21 의 일자와는 견주지 않는다
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "21" }).rows)).toEqual(["JEUS 21"]);
+      // 월·일만 적은 값, 자릿수가 다른 값, 구분자가 없거나 다른 값은 날짜 꼴이 아니다
+      for (const query of ["03-21", "2019-3", "19-03-21", "20190321", "2019.03.21"]) {
+        expect(sqlite.queryCompatibleSoftware({ query }).rows, `query=${query}`).toEqual([]);
+      }
+      // 날짜 꼴이면 그 행을 찾는다
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "2019-03" }).rows)).toEqual(["DateOnly 5"]);
+    });
+
+    it("다른 검색어와 함께 줘도 같은 규칙으로 견준다 (all-terms)", () => {
+      sqlite.addCompatibilitySoftwareBatch([UNLABELLED_43]);
+      // CMS: 분류 'CMS Solution' / 4.3: 프레임워크 버전. 이름에 'CMS' 가 든 SampleCMS 가 먼저다
+      const byVersion = sqlite.queryCompatibleSoftware({ query: "CMS 4.3" });
+      expect(versionsOf(byVersion.rows)).toEqual(["SampleCMS 1.0", "NoVersionText 1.0"]);
+      expect(byVersion.matchMode).toBe("all-terms");
+      // 티맥스: 업체명 / 2022: 확인일자
+      const byYear = sqlite.queryCompatibleSoftware({ query: "티맥스 2022" });
+      expect(versionsOf(byYear.rows)).toEqual(["Tibero 7", "JEUS 8.5"]);
+      expect(byYear.matchMode).toBe("all-terms");
+    });
+
+    it("대체 검색(any-term)과 조사를 뗀 꼴에도 같은 규칙을 적용한다", () => {
+      sqlite.addCompatibilitySoftwareBatch([UNLABELLED_43]);
+      // 2023: OtherCMS(확인일자) / 4.3: 세 행(프레임워크 버전) / 없는말: 0행(제외) → 하나 이상 일치하는 네 행
+      const fallback = sqlite.queryCompatibleSoftware({ query: "2023 4.3 없는말" });
+      expect(versionsOf(fallback.rows)).toEqual(["JEUS 21", "SampleCMS 1.0", "NoVersionText 1.0", "OtherCMS 2.0"]);
+      expect(fallback.matchMode).toBe("any-term");
+      expect(fallback.terms).toMatchObject({ used: ["2023", "4.3"], ignored: ["없는말"] });
+
+      // 조사를 뗀 꼴: '4.3에서' → '4.3', 'v4.3은' → 'v4.3', '2023년에' → '2023'
+      const cases: Array<[string, string, string[]]> = [
+        ["4.3에서", "4.3", ["JEUS 21", "SampleCMS 1.0", "NoVersionText 1.0"]],
+        ["v4.3은", "v4.3", ["JEUS 21", "SampleCMS 1.0", "NoVersionText 1.0"]],
+        ["2023년에", "2023", ["OtherCMS 2.0"]],
+      ];
+      for (const [query, used, expected] of cases) {
+        const result = sqlite.queryCompatibleSoftware({ query });
+        expect(versionsOf(result.rows), `query=${query}`).toEqual(expected);
+        expect(result.matchMode, `query=${query}`).toBe("any-term");
+        expect(result.terms, `query=${query}`).toMatchObject({ used: [used], ignored: [] });
+      }
+    });
+
+    it("일치하는 행이 있는 검색어인지는 필터를 적용한 대상 안에서 같은 규칙으로 판정한다", () => {
+      // 4.3 의 행은 WAS 안에 JEUS 21 하나가 있다
+      const inScope = sqlite.queryCompatibleSoftware({ query: "4.3 없는말", filters: { category: "WAS" } });
+      expect(versionsOf(inScope.rows)).toEqual(["JEUS 21"]);
+      expect(inScope.terms).toMatchObject({ used: ["4.3"], ignored: ["없는말"] });
+      // 4.2 의 행(OtherCMS)과 2023년에 확인된 행(OtherCMS)은 WAS 안에 없다
+      const outOfScope = sqlite.queryCompatibleSoftware({ query: "4.2 2023", filters: { category: "WAS" } });
+      expect(outOfScope.rows).toEqual([]);
+      expect(outOfScope.terms).toMatchObject({ used: [], ignored: ["4.2", "2023"] });
+    });
+
+    it("이름에 일치한 검색어 수는 제품명과 제품 버전 표기에서만 센다", () => {
+      // 'Suite 4.3' 은 프레임워크 4.2 의 제품이지만 이름에 '4.3' 이 들어 있어, 프레임워크 버전만 4.3 인 행보다 먼저 온다
+      sqlite.addCompatibilitySoftwareBatch([
+        {
+          ...CATALOGUE[5],
+          product_name: "Suite",
+          product_version: "Suite 4.3",
+          verified_date: "2016-06-06",
+          description: "설명 없음",
+        },
+      ]);
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "4.3" }).rows)).toEqual([
+        "Suite 4.3",
+        "JEUS 21",
+        "SampleCMS 1.0",
+      ]);
+    });
+
+    it("배열을 돌려주는 fullTextSearchCompatibility 도 같은 규칙으로 찾는다", () => {
+      sqlite.addCompatibilitySoftwareBatch([UNLABELLED_43]);
+      expect(versionsOf(sqlite.fullTextSearchCompatibility("v4.3"))).toEqual([
+        "JEUS 21",
+        "SampleCMS 1.0",
+        "NoVersionText 1.0",
+      ]);
+      expect(versionsOf(sqlite.fullTextSearchCompatibility("CMS 2023"))).toEqual(["OtherCMS 2.0"]);
     });
   });
 

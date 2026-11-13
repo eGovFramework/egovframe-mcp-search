@@ -6,6 +6,7 @@
  * - 흔한 낱말에 군말이 붙으면 0건이었다 ("CMS 추천").
  * - 영문 접속사, 조사가 붙은 제품명, 전각 영숫자로 물으면 0건이었다.
  * - 제품 버전 표기가 검색 대상이 아니었다 ("JEUS 8").
+ * - 프레임워크 버전과 확인일자가 검색 대상이 아니었다 (설명에 버전이 적히지 않은 행, "2025", "2024-11").
  *
  * DB 는 읽기 전용으로 열고, 조회가 파일을 바꾸지 않았는지 마지막에 확인한다.
  * 동봉 데이터는 갱신될 수 있으므로 건수를 숫자로 고정하지 않고, 같은 뜻의 두 조회가 같은 결과를 내는지와
@@ -17,7 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { SQLiteManager } from "../../src/database/sqliteManager.js";
-import type { CompatibilityQueryResult } from "../../src/types/database.js";
+import type { CompatibilityQueryResult, CompatibilitySoftwareInfo } from "../../src/types/database.js";
 import { idsOf } from "./_componentFixture.js";
 
 const KNOWLEDGE_BASE_DIR = fileURLToPath(new URL("../../knowledge-base/", import.meta.url));
@@ -26,8 +27,10 @@ const DB_PATH = path.join(KNOWLEDGE_BASE_DIR, "egovframe.db");
 const sha256 = (file: string) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 
 /** 호환 소프트웨어 행을 가리키는 키 (제품명·버전 표기·프레임워크 버전이 고유하다) */
-const rowKeys = (result: CompatibilityQueryResult): string[] =>
-  result.rows.map((row) => `${row.product_name}|${row.product_version}|${row.framework_version}`);
+const keyOf = (row: CompatibilitySoftwareInfo): string =>
+  `${row.product_name}|${row.product_version}|${row.framework_version}`;
+
+const rowKeys = (result: CompatibilityQueryResult): string[] => result.rows.map(keyOf);
 
 /** 순서와 무관하게 견줄 수 있도록 정렬한 행 키 */
 const rowSet = (result: CompatibilityQueryResult): string[] => rowKeys(result).sort();
@@ -155,6 +158,73 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       expect(cms.total).toBeGreaterThan(0);
       expect(rowSet(result)).toEqual(rowSet(cms));
       expect(result.rows.every((row) => row.framework_version === "4.3")).toBe(true);
+    });
+
+    it("검색어가 프레임워크 버전과 같으면 설명에 그 버전이 적혀 있지 않은 행도 찾는다", () => {
+      // 프레임워크 3.7 의 행 가운데에는 설명에 '3.7' 이 적혀 있지 않은 행이 있다. 부분 문자열로만 찾던 때에는 그 행이 빠졌다
+      const byFilter = sqlite.queryCompatibleSoftware({ filters: { frameworkVersion: "3.7" } });
+      const unlabelled = byFilter.rows.filter(
+        (row) =>
+          ![row.product_name, row.product_version, row.vendor, row.category, row.description].some((value) =>
+            (value ?? "").includes("3.7"),
+          ),
+      );
+      expect(unlabelled.length).toBeGreaterThan(0);
+
+      for (const query of ["3.7", "v3.7", "3.7.0"]) {
+        const result = compatible(query);
+        expect(result.matchMode, `query=${query}`).toBe("all-terms");
+        expect(rowKeys(result), `query=${query}`).toEqual(expect.arrayContaining(rowKeys(byFilter)));
+      }
+    });
+
+    it('"eGovFrame 4.3 호환 CMS" 는 이름에 eGovFrame 이 든 행 다음에 프레임워크 4.3 의 CMS Solution 행을 모두 돌려준다', () => {
+      const result = compatible("eGovFrame 4.3 호환 CMS");
+      const cms43 = sqlite.queryCompatibleSoftware({ filters: { frameworkVersion: "4.3", category: "CMS Solution" } });
+      expect(cms43.total).toBeGreaterThan(0);
+
+      // 네 검색어가 모두 든 행은 없다: 'eGovFrame' 이 든 행은 다른 프레임워크 버전의 제품뿐이다
+      expect(result.matchMode).toBe("any-term");
+      expect(result.terms?.used).toEqual(["eGovFrame", "4.3", "호환", "CMS"]);
+      const namedAfterFramework = (row: CompatibilitySoftwareInfo) => /egovframe/i.test(row.product_name);
+      const named = result.rows.filter(namedAfterFramework);
+      expect(named.length).toBeGreaterThan(0);
+      expect(named.every((row) => row.framework_version !== "4.3")).toBe(true);
+
+      // 4.3 의 CMS Solution 행은 4.3·호환·CMS 세 검색어가 일치한다. 이름에 eGovFrame 과 CMS 가 든 행
+      // (세 검색어가 일치하고 그 가운데 둘이 이름에 있다)만 그보다 앞에 오고, 나머지 행은 모두 그 뒤다
+      const others = result.rows.filter((row) => !namedAfterFramework(row));
+      expect(others.slice(0, cms43.total).map(keyOf).sort()).toEqual(rowSet(cms43));
+      expect(result.rows.findIndex((row) => row.framework_version === "4.3")).toBeLessThanOrEqual(named.length);
+    });
+
+    it('"2025" 는 2025년에 확인된 행을 모두 돌려준다', () => {
+      const everyRow = sqlite.queryCompatibleSoftware().rows;
+      const verifiedIn2025 = everyRow.filter((row) => row.verified_date.startsWith("2025"));
+      // 확인일자를 견주지 않던 때에는 제품 버전 표기에 '2025' 가 든 한 행만 나왔다
+      expect(verifiedIn2025.length).toBeGreaterThan(1);
+
+      const result = compatible("2025");
+      expect(result.matchMode).toBe("all-terms");
+      // 2025년에 확인된 행과, 다른 검색 컬럼에 '2025' 가 적힌 행이 전부다.
+      // (이 테스트를 쓴 시점의 동봉 데이터에서는 59건이고, 59건 모두 2025년에 확인된 행이다.)
+      const inText = (row: CompatibilitySoftwareInfo) =>
+        [row.product_name, row.product_version, row.vendor, row.category, row.description].some((value) =>
+          (value ?? "").includes("2025"),
+        );
+      const expected = everyRow.filter((row) => row.verified_date.startsWith("2025") || inText(row));
+      expect(rowSet(result)).toEqual(expected.map(keyOf).sort());
+      expect(result.total).toBe(expected.length);
+    });
+
+    it('"2024-11" 처럼 연-월로 적으면 그 달에 확인된 행을 돌려준다', () => {
+      const result = compatible("2024-11");
+      expect(result.matchMode).toBe("all-terms");
+      expect(result.total).toBeGreaterThan(0);
+      expect(result.rows.every((row) => row.verified_date.startsWith("2024-11"))).toBe(true);
+      // 그 달에 확인된 행은 하나도 빠지지 않는다
+      const sameMonth = sqlite.queryCompatibleSoftware().rows.filter((row) => row.verified_date.startsWith("2024-11"));
+      expect(result.total).toBe(sameMonth.length);
     });
 
     it("이름에 검색어가 든 행을 확인일자가 최근인 순으로 먼저 돌려준다", () => {

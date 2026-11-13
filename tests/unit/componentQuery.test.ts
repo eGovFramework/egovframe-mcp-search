@@ -101,6 +101,13 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
       expect(sqlite.queryComponents({ query: "역할" }).rows).toEqual([]);
     });
 
+    it("버전 컬럼에서는 찾지 않는다 (버전은 version 필터로 지정한다)", () => {
+      // 호환 소프트웨어 검색은 검색어를 프레임워크 버전과도 견주지만, 공통컴포넌트 검색에는 그런 컬럼이 없다.
+      // '5.0.0' 은 bst 와 cmm 의 version 에만, '4.3.1' 은 나머지 여섯 컴포넌트의 version 에만 있다
+      expect(sqlite.queryComponents({ query: "5.0.0" }).rows).toEqual([]);
+      expect(sqlite.queryComponents({ query: "4.3.1" }).rows).toEqual([]);
+    });
+
     it("영문자의 대소문자를 가리지 않는다", () => {
       expect(idsOf(sqlite.queryComponents({ query: "LOGIN" }).rows)).toEqual(["uia", "sec"]);
       expect(idsOf(sqlite.queryComponents({ query: "EGOVFRAMEWORK.COM.COP.BBS" }).rows)).toEqual(["bbs"]);
