@@ -30,7 +30,9 @@ vi.mock("../../src/utils/dataPaths.js", async (importOriginal) => {
 
 import {
   formatCategoryList,
+  formatComponentInfo,
   formatComponentList,
+  formatComponentSummary,
   formatDependencyResolution,
   getComponentInfo,
   listCommonComponents,
@@ -185,6 +187,113 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
 
 describe("공통컴포넌트 도구 — 결과 포맷", () => {
   const [uia, sec] = COMPONENTS.map((component) => ({ ...component, category_name: component.category_id }));
+
+  /** 표의 줄만 골라, 이스케이프되지 않은 '|' 로 나눈 칸 수를 센다. */
+  const columnCounts = (text: string): number[] =>
+    text
+      .split("\n")
+      .filter((line) => line.startsWith("|"))
+      .map((line) => line.split(/(?<!\\)\|/).length);
+
+  describe("표의 셀", () => {
+    // 설명에 줄바꿈과 '|' 가 들어 있는 컴포넌트 (고정 데이터의 cmm)
+    const cmm = { ...COMPONENTS[7], category_name: "공통" };
+    const tricky = {
+      ...uia,
+      component_id: "x|y",
+      name: "이름|\n둘째 줄",
+      category_name: "분류|A",
+      package_name: "pkg.a|b",
+      version: "1|0",
+    };
+
+    it("설명의 줄바꿈은 공백으로 바꾸고 '|' 는 이스케이프해 한 행에 싣는다", () => {
+      const text = formatComponentList([uia, cmm], true);
+      const row = text.split("\n").find((line) => line.includes("`cmm`"));
+      expect(row).toContain("공통으로 쓰는 설정 파일 - 이중등록방지 \\| 메시지");
+      // 머리글·구분선·행의 칸 수가 모두 같다 (행이 여러 줄로 갈라지지 않는다)
+      expect(new Set(columnCounts(text)).size).toBe(1);
+      expect(text.split("\n").filter((line) => line.startsWith("- 이중등록방지"))).toEqual([]);
+    });
+
+    it("설명은 줄바꿈을 정리한 뒤 50자에서 자른다", () => {
+      const long = { ...uia, description: `${"가".repeat(30)}\n${"나".repeat(30)}` };
+      const row = formatComponentList([long], true).split("\n").find((line) => line.includes("`uia`"));
+      expect(row).toContain(`${"가".repeat(30)} ${"나".repeat(19)}... |`);
+    });
+
+    it("컴포넌트 목록의 두 표 형식 모두 모든 문자열 칸을 다듬는다", () => {
+      for (const groupByCategory of [true, false]) {
+        const text = formatComponentList([uia, tricky], groupByCategory);
+        expect(new Set(columnCounts(text)).size, `groupByCategory=${groupByCategory}`).toBe(1);
+        expect(text).toContain("이름\\| 둘째 줄");
+        expect(text).toContain("`x\\|y`");
+        expect(text).toContain("`pkg.a\\|b`");
+      }
+      expect(formatComponentList([tricky], false)).toContain("분류\\|A");
+      expect(formatComponentList([tricky], false)).toContain("1\\|0");
+    });
+
+    it("설명이나 영문명이 없으면 '-' 를 적는다", () => {
+      const bare = { ...uia, description: undefined };
+      expect(formatComponentList([bare], true)).toMatch(/\| - \|\n/);
+      const text = formatCategoryList([
+        { category_id: "c1", name: "분류", name_en: "", description: undefined, description_en: undefined, component_count: 1 },
+      ]);
+      expect(text).toContain("| 1 | 분류 | `c1` | - | 1개 |");
+    });
+
+    it("카테고리 표의 칸도 다듬는다", () => {
+      const text = formatCategoryList([
+        {
+          category_id: "a|b",
+          name: "첫 줄\n둘째 줄",
+          name_en: "A | B",
+          description: undefined,
+          description_en: undefined,
+          component_count: 2,
+        },
+      ]);
+      expect(text).toContain("| 1 | 첫 줄 둘째 줄 | `a\\|b` | A \\| B | 2개 |");
+      expect(new Set(columnCounts(text)).size).toBe(1);
+    });
+
+    it("상세 정보의 의존성 표와 통계 표의 칸도 다듬는다", () => {
+      const dependency = { ...sec, name: "의존|컴포넌트\n둘째 줄", package_name: "pkg.dep" };
+      const info = formatComponentInfo(uia, ["pkg.dep", "pkg.none"], [dependency]);
+      expect(info).toContain("### 기본 정보");
+      expect(info).toContain("| `pkg.dep` | 의존\\|컴포넌트 둘째 줄 |");
+      expect(info).toContain("| `pkg.none` | - |");
+      expect(new Set(columnCounts(info)).size).toBe(1);
+
+      const summary = formatComponentSummary({
+        totalCategories: 2,
+        totalComponents: 3,
+        byCategory: [
+          { category_id: "c1", name: "분류|하나", count: 2 },
+          { category_id: "c2", name: null as unknown as string, count: 1 },
+        ],
+        byVersion: [{ version: "4.3.1\n", count: 3 }],
+      });
+      expect(summary).toContain("| 분류\\|하나 | 2개 |");
+      // 카테고리 행이 없어 이름을 알 수 없으면 ID 를 적는다
+      expect(summary).toContain("| c2 | 1개 |");
+      expect(summary).toContain("| 4.3.1 | 3개 |");
+    });
+  });
+
+  describe("결과가 없는 컴포넌트 목록", () => {
+    it("제목을 출력하고 그 아래에 결과가 없다고 적는다", () => {
+      for (const groupByCategory of [true, false]) {
+        const text = formatComponentList([], groupByCategory);
+        expect(text.startsWith("## 공통컴포넌트 목록 (0개)\n\n")).toBe(true);
+        expect(text).toContain("검색 결과가 없습니다.");
+      }
+      expect(formatComponentList([], false, { total: 0, matchMode: "any-term" })).toContain(
+        "## 공통컴포넌트 목록 (0개)",
+      );
+    });
+  });
 
   describe("formatCategoryList", () => {
     const categories = CATEGORIES.map((category, index) => ({ ...category, component_count: index + 1 }));

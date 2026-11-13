@@ -181,6 +181,20 @@ export function getComponentSummary(): ComponentSummary {
 }
 
 /**
+ * 표의 셀에 넣을 문자열로 다듬는다.
+ *
+ * 줄바꿈은 공백 하나로 바꾸고 '|' 는 이스케이프해, 값 하나가 표의 한 칸에만 들어가게 한다.
+ * maxLength 를 주면 그 길이에서 자르고 '...' 를 붙인다. 값이 없거나 비어 있으면 '-' 를 돌려준다.
+ */
+function tableCell(value: string | null | undefined, maxLength?: number): string {
+  let text = (value ?? '').replace(/\s*[\r\n]+\s*/g, ' ').trim();
+  if (maxLength !== undefined && text.length > maxLength) {
+    text = `${text.slice(0, maxLength)}...`;
+  }
+  return text === '' ? '-' : text.replace(/\|/g, '\\|');
+}
+
+/**
  * 결과 포맷팅 - 카테고리 목록
  *
  * '카테고리 ID' 열의 값이 categoryId 필터에 쓰는 값이다 (이름과 다른 카테고리가 있다).
@@ -194,7 +208,7 @@ export function formatCategoryList(
   output += '|---|----------|-------------|--------|-------------|\n';
 
   categories.forEach((cat, idx) => {
-    output += `| ${idx + 1} | ${cat.name} | \`${cat.category_id}\` | ${cat.name_en || '-'} | ${cat.component_count}개 |\n`;
+    output += `| ${idx + 1} | ${tableCell(cat.name)} | \`${tableCell(cat.category_id)}\` | ${tableCell(cat.name_en)} | ${cat.component_count}개 |\n`;
   });
   
   return output;
@@ -204,6 +218,7 @@ export function formatCategoryList(
  * 결과 포맷팅 - 컴포넌트 목록
  *
  * 두 표 형식 모두 첫 열에 컴포넌트 ID 를 싣는다. 상세 조회·의존성·소스·DDL/DML 조회에 넣는 값이다.
+ * 결과가 없으면 제목 아래에 '검색 결과가 없습니다.' 를 적는다.
  * - options.total: 조건에 맞는 전체 건수. 표시하는 건수보다 크면 제목에 'N개 중 M개 표시' 를 적는다.
  * - options.matchMode: 'any-term' 이면 일부 검색어만 일치한 결과임을 제목 아래에 적는다.
  */
@@ -212,14 +227,15 @@ export function formatComponentList(
   groupByCategory: boolean = true,
   options: { total?: number; matchMode?: KeywordMatchMode } = {}
 ): string {
-  if (components.length === 0) {
-    return '검색 결과가 없습니다.';
-  }
-
   const shown = components.length;
   const countLabel =
     options.total !== undefined && options.total > shown ? `${options.total}개 중 ${shown}개 표시` : `${shown}개`;
   let output = `## 공통컴포넌트 목록 (${countLabel})\n\n`;
+
+  // 결과가 없어도 제목은 출력한다 (통합 검색 결과에서 어느 섹션인지 알 수 있어야 한다)
+  if (shown === 0) {
+    return `${output}검색 결과가 없습니다.\n`;
+  }
 
   if (options.matchMode === 'any-term') {
     output += '> 모든 검색어가 일치하는 컴포넌트가 없어, 일부 검색어만 일치하는 컴포넌트를 표시합니다.\n\n';
@@ -242,8 +258,7 @@ export function formatComponentList(
       output += '|-------------|----------|----------|------|\n';
       
       for (const comp of comps) {
-        const desc = comp.description ? comp.description.slice(0, 50) + (comp.description.length > 50 ? '...' : '') : '-';
-        output += `| \`${comp.component_id}\` | ${comp.name} | \`${comp.package_name}\` | ${desc} |\n`;
+        output += `| \`${tableCell(comp.component_id)}\` | ${tableCell(comp.name)} | \`${tableCell(comp.package_name)}\` | ${tableCell(comp.description, 50)} |\n`;
       }
       output += '\n';
     }
@@ -252,7 +267,7 @@ export function formatComponentList(
     output += '|-------------|----------|----------|----------|------|\n';
     
     for (const comp of components) {
-      output += `| \`${comp.component_id}\` | ${comp.name} | ${comp.category_name || comp.category_id} | \`${comp.package_name}\` | ${comp.version} |\n`;
+      output += `| \`${tableCell(comp.component_id)}\` | ${tableCell(comp.name)} | ${tableCell(comp.category_name || comp.category_id)} | \`${tableCell(comp.package_name)}\` | ${tableCell(comp.version)} |\n`;
     }
   }
   
@@ -309,7 +324,7 @@ export function formatComponentInfo(
       
       for (const dep of dependencies) {
         const depComp = dependencyComponents.find(c => c.package_name === dep);
-        output += `| \`${dep}\` | ${depComp ? depComp.name : '-'} |\n`;
+        output += `| \`${tableCell(dep)}\` | ${tableCell(depComp?.name)} |\n`;
       }
     } else {
       output += '```\n';
@@ -390,7 +405,7 @@ export function formatComponentSummary(summary: ComponentSummary): string {
   output += '|----------|-------------|\n';
   
   for (const cat of summary.byCategory.slice(0, 10)) {
-    output += `| ${cat.name} | ${cat.count}개 |\n`;
+    output += `| ${tableCell(cat.name || cat.category_id)} | ${cat.count}개 |\n`;
   }
   
   if (summary.byCategory.length > 10) {
@@ -402,7 +417,7 @@ export function formatComponentSummary(summary: ComponentSummary): string {
   output += '|------|-------------|\n';
   
   for (const ver of summary.byVersion) {
-    output += `| ${ver.version} | ${ver.count}개 |\n`;
+    output += `| ${tableCell(ver.version)} | ${ver.count}개 |\n`;
   }
   
   return output;
