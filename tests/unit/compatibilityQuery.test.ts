@@ -298,6 +298,41 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     });
   });
 
+  describe("결과 행의 컬럼", () => {
+    const PUBLIC_COLUMNS = [
+      "product_name",
+      "product_version",
+      "framework_version",
+      "category",
+      "compatibility_level",
+      "vendor",
+      "verified_date",
+      "description",
+      "url",
+    ];
+
+    it("내부용 id 와 created_at 을 빼고 정해진 컬럼만 돌려준다", () => {
+      const listed = sqlite.queryCompatibleSoftware({ filters: { category: "WAS" } });
+      const allTerms = sqlite.queryCompatibleSoftware({ query: "JEUS" });
+      const anyTerm = sqlite.queryCompatibleSoftware({ query: "오라클" });
+      expect(allTerms.matchMode).toBe("all-terms");
+      expect(anyTerm.matchMode).toBe("any-term");
+
+      for (const result of [listed, allTerms, anyTerm]) {
+        expect(result.rows.length).toBeGreaterThan(0);
+        for (const row of result.rows) {
+          expect(Object.keys(row)).toEqual(PUBLIC_COLUMNS);
+        }
+      }
+    });
+
+    it("배열을 돌려주는 기존 메서드는 id 를 유지한다 (id 로 중복을 걸러 내는 호출부가 있다)", () => {
+      expect(sqlite.searchCompatibleSoftware({ category: "WAS" })[0]).toHaveProperty("id");
+      expect(sqlite.fullTextSearchCompatibility("JEUS")[0]).toHaveProperty("id");
+      expect(sqlite.fullTextSearchCompatibility("오라클")[0]).toHaveProperty("id");
+    });
+  });
+
   describe("필터에 쓸 수 있는 값 목록", () => {
     it("getFrameworkVersions 는 major, minor 를 정수로 비교해 최신 버전부터 돌려준다", () => {
       // 문자열로 정렬하면 3.10 이 3.2 와 3.9 보다 작은 값으로 취급된다

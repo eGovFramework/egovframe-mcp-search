@@ -18,6 +18,9 @@ export interface CompatibilitySoftware {
   created_at?: string;
 }
 
+// 조회 결과로 내보내는 호환성 소프트웨어 행 (내부용 id, created_at 제외)
+export type CompatibilitySoftwareInfo = Omit<CompatibilitySoftware, 'id' | 'created_at'>;
+
 // 호환성 소프트웨어 검색 필터
 export interface CompatibilitySearchFilter {
   frameworkVersion?: string;
@@ -44,7 +47,7 @@ export interface CompatibilityQueryOptions {
 
 // 호환성 소프트웨어 조회 결과
 export interface CompatibilityQueryResult {
-  rows: CompatibilitySoftware[];  // offset 부터 limit 건
+  rows: CompatibilitySoftwareInfo[];  // offset 부터 limit 건
   total: number;  // 같은 조건에 맞는 전체 건수 (limit/offset 적용 전)
   matchMode?: KeywordMatchMode;  // 키워드 검색을 수행했을 때만 채워진다
 }

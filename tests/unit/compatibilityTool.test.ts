@@ -254,6 +254,27 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
     });
   });
 
+  describe("응답의 software 항목", () => {
+    useCatalogue(CATALOGUE);
+
+    it("내부용 필드 id 와 created_at 을 싣지 않는다", async () => {
+      const responses = [
+        await searchCompatibleSoftware({ category: "WAS" }),
+        await searchCompatibleSoftware({ query: "JEUS" }),
+        await searchCompatibleSoftware({ query: "오라클" }),
+      ];
+      for (const response of responses) {
+        expect(response.count).toBeGreaterThan(0);
+        for (const software of response.software) {
+          expect(software).not.toHaveProperty("id");
+          expect(software).not.toHaveProperty("created_at");
+          expect(software).toHaveProperty("product_name");
+          expect(software).toHaveProperty("verified_date");
+        }
+      }
+    });
+  });
+
   describe("전체 건수와 페이지", () => {
     useCatalogue(BULK);
 

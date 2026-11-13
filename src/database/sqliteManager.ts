@@ -23,6 +23,7 @@ import {
   DependencyResolution,
   CompatibilityQueryOptions,
   CompatibilityQueryResult,
+  CompatibilitySoftwareInfo,
   KeywordMatchMode,
 } from '../types/database.js';
 
@@ -292,14 +293,15 @@ export class SQLiteManager {
 
   /**
    * 호환성 소프트웨어 검색 — 필터에 맞는 행을 배열로 돌려준다.
-   * limit 을 생략하면 전체를 돌려준다.
+   * limit 을 생략하면 전체를 돌려준다. 행에는 id 와 created_at 도 들어 있다.
    */
   searchCompatibleSoftware(filters: CompatibilitySearchFilter = {}, limit?: number): CompatibilitySoftware[] {
-    return this.queryCompatibleSoftware({ filters, limit }).rows;
+    return this.selectCompatibleSoftware<CompatibilitySoftware>(COMPATIBILITY_SEARCH_ALL_COLUMNS, { filters, limit })
+      .rows;
   }
 
   /**
-   * 전체 텍스트 검색 — 키워드로 찾은 행을 배열로 돌려준다.
+   * 전체 텍스트 검색 — 키워드로 찾은 행을 배열로 돌려준다. 행에는 id 와 created_at 도 들어 있다.
    * 검색 규칙은 queryCompatibleSoftware 와 같다. 단, 검색어가 하나도 추출되지 않으면
    * 전체 목록이 아니라 빈 배열을 돌려준다.
    */
@@ -307,7 +309,8 @@ export class SQLiteManager {
     if (extractSearchTerms(query).length === 0) {
       return [];
     }
-    return this.queryCompatibleSoftware({ query, limit }).rows;
+    return this.selectCompatibleSoftware<CompatibilitySoftware>(COMPATIBILITY_SEARCH_ALL_COLUMNS, { query, limit })
+      .rows;
   }
 
   /**
@@ -320,27 +323,36 @@ export class SQLiteManager {
    *   확인일자가 최근인 순으로 돌려준다.
    *
    * total 은 같은 조건에 맞는 전체 건수이고, rows 는 그 가운데 offset 부터 limit 건이다.
+   * rows 에는 내부용 컬럼(id, created_at)을 넣지 않는다.
    */
   queryCompatibleSoftware(options: CompatibilityQueryOptions = {}): CompatibilityQueryResult {
+    return this.selectCompatibleSoftware<CompatibilitySoftwareInfo>(COMPATIBILITY_SEARCH, options);
+  }
+
+  /** 호환성 소프트웨어 조회의 본체. target.columns 에 적힌 컬럼을 조회한다. */
+  private selectCompatibleSoftware<Row>(
+    target: KeywordSearchTarget,
+    options: CompatibilityQueryOptions,
+  ): { rows: Row[]; total: number; matchMode?: KeywordMatchMode } {
     const filter = this.buildCompatibilityFilter(options.filters ?? {});
     const page: SqlPage = { limit: toSqlLimit(options.limit), offset: toSqlOffset(options.offset) };
 
     const terms = extractSearchTerms(options.query ?? '');
     if (terms.length > 0) {
-      return this.keywordSearch<CompatibilitySoftware>(COMPATIBILITY_SEARCH, terms, filter, page);
+      return this.keywordSearch<Row>(target, terms, filter, page);
     }
 
-    const from = `FROM ${COMPATIBILITY_SEARCH.table} WHERE 1=1${filter.sql}`;
+    const from = `FROM ${target.table} WHERE 1=1${filter.sql}`;
     const total = (
       this.db.prepare(`SELECT COUNT(*) AS count ${from}`).get(...filter.params) as { count: number }
     ).count;
     const rows = this.db
       .prepare(
-        `SELECT ${COMPATIBILITY_SEARCH.columns} ${from}
-         ORDER BY ${COMPATIBILITY_SEARCH.defaultOrder}, ${COMPATIBILITY_SEARCH.rowid}
+        `SELECT ${target.columns} ${from}
+         ORDER BY ${target.defaultOrder}, ${target.rowid}
          LIMIT ? OFFSET ?`,
       )
-      .all(...filter.params, page.limit, page.offset) as CompatibilitySoftware[];
+      .all(...filter.params, page.limit, page.offset) as Row[];
     return { rows, total };
   }
 
@@ -1025,13 +1037,27 @@ interface KeywordSearchTarget {
 }
 
 const COMPATIBILITY_SEARCH: KeywordSearchTarget = {
-  columns: 'cs.*',
+  // 조회 결과로 내보내는 컬럼만 명시한다. 내부용 id(재구축마다 바뀜)와 created_at(적재 시각)은 넣지 않는다.
+  columns: [
+    'cs.product_name',
+    'cs.product_version',
+    'cs.framework_version',
+    'cs.category',
+    'cs.compatibility_level',
+    'cs.vendor',
+    'cs.verified_date',
+    'cs.description',
+    'cs.url',
+  ].join(', '),
   table: 'compatibility_software cs',
   ftsTable: 'compatibility_fts',
   rowid: 'cs.id',
   likeColumns: ['cs.product_name', 'cs.vendor', 'cs.description', 'cs.category'],
   defaultOrder: 'cs.verified_date DESC',
 };
+
+/** 배열을 돌려주는 기존 메서드용: id 로 행을 구분하는 호출부가 있어 모든 컬럼을 조회한다. */
+const COMPATIBILITY_SEARCH_ALL_COLUMNS: KeywordSearchTarget = { ...COMPATIBILITY_SEARCH, columns: 'cs.*' };
 
 /** SQLite 가 허용하는 LIKE 패턴의 최대 길이 (SQLITE_MAX_LIKE_PATTERN_LENGTH 기본값, 바이트). */
 const MAX_LIKE_PATTERN_BYTES = 50000;

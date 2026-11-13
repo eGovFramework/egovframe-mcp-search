@@ -5,7 +5,7 @@
 
 import { getInitializedHybridManager } from '../database/hybridManager.js';
 import type { SQLiteManager } from '../database/sqliteManager.js';
-import { CompatibilitySearchFilter, CompatibilitySoftware, KeywordMatchMode } from '../types/database.js';
+import { CompatibilitySearchFilter, CompatibilitySoftwareInfo, KeywordMatchMode } from '../types/database.js';
 
 /** 문자열 필터 값의 앞뒤 공백을 뗀다. 문자열이 아니거나 비어 있으면 undefined. */
 function cleanFilter(value: string | undefined): string | undefined {
@@ -134,7 +134,8 @@ export interface CompatibilitySearchResponse {
   matchMode?: KeywordMatchMode;
   /** 결과가 0건이고 frameworkVersion·category 가 데이터에 없는 값일 때: 쓸 수 있는 값 */
   available?: { frameworkVersions: string[]; categories: string[] };
-  software: CompatibilitySoftware[];
+  /** 조회된 소프트웨어. 내부용 필드(id, created_at)는 싣지 않는다 */
+  software: CompatibilitySoftwareInfo[];
   relatedKnowledge?: Array<{ product: string; knowledge: RelatedKnowledgeItem[] }>;
 }
 
