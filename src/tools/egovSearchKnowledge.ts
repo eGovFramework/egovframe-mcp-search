@@ -7,6 +7,7 @@
  */
 
 import { getInitializedGuideManager } from "../rag/guideManager.js";
+import { GUIDE_SITE_BASE_URL } from "../kb/sources.js";
 import { UserFacingError, toUserMessage } from "../utils/errors.js";
 import { searchKnowledge } from "./knowledge.js";
 import { searchCompatibleSoftware } from "./compatibility.js";
@@ -108,8 +109,8 @@ async function searchGuide(args: EgovSearchKnowledgeArgs): Promise<string> {
   });
 
   const formatted = results.map((result, idx) => {
-    const baseUrl = "https://www.egovframe.go.kr/wiki/doku.php";
-    const docUrl = result.url ? `${baseUrl}?id=egovframework:rte${result.url.replaceAll("/", ":")}` : "";
+    // url 은 가이드 사이트(Hugo)의 permalink 다. 값이 없는 문서는 링크를 만들지 않는다.
+    const docUrl = result.url ? `${GUIDE_SITE_BASE_URL}${result.url.startsWith("/") ? "" : "/"}${result.url}` : "";
     return [
       `### ${idx + 1}. ${result.title}`,
       `- **문서**: ${result.docTitle}`,

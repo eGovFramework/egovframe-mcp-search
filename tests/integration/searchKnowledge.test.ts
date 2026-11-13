@@ -14,6 +14,7 @@ import {
   callSearchKnowledge,
   createMcpClient,
   hasComponentSources,
+  hasEmbeddingModel,
 } from "./_helper.js";
 
 describe("integration — egov_search_knowledge components action 라우팅", () => {
@@ -175,5 +176,24 @@ describe("integration — egov_search_knowledge components action 라우팅", ()
       const res = await search({ scope: "components", action });
       expect(res.isError, `action=${action}`).toBe(true);
     }
+  });
+});
+
+describe("integration — egov_search_knowledge 가이드 검색", () => {
+  let client: Client;
+
+  beforeAll(async () => {
+    client = await createMcpClient();
+  });
+
+  afterAll(async () => {
+    await client?.close();
+  });
+
+  it.skipIf(!hasEmbeddingModel())("결과의 URL 은 가이드 사이트의 문서 주소를 가리킨다", async () => {
+    const res = await callSearchKnowledge(client, { scope: "guide", query: "MyBatis 설정 방법" });
+    expect(res.isError).toBe(false);
+    expect(res.text).toMatch(/\*\*URL\*\*: https:\/\/egovframework\.github\.io\/egovframe-docs\/[a-z0-9_-]+\//);
+    expect(res.text).not.toContain("doku.php");
   });
 });
