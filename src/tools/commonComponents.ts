@@ -1339,8 +1339,9 @@ function parseDmlStatements(fullDML: string, upperTableNames: Set<string>): DmlS
       continue;
     }
 
-    // INSERT INTO TABLENAME 패턴 매칭
-    const match = trimmedLine.match(/INSERT\s+INTO\s+(\w+)/i);
+    // INSERT INTO TABLENAME 패턴 매칭 — 줄 머리에 고정한다. 다른 문의 문자열 값에 든
+    // 'INSERT INTO <테이블>' 을 그 테이블의 INSERT 문으로 읽지 않도록
+    const match = trimmedLine.match(/^INSERT\s+INTO\s+(\w+)/i);
     if (match) {
       const table = match[1].toUpperCase();
       if (upperTableNames.has(table)) {

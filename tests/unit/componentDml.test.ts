@@ -212,6 +212,48 @@ describe('extractTableDMLs — table 지정 조회', () => {
   });
 });
 
+describe('extractTableDMLs — 줄 머리의 INSERT 문만 센다', () => {
+  // 'INSERT INTO A' 가 INSERT 문이 아닌 줄(UPDATE 의 문자열 값)과 다른 테이블 INSERT 문의 값 안에만 있다
+  const sql = [
+    "UPDATE X SET SQL_TEXT = 'INSERT INTO A VALUES (1)';",
+    "INSERT INTO B (T) VALUES ('INSERT INTO A VALUES (1)');",
+  ].join('\n');
+
+  it('INSERT 문이 아닌 줄에 든 "INSERT INTO <테이블>" 문자열을 그 테이블의 INSERT 문으로 취급하지 않는다', () => {
+    const result = extractTableDMLs(sql, ['A']);
+
+    expect(result.totalCount).toBe(0);
+    expect(result.statementCount).toBe(0);
+    expect(result.tableCounts).toEqual([{ table: 'A', total: 0, shown: 0 }]);
+    expect(result.dml).not.toContain('UPDATE');
+    expect(result.dml).toContain('초기 데이터가 없습니다');
+  });
+
+  it('table 지정 조회에서도 그런 줄을 돌려주지 않는다', () => {
+    const result = extractTableDMLs(sql, ['A'], { table: 'A' });
+
+    expect(result.totalCount).toBe(0);
+    expect(result.dml).not.toContain('UPDATE');
+  });
+
+  it('값 안에 다른 테이블의 INSERT INTO 가 든 INSERT 문은 줄 머리의 테이블 것으로만 센다', () => {
+    const result = extractTableDMLs(sql, ['A', 'B']);
+
+    expect(result.tableCounts).toEqual([
+      { table: 'B', total: 1, shown: 1 },
+      { table: 'A', total: 0, shown: 0 },
+    ]);
+    expect(result.dml).toContain("INSERT INTO B (T) VALUES ('INSERT INTO A VALUES (1)');");
+    expect(result.dml).not.toContain('UPDATE');
+  });
+
+  it('들여쓴 INSERT 문과 소문자로 쓴 insert into 는 그대로 센다', () => {
+    const indented = ['  INSERT INTO A (ID) VALUES (1);', '\tinsert into a (ID) values (2);'].join('\n');
+
+    expect(extractTableDMLs(indented, ['A']).totalCount).toBe(2);
+  });
+});
+
 describe('formatComponentDML', () => {
   it('기본 보기는 테이블별 전체·표시·생략 건수 표와 table 조회 안내를 붙인다', () => {
     const text = formatComponentDML(dmlResult(SAMPLE_SQL, SAMPLE_TABLES));
