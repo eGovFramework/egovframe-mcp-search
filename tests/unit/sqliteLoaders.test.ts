@@ -1,7 +1,7 @@
 /**
  * SQLite 적재 공용 로직(kb/sqliteLoaders) 단위 테스트
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs-extra';
 import path from 'node:path';
 import os from 'node:os';
@@ -158,6 +158,28 @@ describe('sqliteLoaders', () => {
 
       expect(sqlite.searchComponents('게시판').map((c) => c.component_id)).toEqual(['bbs']);
       expect(sqlite.searchComponents('블로그').map((c) => c.component_id)).toEqual(['blog-management']);
+    });
+
+    it('패키지명으로 찾을 때 한 패키지를 함께 쓰는 컴포넌트는 먼저 적재한 것을 돌려준다', async () => {
+      const jsonPath = await writeMeta([
+        component('bbs', '게시판', 'egovframework.com.cop.bbs', { nameEn: 'BBS' }),
+        component('bbs', '블로그관리', 'egovframework.com.cop.bbs', { nameEn: 'Blog Management' }),
+      ]);
+      await loadCommonComponentsFromJson(sqlite, jsonPath);
+
+      expect(sqlite.getComponentByPackage('egovframework.com.cop.bbs')?.component_id).toBe('bbs');
+      expect(sqlite.getComponentByPackage('EGOVFRAMEWORK.COM.COP.BBS')?.component_id).toBe('bbs');
+
+      // 정렬 기준이 같은 행의 순서는 SQL 이 보장하지 않으므로, 조회 문이 id 를 마지막 기준으로 두는지 직접 확인한다
+      const db = (sqlite as unknown as { db: { prepare: (sql: string) => unknown } }).db;
+      const prepare = vi.spyOn(db, 'prepare');
+      try {
+        sqlite.getComponentByPackage('egovframework.com.cop.bbs');
+        const sql = String(prepare.mock.calls[0]?.[0]).replace(/\s+/g, ' ').trim();
+        expect(sql).toMatch(/ORDER BY .*, c\.id LIMIT 1$/);
+      } finally {
+        prepare.mockRestore();
+      }
     });
 
     it('components 배열이 없는 파일은 거부한다', async () => {

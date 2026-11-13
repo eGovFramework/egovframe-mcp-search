@@ -848,6 +848,7 @@ export class SQLiteManager {
   /**
    * 식별자 컬럼(component_id 또는 package_name)으로 컴포넌트 하나를 찾는다.
    * 대소문자만 다른 값이 함께 있으면 글자가 그대로 같은 행을 고른다.
+   * 한 패키지를 함께 쓰는 컴포넌트(게시판과 블로그관리)는 먼저 적재한 것을 고른다.
    */
   private getComponentByKey(column: 'c.component_id' | 'c.package_name', value: string): CommonComponent | undefined {
     const key = trimFilter(value);
@@ -859,7 +860,7 @@ export class SQLiteManager {
       FROM ${COMPONENT_SEARCH.table}
       ${COMPONENT_SEARCH.joins}
       WHERE ${column} = ? COLLATE NOCASE
-      ORDER BY (${column} = ?) DESC
+      ORDER BY (${column} = ?) DESC, c.id
       LIMIT 1
     `).get(key, key) as CommonComponent | undefined;
   }
