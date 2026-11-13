@@ -88,6 +88,12 @@ const filtersSchema = z.strictObject({
       "guide: sub-area under a layer, e.g. persistence-layer, security. compatibility: software category name, e.g. 'CMS Solution', 'WAS', 'DBMS'. Case-insensitive. With scope auto or all, the value decides which source the filter belongs to.",
     ),
 
+  chunkId: filterString()
+    .optional()
+    .describe(
+      "guide: ID of one guide chunk, printed by a guide search when a result body is cut off. Returns that chunk from filters.offset (6,000 characters per call); query is not needed.",
+    ),
+
   // ── knowledge ──
   type: z
     .enum(KNOWLEDGE_TYPES)
@@ -205,7 +211,7 @@ const filtersSchema = z.strictObject({
     .min(0)
     .optional()
     .describe(
-      "Where to continue a paged result. compatibility: number of rows to skip. components action dml with filters.table: number of INSERT statements to skip. components action readSource: character position to continue from (the nextOffset printed by the previous response). Not supported elsewhere.",
+      "Where to continue a paged result. compatibility: number of rows to skip. components action dml with filters.table: number of INSERT statements to skip. components action readSource and guide with filters.chunkId: character position to continue from (printed by the previous response). Not supported elsewhere.",
     ),
 });
 
@@ -228,7 +234,7 @@ server.registerTool(
         ),
       scope: absentIfEmpty(z.enum(SEARCH_SCOPES).optional())
         .describe(
-          "Search source. guide: official Developer Guide (the index holds little of the per-component common-component manuals, so look components up with scope components). knowledge: portal Q&A / FAQ / application guide. components: common components. compatibility: compatible software catalog. all: every source at once. auto (default) infers the source: an action or a component filter (componentId, componentIds, filePath, dbType, table, categoryId, hasWeb) → components; a compatibility filter (frameworkVersion, vendor, productName, minLevel, includeKnowledge, or a category that names a software category) → compatibility; layer, or a category that names a guide category → guide; a knowledge filter (type, tags, minImportance, verifiedOnly, sort) → knowledge; otherwise a query searches all sources and a call without query returns the component category overview. Filter values equal to the default (includeKnowledge false, verifiedOnly false, sort relevance, minImportance 1) do not select a source. An explicit scope is always used as given. With all, each filter is applied only to the source it belongs to and the knowledge section carries excerpts.",
+          "Search source. guide: official Developer Guide (the index holds little of the per-component common-component manuals, so look components up with scope components). knowledge: portal Q&A / FAQ / application guide. components: common components. compatibility: compatible software catalog. all: every source at once. auto (default) infers the source: an action or a component filter (componentId, componentIds, filePath, dbType, table, categoryId, hasWeb) → components; a compatibility filter (frameworkVersion, vendor, productName, minLevel, includeKnowledge, or a category that names a software category) → compatibility; layer, chunkId, or a category that names a guide category → guide; a knowledge filter (type, tags, minImportance, verifiedOnly, sort) → knowledge; otherwise a query searches all sources and a call without query returns the component category overview. Filter values equal to the default (includeKnowledge false, verifiedOnly false, sort relevance, minImportance 1) do not select a source. An explicit scope is always used as given. With all, each filter is applied only to the source it belongs to and the knowledge section carries excerpts.",
         ),
       action: absentIfEmpty(z.enum(COMPONENT_ACTIONS).optional())
         .describe(

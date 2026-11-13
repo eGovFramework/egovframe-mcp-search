@@ -115,6 +115,9 @@ const COMPONENT_LIST_FILTER_KEYS = ["categoryId", "keyword", "hasWeb", "version"
 /** 가이드 검색에 적용되는 필터 키. */
 const GUIDE_USED_FILTER_KEYS = ["layer", "category", "limit"] as const;
 
+/** 가이드 청크 하나를 이어 읽을 때 적용되는 필터 키. */
+const GUIDE_CHUNK_USED_FILTER_KEYS = ["chunkId", "offset"] as const;
+
 /** 개발자 지식 검색에 적용되는 필터 키. */
 const KNOWLEDGE_USED_FILTER_KEYS = [
   "type",
@@ -152,7 +155,7 @@ const COMPONENT_FILTER_KEYS = [
   "hasWeb",
 ] as const;
 const COMPATIBILITY_FILTER_KEYS = ["frameworkVersion", "vendor", "productName", "minLevel", "includeKnowledge"] as const;
-const GUIDE_FILTER_KEYS = ["layer"] as const;
+const GUIDE_FILTER_KEYS = ["layer", "chunkId"] as const;
 const KNOWLEDGE_FILTER_KEYS = ["type", "tags", "minImportance", "verifiedOnly", "sort"] as const;
 
 /** action 과 함께 써야만 뜻이 있는 필터와 그 필터를 쓰는 action. */
@@ -398,8 +401,11 @@ async function withIndexRetry<T>(
   }
 }
 
-/** 가이드 결과 하나에 싣는 본문의 최대 길이(문자 수). */
+/** 가이드 검색 결과 하나에 싣는 본문의 최대 길이(문자 수). 넘는 부분은 filters.chunkId 로 이어 읽는다. */
 const GUIDE_CONTENT_MAX_CHARS = 1500;
+
+/** filters.chunkId 로 청크를 읽을 때 한 번에 돌려주는 본문의 최대 길이(문자 수). */
+const GUIDE_CHUNK_PAGE_CHARS = 6000;
 
 /** 중복 청크를 걸러 낸 뒤에도 limit 건을 채울 수 있게 더 가져오는 건수. */
 const GUIDE_DEDUPE_EXTRA = 10;
@@ -411,10 +417,7 @@ const GUIDE_DEDUPE_EXTRA = 10;
  * 결과의 제목(`### 1. ...`)·결과 사이의 구분선과 구별되지 않는다. 코드 블록 밖의 제목은 굵은 글씨로,
  * 구분선은 `* * *` 로 바꾼다. 길이 제한으로 자를 때 열려 있는 코드 블록은 닫는다.
  */
-function formatGuideContent(content: string): string {
-  const truncated = content.length > GUIDE_CONTENT_MAX_CHARS;
-  const text = truncated ? content.substring(0, GUIDE_CONTENT_MAX_CHARS) : content;
-
+function formatGuideContent(text: string): string {
   let fence: string | null = null;
   const lines = text.split("\n").map((line) => {
     const fenceMatch = line.match(/^\s*(`{3,}|~{3,})/);
@@ -436,15 +439,65 @@ function formatGuideContent(content: string): string {
     return /^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(line) ? "* * *" : line;
   });
 
-  let body = lines.join("\n");
-  if (fence !== null) {
-    body += `\n${fence}`;
+  const body = lines.join("\n");
+  return fence !== null ? `${body}\n${fence}` : body;
+}
+
+/** 가이드 청크의 머리말: 제목, 문서, 분류, 소스, URL. */
+function formatGuideHeader(
+  heading: string,
+  chunk: { docTitle: string; layer: string; category: string; source: string; url: string },
+): string[] {
+  // url 은 가이드 사이트(Hugo)의 permalink 다. 값이 없는 문서는 링크를 만들지 않는다.
+  const docUrl = chunk.url ? `${GUIDE_SITE_BASE_URL}${chunk.url.startsWith("/") ? "" : "/"}${chunk.url}` : "";
+  return [
+    heading,
+    `- **문서**: ${chunk.docTitle}`,
+    `- **분류**: ${chunk.category ? `${chunk.layer} > ${chunk.category}` : chunk.layer}`,
+    `- **소스**: ${chunk.source}`,
+    ...(docUrl ? [`- **URL**: ${docUrl}`] : []),
+  ];
+}
+
+/**
+ * 가이드 청크 하나의 본문을 filters.offset 부터 읽는다 (검색 결과에서 잘린 본문을 이어 읽는 용도).
+ * 한 번에 GUIDE_CHUNK_PAGE_CHARS 자까지 돌려주고, 남은 내용이 있으면 다음 offset 을 알려 준다.
+ */
+async function readGuideChunk(chunkId: string, filters: Record<string, unknown>): Promise<string> {
+  const chunk = await withIndexRetry("guide", "공식 가이드", resetGuideManager, async () =>
+    (await getInitializedGuideManager()).getChunkById(chunkId),
+  );
+  if (!chunk) {
+    throw new UserFacingError(
+      `filters.chunkId 에 해당하는 가이드 청크를 찾을 수 없습니다: ${chunkId}. ` +
+        "청크 ID 는 지식베이스를 갱신하거나 다시 구축하면 바뀝니다. scope guide 로 다시 검색해서 새 ID 를 확인하세요.",
+    );
   }
-  return truncated ? `${body}\n\n... (truncated)` : body;
+
+  const total = chunk.content.length;
+  const offset = Math.min(total, Math.max(0, Math.floor(asNumber(filters.offset) ?? 0)));
+  const end = Math.min(total, offset + GUIDE_CHUNK_PAGE_CHARS);
+  const lines = [...formatGuideHeader(`## ${chunk.title}`, chunk), "", formatGuideContent(chunk.content.substring(offset, end))];
+
+  const range = `전체 ${formatCount(total)}자 중 ${formatCount(offset + 1)}~${formatCount(end)}자를 표시했습니다`;
+  let note: string;
+  if (offset >= total) {
+    note = `> filters.offset ${offset} 부터는 남은 내용이 없습니다 (전체 ${formatCount(total)}자).`;
+  } else if (end < total) {
+    note = `> ${range}. 이어서 읽으려면 같은 호출에 \`filters.offset: ${end}\` 을 주세요.`;
+  } else {
+    note = `> ${range} (청크의 끝).`;
+  }
+  return withNotes(lines.join("\n"), note, ignoredFiltersNote(filters, GUIDE_CHUNK_USED_FILTER_KEYS));
 }
 
 async function searchGuide(args: EgovSearchKnowledgeArgs, options: SectionOptions = {}): Promise<string> {
   const filters = getFilters(args);
+  // chunkId 를 주면 검색하지 않고 그 청크의 본문을 이어 읽는다 (query 가 필요 없다)
+  const chunkId = asString(filters.chunkId);
+  if (chunkId) {
+    return readGuideChunk(chunkId, filters);
+  }
   const query = requireQuery(args.query, "guide");
   const limit = resolveLimit(args, "guide", options);
   const layer = asString(filters.layer);
@@ -468,18 +521,23 @@ async function searchGuide(args: EgovSearchKnowledgeArgs, options: SectionOption
   const ignored = ignoredFiltersNote(filters, GUIDE_USED_FILTER_KEYS);
 
   const formatted = results.map((result, idx) => {
-    // url 은 가이드 사이트(Hugo)의 permalink 다. 값이 없는 문서는 링크를 만들지 않는다.
-    const docUrl = result.url ? `${GUIDE_SITE_BASE_URL}${result.url.startsWith("/") ? "" : "/"}${result.url}` : "";
-    return [
-      `### ${idx + 1}. ${result.title}`,
-      `- **문서**: ${result.docTitle}`,
-      `- **분류**: ${result.category ? `${result.layer} > ${result.category}` : result.layer}`,
-      `- **소스**: ${result.source}`,
-      ...(docUrl ? [`- **URL**: ${docUrl}`] : []),
+    const total = result.content.length;
+    const truncated = total > GUIDE_CONTENT_MAX_CHARS;
+    const lines = [
+      ...formatGuideHeader(`### ${idx + 1}. ${result.title}`, result),
       `- **유사도**: ${(1 - result.score).toFixed(4)}`,
       "",
-      formatGuideContent(result.content),
-    ].join("\n");
+      formatGuideContent(truncated ? result.content.substring(0, GUIDE_CONTENT_MAX_CHARS) : result.content),
+    ];
+    if (truncated) {
+      // 잘린 본문의 나머지는 청크 ID 로 이어 읽을 수 있다
+      lines.push(
+        "",
+        `> 전체 ${formatCount(total)}자 중 1~${formatCount(GUIDE_CONTENT_MAX_CHARS)}자를 표시했습니다. 나머지는 ` +
+          `\`scope: "guide"\`, \`filters.chunkId: "${result.id}"\`, \`filters.offset: ${GUIDE_CONTENT_MAX_CHARS}\` 으로 이어서 읽을 수 있습니다.`,
+      );
+    }
+    return lines.join("\n");
   });
 
   const heading = `## eGovFrame 가이드 검색 결과 (${results.length}건)`;

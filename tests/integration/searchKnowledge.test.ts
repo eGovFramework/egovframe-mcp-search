@@ -271,6 +271,72 @@ describe("integration — egov_search_knowledge 가이드 검색 결과의 형�
     expect(new Set(bodies).size).toBe(bodies.length);
   });
 
+  describe("잘린 본문 이어 읽기 (filters.chunkId)", () => {
+    /** 동봉 가이드 인덱스에서 본문이 가장 긴 청크를 직접 읽는다 (도구를 거치지 않는다). */
+    async function longestChunk(): Promise<{ id: string; content: string; title: string }> {
+      const lancedb = await import("@lancedb/lancedb");
+      const table = await (await lancedb.connect(path.join(REPO_ROOT, "knowledge-base"))).openTable("egovframe_guide");
+      const rows = (await table.query().select(["id", "title", "content"]).toArray()) as Array<{
+        id: string;
+        title: string;
+        content: string;
+      }>;
+      return rows.reduce((longest, row) => (row.content.length > longest.content.length ? row : longest));
+    }
+
+    it("chunkId 를 주면 query 없이 그 청크의 본문을 offset 부터 돌려주고 다음 offset 을 알려 준다", async () => {
+      const chunk = await longestChunk();
+      expect(chunk.content.length).toBeGreaterThan(20_000);
+
+      const first = await search({ scope: "guide", filters: { chunkId: chunk.id } });
+      expect(first.isError).toBe(false);
+      expect(first.text).toContain(chunk.title);
+      expect(first.text).toMatch(/전체 [\d,]+자 중 1~6,000자/);
+      expect(first.text).toContain("filters.offset: 6000");
+
+      const middle = await search({ scope: "guide", filters: { chunkId: chunk.id, offset: 12000 } });
+      expect(middle.isError).toBe(false);
+      expect(middle.text).toMatch(/전체 [\d,]+자 중 12,001~18,000자/);
+      // 원문에서 그 자리에 있는 문장이 응답에 들어 있다 (제목·구분선이 아닌 평범한 줄을 고른다)
+      const plainLine = chunk.content
+        .substring(12000, 18000)
+        .split("\n")
+        .find((line) => line.trim().length > 20 && !/^\s*(#|-{3,}|`{3,}|\|)/.test(line));
+      expect(plainLine).toBeDefined();
+      expect(middle.text).toContain(plainLine!.trim());
+    });
+
+    it("scope 를 생략해도 chunkId 만으로 가이드 청크를 읽는다", async () => {
+      const chunk = await longestChunk();
+      const res = await search({ filters: { chunkId: chunk.id, offset: 6000 } });
+      expect(res.isError).toBe(false);
+      expect(res.text).toMatch(/전체 [\d,]+자 중 6,001~12,000자/);
+    });
+
+    it("없는 chunkId 는 다시 검색하라는 안내로 답한다", async () => {
+      const res = await search({ scope: "guide", filters: { chunkId: "00000000-0000-0000-0000-000000000000" } });
+      expect(res.isError).toBe(true);
+      expect(res.text).toContain("chunkId");
+      expect(res.text).toContain("다시 검색");
+    });
+
+    it.skipIf(!hasEmbeddingModel())("검색 결과의 본문이 잘리면 이어 읽는 방법을 chunkId 와 함께 알려 준다", async () => {
+      const res = await search({
+        scope: "guide",
+        query: "받은쪽지함관리 컴포넌트의 배포파일명과 포함 테이블",
+        limit: 5,
+      });
+      expect(res.isError).toBe(false);
+      const note = res.text.match(/전체 ([\d,]+)자 중 1~1,500자를 표시했습니다[^\n]*filters\.chunkId: "([0-9a-f-]{36})"[^\n]*filters\.offset: 1500/);
+      expect(note).not.toBeNull();
+      expect(res.text).not.toContain("... (truncated)");
+
+      const next = await search({ scope: "guide", filters: { chunkId: note![2], offset: 1500 } });
+      expect(next.isError).toBe(false);
+      expect(next.text).toMatch(/전체 [\d,]+자 중 1,501~/);
+    });
+  });
+
   it.skipIf(!hasEmbeddingModel())("category 가 없는 문서는 분류에 layer 만 적는다", async () => {
     const res = await search({ scope: "guide", query: "시작하기 가이드 문서 구성", filters: { layer: "gettingstarted.md" } });
     expect(res.isError).toBe(false);
@@ -966,6 +1032,7 @@ describe("integration — egov_search_knowledge 공개 스키마", () => {
       "minLevel",
       "includeKnowledge",
       "table",
+      "chunkId",
       "offset",
       "limit",
     ]) {

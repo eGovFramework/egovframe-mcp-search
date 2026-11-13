@@ -13,7 +13,7 @@ import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import { resolveGuideDbDir } from '../utils/dataPaths.js';
 import { UserFacingError } from '../utils/errors.js';
-import { clampSearchLimit, lanceIn, quoteFilterValue } from '../utils/lanceFilter.js';
+import { lanceEquals, clampSearchLimit, lanceIn, quoteFilterValue } from '../utils/lanceFilter.js';
 
 // ─── 타입 정의 ────────────────────────────────────────────
 
@@ -585,6 +585,34 @@ export class GuideSearchManager {
       url: r.url,
       score: r._distance,
     }));
+  }
+
+  /**
+   * id 로 청크 하나를 찾는다. 없으면 null.
+   * 검색 결과에서 잘린 본문을 이어 읽을 때 쓴다 (id 는 인덱스를 다시 구축하면 바뀐다).
+   */
+  async getChunkById(id: string): Promise<Omit<GuideSearchResult, 'score'> | null> {
+    const rows = await this.table
+      .query()
+      .where(lanceEquals('id', id))
+      .select(['id', 'title', 'content', 'source', 'layer', 'category', 'section', 'docTitle', 'url'])
+      .limit(1)
+      .toArray();
+    const row = rows[0] as Record<string, string> | undefined;
+    if (!row) {
+      return null;
+    }
+    return {
+      id: row.id,
+      title: row.title,
+      content: row.content,
+      source: row.source,
+      layer: row.layer,
+      category: row.category,
+      section: row.section,
+      docTitle: row.docTitle,
+      url: row.url,
+    };
   }
 
   /** layer / category 고유 값 캐시 — 테이블 핸들과 버전이 그대로일 때만 유효하다 */
