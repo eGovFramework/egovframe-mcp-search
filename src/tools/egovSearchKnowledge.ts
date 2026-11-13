@@ -1144,6 +1144,7 @@ async function searchAll(args: EgovSearchKnowledgeArgs): Promise<string> {
  * 2. 출처를 가리키는 필터가 있으면 그 출처 (components → compatibility → guide → knowledge 순으로 확인).
  *    함께 쓰는 키인 category 는 값이 어느 출처의 분류인지로 가린다.
  * 3. 그 밖에는 query 가 있으면 통합 검색, 없으면 공통컴포넌트 카테고리 개요
+ *    (query 없이 category 만 있으면 compatibility: 쓸 수 있는 분류를 알려 준다)
  */
 async function inferScope(args: EgovSearchKnowledgeArgs): Promise<ResolvedScope> {
   const filters = getFilters(args);
@@ -1169,7 +1170,12 @@ async function inferScope(args: EgovSearchKnowledgeArgs): Promise<ResolvedScope>
   if (hasAnyEffectiveFilter(filters, KNOWLEDGE_FILTER_KEYS)) {
     return "knowledge";
   }
-  return args.query ? "all" : "components";
+  if (args.query) {
+    return "all";
+  }
+  // query 없이 어느 출처의 분류도 아닌 category 만 준 호출이다. 가이드는 query 가 있어야 하므로 category 하나로
+  // 답할 수 있는 출처는 호환 소프트웨어뿐이고, 그 조회가 쓸 수 있는 분류를 알려 준다.
+  return category !== undefined ? "compatibility" : "components";
 }
 
 export async function egovSearchKnowledge(rawArgs: EgovSearchKnowledgeArgs): Promise<string> {

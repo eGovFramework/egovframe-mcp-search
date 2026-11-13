@@ -394,6 +394,17 @@ describe("integration — egov_search_knowledge scope 추론", () => {
     expect(res.text).toContain("filters.componentId is required");
   });
 
+  it("query 없이 어느 출처의 분류도 아닌 category 만 주면 compatibility 로 처리해 쓸 수 있는 분류를 알려 준다", async () => {
+    // 가이드는 query 가 있어야 하므로, category 하나만으로 답할 수 있는 출처는 호환 소프트웨어뿐이다
+    const res = await search({ filters: { category: "Web Server" } });
+    expect(res.isError).toBe(false);
+    expect(res.text).toContain(COMPAT_MARKER);
+    expect(res.text).not.toContain(OVERVIEW_MARKER);
+    const body = JSON.parse(res.text.slice(res.text.indexOf("{"), res.text.lastIndexOf("}") + 1));
+    expect(body.total).toBe(0);
+    expect(body.available.categories).toContain("WAS");
+  });
+
   it("호환성 전용 필터만 주면 compatibility 로 처리한다", async () => {
     const res = await search({ filters: { minLevel: 2 } });
     expect(res.isError).toBe(false);
