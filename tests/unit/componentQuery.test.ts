@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { SQLiteManager } from "../../src/database/sqliteManager.js";
-import { idsOf, seedComponents } from "./_componentFixture.js";
+import { COMPONENTS, idsOf, seedComponents } from "./_componentFixture.js";
 import fs from "fs-extra";
 import path from "node:path";
 import os from "node:os";
@@ -86,20 +86,88 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
       expect(result.total).toBe(2);
     });
 
-    it("검색어가 하나도 추출되지 않으면 빈 결과를 돌려준다", () => {
-      const result = sqlite.queryComponents({ query: "?!" });
-      expect(result.rows).toEqual([]);
-      expect(result.total).toBe(0);
-      expect(result.matchMode).toBeUndefined();
-    });
-
     it("FTS5 질의 오류가 아닌 오류는 다른 검색으로 바꾸지 않고 그대로 던진다", () => {
       (sqlite as any).db.exec("DROP TABLE components_fts");
       expect(() => sqlite.queryComponents({ query: "게시판" })).toThrow(/components_fts/);
     });
   });
 
+  describe("필터", () => {
+    it("키워드 검색 결과에 카테고리 필터를 함께 적용한다", () => {
+      // '관리' 는 tpl(게시판), ram·drm(역할-권한관리)의 설명과 일치한다
+      expect(idsOf(sqlite.queryComponents({ query: "관리" }).rows).sort()).toEqual(["drm", "ram", "tpl"]);
+      expect(
+        idsOf(sqlite.queryComponents({ query: "관리", filters: { categoryId: "역할-권한관리" } }).rows).sort(),
+      ).toEqual(["drm", "ram"]);
+      const board = sqlite.queryComponents({ query: "관리", filters: { categoryId: "게시판" } });
+      expect(idsOf(board.rows)).toEqual(["tpl"]);
+      expect(board.total).toBe(1);
+      expect(board.matchMode).toBe("all-terms");
+    });
+
+    it("hasWeb, version, keyword 필터도 키워드 검색에 적용한다", () => {
+      // '게시' 로 시작하는 낱말: bbs, tpl(4.3.1), bst(5.0.0)
+      expect(idsOf(sqlite.queryComponents({ query: "게시" }).rows).sort()).toEqual(["bbs", "bst", "tpl"]);
+      expect(idsOf(sqlite.queryComponents({ query: "게시", filters: { version: "5.0.0" } }).rows)).toEqual(["bst"]);
+      expect(idsOf(sqlite.queryComponents({ query: "게시", filters: { keyword: "템플릿" } }).rows)).toEqual(["tpl"]);
+      // cmm 만 웹 배포 대상이 아니다
+      expect(idsOf(sqlite.queryComponents({ query: "공통", filters: { hasWeb: false } }).rows)).toEqual(["cmm"]);
+      expect(sqlite.queryComponents({ query: "공통", filters: { hasWeb: true } }).rows).toEqual([]);
+    });
+
+    it("필터는 LIMIT 보다 먼저 적용한다", () => {
+      // 필터를 나중에 적용하면 상위 1건만 남긴 뒤 걸러, 버전에 따라 0건이 된다
+      for (const version of ["4.3.1", "5.0.0"]) {
+        const result = sqlite.queryComponents({ query: "게시", filters: { version }, limit: 1 });
+        expect(result.rows.map((row) => row.version)).toEqual([version]);
+      }
+    });
+
+    it("부분 일치 대체 검색에도 필터를 적용한다", () => {
+      // 증서: sec / 시판: bbs, tpl → 한 개 이상 일치
+      expect(idsOf(sqlite.queryComponents({ query: "증서 시판" }).rows)).toEqual(["bbs", "sec", "tpl"]);
+      const login = sqlite.queryComponents({ query: "증서 시판", filters: { categoryId: "로그인" } });
+      expect(idsOf(login.rows)).toEqual(["sec"]);
+      expect(login.total).toBe(1);
+      expect(login.matchMode).toBe("any-term");
+    });
+
+    it("필터까지 만족하는 컴포넌트가 없으면 부분 일치 검색으로 넘어간다", () => {
+      // '게시판 관리' 는 tpl 하나와 일치하지만 tpl 은 4.3.1 이다.
+      // 대체 검색: 게시판 2행, 관리 3행 → 5.0.0 가운데 일치하는 행이 없다
+      const result = sqlite.queryComponents({ query: "게시판 관리", filters: { version: "5.0.0" } });
+      expect(result.rows).toEqual([]);
+      expect(result.matchMode).toBe("any-term");
+    });
+
+    it("query 없이 필터만 주면 카테고리·이름 순 목록을 돌려주고 matchMode 는 넣지 않는다", () => {
+      const result = sqlite.queryComponents({ filters: { categoryId: "게시판" } });
+      expect(idsOf(result.rows)).toEqual(["bbs", "tpl"]);
+      expect(result.total).toBe(2);
+      expect(result.matchMode).toBeUndefined();
+      expect(idsOf(sqlite.queryComponents({ filters: { hasWeb: false } }).rows)).toEqual(["cmm"]);
+    });
+
+    it("query 에서 검색어가 하나도 추출되지 않으면 query 가 없는 것으로 보고 필터만 적용한다", () => {
+      const result = sqlite.queryComponents({ query: "?!", filters: { categoryId: "게시판" } });
+      expect(idsOf(result.rows)).toEqual(["bbs", "tpl"]);
+      expect(result.matchMode).toBeUndefined();
+    });
+
+    it("getCommonComponents 는 같은 필터 목록을 배열로 돌려준다", () => {
+      expect(idsOf(sqlite.getCommonComponents({ categoryId: "게시판" }))).toEqual(["bbs", "tpl"]);
+      expect(idsOf(sqlite.getCommonComponents({ keyword: "로그인" })).sort()).toEqual(["sec", "uia"]);
+      expect(sqlite.getCommonComponents()).toHaveLength(COMPONENTS.length);
+      expect(sqlite.getCommonComponents({ categoryId: "게시판" })[0].category_name).toBe("게시판");
+    });
+  });
+
   describe("searchComponents (배열을 돌려주는 기존 메서드)", () => {
+    it("선택 인자로 받은 필터를 함께 적용한다", () => {
+      expect(idsOf(sqlite.searchComponents("게시", 20, { version: "5.0.0" }))).toEqual(["bst"]);
+      expect(idsOf(sqlite.searchComponents("증서 시판", 20, { categoryId: "로그인" }))).toEqual(["sec"]);
+    });
+
     it("같은 규칙으로 찾은 컴포넌트를 배열로 돌려준다", () => {
       expect(idsOf(sqlite.searchComponents("게시판 템플릿"))).toEqual(["tpl"]);
       expect(idsOf(sqlite.searchComponents("증서"))).toEqual(["sec"]);

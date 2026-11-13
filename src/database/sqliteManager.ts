@@ -765,41 +765,10 @@ export class SQLiteManager {
   }
 
   /**
-   * 공통컴포넌트 목록 조회 (카테고리별)
+   * 공통컴포넌트 목록 조회 (카테고리별) — 필터에 맞는 컴포넌트를 배열로 돌려준다.
    */
   getCommonComponents(filters: ComponentSearchFilter = {}): CommonComponent[] {
-    let sql = `
-      SELECT c.*, cat.name as category_name
-      FROM common_components c
-      LEFT JOIN component_categories cat ON c.category_id = cat.category_id
-      WHERE 1=1
-    `;
-    const params: any[] = [];
-
-    if (filters.categoryId) {
-      sql += ' AND c.category_id = ?';
-      params.push(filters.categoryId);
-    }
-
-    if (filters.hasWeb !== undefined) {
-      sql += ' AND c.has_web = ?';
-      params.push(filters.hasWeb ? 1 : 0);
-    }
-
-    if (filters.version) {
-      sql += ' AND c.version = ?';
-      params.push(filters.version);
-    }
-
-    if (filters.keyword) {
-      sql += " AND (c.name LIKE ? ESCAPE '\\' OR c.name_en LIKE ? ESCAPE '\\' OR c.description LIKE ? ESCAPE '\\' OR c.package_name LIKE ? ESCAPE '\\')";
-      const kw = `%${escapeLikePattern(filters.keyword)}%`;
-      params.push(kw, kw, kw, kw);
-    }
-
-    sql += ' ORDER BY cat.name, c.name';
-
-    return this.db.prepare(sql).all(...params) as CommonComponent[];
+    return this.queryComponents({ filters }).rows;
   }
 
   /**
@@ -841,28 +810,81 @@ export class SQLiteManager {
 
   /**
    * 컴포넌트 전체 텍스트 검색 — 키워드로 찾은 컴포넌트를 배열로 돌려준다.
-   * 검색 규칙은 queryComponents 와 같다.
+   * 검색 규칙은 queryComponents 와 같고, filters 를 주면 검색 결과에 함께 적용한다.
+   * 단, 검색어가 하나도 추출되지 않으면 목록이 아니라 빈 배열을 돌려준다.
    */
-  searchComponents(query: string, limit: number = 20): CommonComponent[] {
-    return this.queryComponents({ query, limit }).rows;
+  searchComponents(query: string, limit: number = 20, filters: ComponentSearchFilter = {}): CommonComponent[] {
+    if (extractSearchTerms(query).length === 0) {
+      return [];
+    }
+    return this.queryComponents({ query, filters, limit }).rows;
   }
 
   /**
-   * 공통컴포넌트 키워드 조회.
+   * 공통컴포넌트 조회 (키워드 + 필터).
    *
-   * 모든 검색어가 접두 일치하는 컴포넌트를 먼저 찾고(all-terms), 그런 컴포넌트가 없으면
-   * 일부 검색어가 이름·영문명·설명·패키지명에 부분 문자열로 들어 있는 컴포넌트를 찾는다(any-term).
-   * 검색어가 하나도 추출되지 않으면 빈 결과를 돌려준다.
+   * 필터(categoryId, hasWeb, version, keyword)는 키워드 검색과 같은 SQL 문에서 적용하고
+   * LIMIT 은 그 뒤에 적용한다.
+   * - query 에서 검색어가 추출되면 모든 검색어가 접두 일치하는 컴포넌트를 먼저 찾고(all-terms),
+   *   그런 컴포넌트가 없으면 일부 검색어가 이름·영문명·설명·패키지명에 부분 문자열로 들어 있는
+   *   컴포넌트를 찾는다(any-term).
+   * - query 가 없거나 검색어가 하나도 추출되지 않으면 필터에 맞는 컴포넌트를
+   *   카테고리·이름 순으로 돌려준다.
    *
-   * total 은 일치하는 전체 건수이고, rows 는 그 가운데 앞에서부터 limit 건이다.
+   * total 은 조건에 맞는 전체 건수이고, rows 는 그 가운데 앞에서부터 limit 건이다.
    */
   queryComponents(options: ComponentQueryOptions = {}): ComponentQueryResult {
-    const terms = extractSearchTerms(options.query ?? '');
-    if (terms.length === 0) {
-      return { rows: [], total: 0 };
-    }
+    const filter = this.buildComponentFilter(options.filters ?? {});
     const page: SqlPage = { limit: toSqlLimit(options.limit), offset: 0 };
-    return this.keywordSearch<CommonComponent>(COMPONENT_SEARCH, terms, NO_CONDITION, page);
+
+    const terms = extractSearchTerms(options.query ?? '');
+    if (terms.length > 0) {
+      return this.keywordSearch<CommonComponent>(COMPONENT_SEARCH, terms, filter, page);
+    }
+
+    const from = `FROM ${COMPONENT_SEARCH.table} ${COMPONENT_SEARCH.joins} WHERE 1=1${filter.sql}`;
+    const total = (
+      this.db.prepare(`SELECT COUNT(*) AS count ${from}`).get(...filter.params) as { count: number }
+    ).count;
+    const rows = this.db
+      .prepare(
+        `SELECT ${COMPONENT_SEARCH.columns} ${from}
+         ORDER BY cat.name, c.name, ${COMPONENT_SEARCH.rowid}
+         LIMIT ? OFFSET ?`,
+      )
+      .all(...filter.params, page.limit, page.offset) as CommonComponent[];
+    return { rows, total };
+  }
+
+  /** 공통컴포넌트 필터를 WHERE 절에 덧붙일 조건으로 바꾼다 (테이블 별칭 c 기준). */
+  private buildComponentFilter(filters: ComponentSearchFilter): SqlCondition {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters.categoryId) {
+      clauses.push('c.category_id = ?');
+      params.push(filters.categoryId);
+    }
+
+    if (filters.hasWeb !== undefined) {
+      clauses.push('c.has_web = ?');
+      params.push(filters.hasWeb ? 1 : 0);
+    }
+
+    if (filters.version) {
+      clauses.push('c.version = ?');
+      params.push(filters.version);
+    }
+
+    if (filters.keyword) {
+      const pattern = `%${escapeLikePattern(filters.keyword)}%`;
+      clauses.push(
+        "(c.name LIKE ? ESCAPE '\\' OR c.name_en LIKE ? ESCAPE '\\' OR c.description LIKE ? ESCAPE '\\' OR c.package_name LIKE ? ESCAPE '\\')",
+      );
+      params.push(pattern, pattern, pattern, pattern);
+    }
+
+    return { sql: clauses.map((clause) => ` AND ${clause}`).join(''), params };
   }
 
   /**
@@ -994,9 +1016,6 @@ interface SqlCondition {
   sql: string;
   params: unknown[];
 }
-
-/** 덧붙일 조건이 없음 */
-const NO_CONDITION: SqlCondition = { sql: '', params: [] };
 
 /** 키워드 검색 대상 하나를 기술하는 SQL 조각. */
 interface KeywordSearchTarget {

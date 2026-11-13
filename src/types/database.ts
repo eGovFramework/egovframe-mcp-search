@@ -108,6 +108,7 @@ export interface ComponentSearchFilter {
 // 공통컴포넌트 조회 옵션
 export interface ComponentQueryOptions {
   query?: string;  // 키워드 질의
+  filters?: ComponentSearchFilter;  // 키워드와 함께(AND) 적용할 필터
   limit?: number;  // 최대 행 수 (생략하면 제한 없음)
 }
 

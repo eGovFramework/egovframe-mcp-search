@@ -19,6 +19,7 @@ import {
   ComponentQueryResult,
   KeywordMatchMode,
 } from '../types/database.js';
+import { extractSearchTerms } from '../utils/fts5Query.js';
 
 const currentFile = fileURLToPath(import.meta.url);
 let dbInstance: SQLiteManager | null = null;
@@ -124,25 +125,35 @@ export function getComponentInfo(componentId: string): {
  * 컴포넌트 검색 (키워드 검색)
  *
  * 모든 검색어가 일치하는 컴포넌트를 먼저 찾고, 없으면 일부 검색어만 일치하는 컴포넌트를 찾는다.
+ * filters(categoryId, hasWeb, version, keyword)를 주면 검색 결과에 함께(AND) 적용한다.
  * - total: 일치하는 전체 건수 (results 는 그 가운데 앞에서부터 limit 건)
  * - matchMode: 결과를 찾은 방식 (all-terms: 모든 검색어 일치, any-term: 일부 검색어만 일치).
  *   검색어가 하나도 추출되지 않으면 없다.
  */
-export function searchComponents(query: string, limit: number = 20): {
+export function searchComponents(
+  query: string,
+  limit: number = 20,
+  filters: ComponentSearchFilter = {}
+): {
   results: CommonComponent[];
   query: string;
   total: number;
   matchMode?: KeywordMatchMode;
 } {
+  // 검색어가 하나도 없으면 찾을 것이 없다 (필터만으로 목록을 보려면 listCommonComponents 를 쓴다)
+  if (extractSearchTerms(query).length === 0) {
+    return { results: [], query, total: 0 };
+  }
+
   const db = getDB();
 
   // FTS 검색 시도, 실패하면 일반 검색
   let found: ComponentQueryResult;
   try {
-    found = db.queryComponents({ query, limit });
+    found = db.queryComponents({ query, filters, limit });
   } catch {
     // FTS 오류 시 일반 검색으로 대체
-    const matched = db.getCommonComponents({ keyword: query });
+    const matched = db.getCommonComponents({ ...filters, keyword: query });
     found = { rows: matched.slice(0, limit), total: matched.length };
   }
 

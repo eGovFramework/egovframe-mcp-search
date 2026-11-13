@@ -76,6 +76,20 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
     it("검색어가 하나도 추출되지 않으면 빈 결과를 돌려준다", () => {
       expect(searchComponents("?!")).toMatchObject({ results: [], total: 0 });
       expect(searchComponents("")).toMatchObject({ results: [], total: 0 });
+      // 필터가 있어도 검색어 없는 검색은 목록으로 바뀌지 않는다
+      expect(searchComponents("?!", 20, { categoryId: "게시판" })).toMatchObject({ results: [], total: 0 });
+    });
+
+    it("선택 인자로 받은 목록 필터(categoryId, hasWeb, version, keyword)를 검색에 함께 적용한다", () => {
+      expect(idsOf(searchComponents("게시").results).sort()).toEqual(["bbs", "bst", "tpl"]);
+      expect(idsOf(searchComponents("게시", 20, { version: "5.0.0" }).results)).toEqual(["bst"]);
+      expect(idsOf(searchComponents("게시", 20, { keyword: "템플릿" }).results)).toEqual(["tpl"]);
+      expect(idsOf(searchComponents("관리", 20, { categoryId: "게시판" }).results)).toEqual(["tpl"]);
+      expect(searchComponents("공통", 20, { hasWeb: true })).toMatchObject({ results: [], total: 0 });
+
+      const filtered = searchComponents("게시", 1, { version: "4.3.1" });
+      expect(filtered.results).toHaveLength(1);
+      expect(filtered.total).toBe(2);
     });
   });
 });
