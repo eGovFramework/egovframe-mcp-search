@@ -163,6 +163,8 @@ describe('readSourceFileInRoot — 바이너리 판정과 큰 파일 나눠 읽�
     // 확장자 목록에 없던 바이너리: NUL 바이트가 들어 있다
     write('NanumGothic.ttf', Buffer.concat([Buffer.from([0x00, 0x01, 0x00, 0x00, 0x00, 0x12]), Buffer.alloc(5000, 0xab)]));
     write('photo.png', Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]));
+    // UTF-16LE 로 저장한 ASCII 텍스트: 글자마다 NUL 바이트가 끼어 있지만 UTF-8 로는 유효한 바이트열이다
+    write('utf16.txt', Buffer.from('hello world\n', 'utf16le'));
     // NUL 은 없지만 UTF-8 로 디코딩되지 않는 바이트열 (EUC-KR 로 쓴 "한글")
     write('legacy.jsp', Buffer.from([0x3c, 0x25, 0x2d, 0x2d, 0x20, 0xc7, 0xd1, 0xb1, 0xdb, 0x20, 0x2d, 0x2d, 0x25, 0x3e, 0x0a]));
     write('icon.svg', '<svg xmlns="http://www.w3.org/2000/svg"><!-- 아이콘 --></svg>\n');
@@ -196,6 +198,19 @@ describe('readSourceFileInRoot — 바이너리 판정과 큰 파일 나눠 읽�
     expect(result!.content.length).toBeLessThan(200);
     expect(result!.truncated).toBe(false);
     expect(result!.totalChars).toBe(0);
+    expect(result!.nextOffset).toBeNull();
+  });
+
+  it('UTF-8 로는 유효해도 NUL 바이트가 있으면 바이너리로 판정한다', () => {
+    // NUL(U+0000)도 유효한 UTF-8 이라 디코딩 성공 여부만으로는 걸러지지 않는다
+    const result = readSourceFileInRoot(root, 'utf16.txt');
+
+    expect(result).not.toBeNull();
+    expect(result!.language).toBe('binary');
+    expect(result!.totalChars).toBe(0);
+    expect(result!.size).toBe(24);
+    expect(result!.content).not.toContain('\0');
+    expect(result!.truncated).toBe(false);
     expect(result!.nextOffset).toBeNull();
   });
 
