@@ -767,7 +767,10 @@ interface DeveloperKnowledgeIndexStats {
   pdfChunks: number;
 }
 
-function chunkPdfText(text: string, maxChars = 1800): string[] {
+/**
+ * 적용가이드 PDF 본문을 청크로 나눈다. 문단(빈 줄) 단위로 maxChars 까지 채운다.
+ */
+export function chunkPdfText(text: string, maxChars = 1800): string[] {
   const paragraphs = cleanText(text).split(/\n{2,}/).filter(Boolean);
   const chunks: string[] = [];
   let current = '';
@@ -804,32 +807,41 @@ export function pdfChunkTitle(filePath: string, index: number, chunkCount: numbe
   return `${baseTitle} (${index + 1}/${chunkCount})`;
 }
 
-async function readPdfKnowledge(filePath: string): Promise<AddKnowledgeInput[]> {
+/**
+ * 적용가이드 PDF 에서 뽑은 본문을 청크로 나눠 개발자 지식 입력으로 만든다.
+ * 제목의 순번과 metadata 의 chunkIndex, chunkCount 는 나눈 청크 수를 따른다.
+ */
+export function pdfTextToKnowledge(filePath: string, text: string): AddKnowledgeInput[] {
+  const chunks = chunkPdfText(text);
+  const sourceFile = path.relative(PROJECT_ROOT, filePath).normalize('NFC');
+
+  return chunks.map((content, idx) => ({
+    type: 'best-practice',
+    title: pdfChunkTitle(filePath, idx, chunks.length),
+    content,
+    context: '표준프레임워크 적용가이드 PDF',
+    tags: ['egovframe', 'developer_knowledge', 'guide', 'pdf'],
+    relatedTo: ['egovframe', 'application-guide'],
+    importance: 5,
+    verified: true,
+    metadata: {
+      source: 'templates/developer_knowledge',
+      sourceFile,
+      sourceType: 'pdf',
+      chunkIndex: idx + 1,
+      chunkCount: chunks.length,
+    },
+  }));
+}
+
+/** 적용가이드 PDF 파일을 읽어 개발자 지식 입력으로 만든다. */
+export async function readPdfKnowledge(filePath: string): Promise<AddKnowledgeInput[]> {
   const data = await fs.readFile(filePath);
   const parser = new PDFParse({ data });
 
   try {
     const result = await parser.getText();
-    const chunks = chunkPdfText(result.text);
-    const sourceFile = path.relative(PROJECT_ROOT, filePath).normalize('NFC');
-
-    return chunks.map((content, idx) => ({
-      type: 'best-practice',
-      title: pdfChunkTitle(filePath, idx, chunks.length),
-      content,
-      context: '표준프레임워크 적용가이드 PDF',
-      tags: ['egovframe', 'developer_knowledge', 'guide', 'pdf'],
-      relatedTo: ['egovframe', 'application-guide'],
-      importance: 5,
-      verified: true,
-      metadata: {
-        source: 'templates/developer_knowledge',
-        sourceFile,
-        sourceType: 'pdf',
-        chunkIndex: idx + 1,
-        chunkCount: chunks.length,
-      },
-    }));
+    return pdfTextToKnowledge(filePath, result.text);
   } finally {
     await parser.destroy();
   }
