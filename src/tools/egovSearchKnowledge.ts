@@ -522,10 +522,15 @@ function guideSectionKey(source: string, sectionBase: string): string {
 /**
  * 청크가 조각으로 나뉜 절에 속하면 그 자리를 구한다. 나뉘지 않은 절의 청크이면 undefined.
  * 같은 절의 조각 목록은 응답 하나를 만드는 동안 한 번만 읽도록 cache 에 담아 둔다.
+ *
+ * section 이 " (k/n)" 으로 끝난다고 조각은 아니다. 원문의 제목이 그렇게 끝나는 나뉘지 않은 절도 있다 (예: "## 단계 (3/3)").
+ * 조각 목록(getSectionParts)은 번호가 1부터 n까지 빠짐없이 있을 때만 조각을 돌려주므로, 그 목록에서 이 청크 자신을 찾아
+ * 번호와 조각 수가 section 의 표기와 같을 때만 조각으로 다룬다. 다만 제목이 정확히 " (1/n)" 부터 " (n/n)" 까지인
+ * 나뉘지 않은 절들이 한 문서에 모두 있으면 조각과 가릴 수 없다.
  */
 async function locateGuidePart(
   guideManager: Awaited<ReturnType<typeof getInitializedGuideManager>>,
-  chunk: { source: string; section: string },
+  chunk: { id: string; source: string; section: string },
   cache: Map<string, Array<{ id: string; part: number; count: number }>>,
 ): Promise<GuidePartPosition | undefined> {
   const parsed = parseSectionPart(chunk.section);
@@ -537,6 +542,10 @@ async function locateGuidePart(
   if (!parts) {
     parts = await guideManager.getSectionParts(chunk.source, parsed.base);
     cache.set(key, parts);
+  }
+  const own = parts.find((entry) => entry.id === chunk.id);
+  if (!own || own.part !== parsed.part || own.count !== parsed.count) {
+    return undefined;
   }
   const idOf = (part: number) => parts.find((entry) => entry.count === parsed.count && entry.part === part)?.id;
   return { part: parsed.part, count: parsed.count, previousId: idOf(parsed.part - 1), nextId: idOf(parsed.part + 1) };
@@ -684,8 +693,9 @@ async function searchGuide(args: EgovSearchKnowledgeArgs, options: SectionOption
     const groups: Group[] = [];
     const groupBySection = new Map<string, Group>();
     const seenContents = new Set<string>();
+    const partsCache = new Map<string, Array<{ id: string; part: number; count: number }>>();
     /** 후보를 유사도 순으로 훑어 결과로 실을 묶음에 더한다 (묶음은 limit 개까지 만든다). */
-    const absorb = (candidates: Candidate[]): void => {
+    const absorb = async (candidates: Candidate[]): Promise<void> => {
       for (const candidate of candidates) {
         const contentKey = candidate.content.replace(/\s+/g, " ").trim();
         if (seenContents.has(contentKey)) {
@@ -693,23 +703,29 @@ async function searchGuide(args: EgovSearchKnowledgeArgs, options: SectionOption
         }
         seenContents.add(contentKey);
 
-        // 조각 번호가 붙은 청크만 묶는다 (번호가 없는데 section 이 같은 절은 서로 다른 절이다)
+        // 조각 번호가 붙은 청크만 묶는다 (번호가 없는데 section 이 같은 절은 서로 다른 절이다).
+        // 번호가 붙어 있어도 조각으로 확인된 것만 묶는다: section 이 " (k/n)" 으로 끝나는 나뉘지 않은 절은 따로 싣는다.
+        // 묶음은 조각으로 확인된 절에만 있고 그 절의 조각 목록은 이미 읽어 두었으므로, 여기서는 목록을 다시 읽지 않는다
         const parsed = parseSectionPart(candidate.section);
         const sectionKey = parsed ? guideSectionKey(candidate.source, parsed.base) : undefined;
         const group = sectionKey ? groupBySection.get(sectionKey) : undefined;
-        if (group) {
+        if (group && (await locateGuidePart(guideManager, candidate, partsCache))) {
           group.others.push(candidate);
-        } else if (groups.length < limit.value) {
-          const created: Group = { result: candidate, others: [] };
-          groups.push(created);
-          if (sectionKey) {
-            groupBySection.set(sectionKey, created);
-          }
+          continue;
+        }
+        if (groups.length >= limit.value) {
+          continue;
+        }
+        // 결과로 싣는 청크만 조각인지 확인한다 (후보마다 조각 목록을 읽으면 검색이 느려진다. 목록은 절마다 한 번만 읽는다)
+        const position = await locateGuidePart(guideManager, candidate, partsCache);
+        const created: Group = { result: candidate, others: [], position };
+        groups.push(created);
+        if (sectionKey && position) {
+          groupBySection.set(sectionKey, created);
         }
       }
     };
 
-    const partsCache = new Map<string, Array<{ id: string; part: number; count: number }>>();
     // 표 하나가 백 개가 넘는 조각으로 나뉜 절도 있다. 그런 절의 조각이 가까운 후보를 모두 차지하면 후보를 늘려도
     // 결과가 한 건뿐이다. limit 건을 채우지 못했고 후보가 더 있을 수 있으면, 이미 받은 청크와 결과에 든 절의
     // 모든 조각을 빼고 다음 후보를 가져온다.
@@ -721,7 +737,7 @@ async function searchGuide(args: EgovSearchKnowledgeArgs, options: SectionOption
         category,
         ...(excludeIds.size > 0 ? { excludeIds: [...excludeIds] } : {}),
       });
-      absorb(candidates);
+      await absorb(candidates);
       if (groups.length >= limit.value || candidates.length < candidateLimit) {
         break;
       }
@@ -729,9 +745,8 @@ async function searchGuide(args: EgovSearchKnowledgeArgs, options: SectionOption
         excludeIds.add(candidate.id);
       }
       for (const group of groups) {
-        const parsed = parseSectionPart(group.result.section);
+        const parsed = group.position ? parseSectionPart(group.result.section) : null;
         if (parsed) {
-          group.position ??= await locateGuidePart(guideManager, group.result, partsCache);
           for (const part of partsCache.get(guideSectionKey(group.result.source, parsed.base)) ?? []) {
             excludeIds.add(part.id);
           }
@@ -739,9 +754,6 @@ async function searchGuide(args: EgovSearchKnowledgeArgs, options: SectionOption
       }
     }
 
-    for (const group of groups) {
-      group.position ??= await locateGuidePart(guideManager, group.result, partsCache);
-    }
     return groups;
   });
   const ignored = ignoredFiltersNote(filters, GUIDE_USED_FILTER_KEYS, options);

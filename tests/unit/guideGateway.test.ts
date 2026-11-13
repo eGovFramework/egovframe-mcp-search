@@ -242,6 +242,200 @@ describe("같은 절의 조각 묶기", () => {
   });
 });
 
+describe("제목이 조각 번호 모양으로 끝나는 나뉘지 않은 절", () => {
+  // 원문의 제목이 "## 단계 (3/3)" 처럼 끝나면 나뉘지 않은 절의 section 도 " (k/n)" 으로 끝난다. 조각 목록
+  // (getSectionParts)은 번호가 1부터 n까지 빠짐없이 있을 때만 조각을 돌려주므로, 이런 절은 목록에 없다 (가짜 매니저는
+  // '설정' 절 말고는 빈 목록을 돌려준다). 게이트웨이는 목록에서 그 청크 자신을 찾았을 때만 조각으로 다룬다
+
+  it("검색 결과에 조각 줄을 싣지 않는다", async () => {
+    manager.searchGuide.mockResolvedValue([{ ...chunk("u3", "단계 (3/3)", "나뉘지 않은 절의 본문"), score: 0.1 }]);
+    const { runEgovSearchKnowledge } = await loadGateway();
+
+    const result = await runEgovSearchKnowledge({ scope: "guide", query: "단계" });
+
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("### 1. MyBatis 가이드: 단계 (3/3)");
+    expect(result.text).toContain("나뉘지 않은 절의 본문");
+    expect(result.text).not.toContain("**조각**");
+  });
+
+  it("chunkId 로 읽은 결과에 조각 안내를 붙이지 않는다", async () => {
+    manager.getChunkById.mockResolvedValue(chunk("u3", "단계 (3/3)", "나뉘지 않은 절의 본문"));
+    const { runEgovSearchKnowledge } = await loadGateway();
+
+    const result = await runEgovSearchKnowledge({ scope: "guide", filters: { chunkId: "u3" } });
+
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("나뉘지 않은 절의 본문");
+    expect(result.text).not.toContain("조각");
+  });
+
+  it("그런 절 두 개가 함께 검색되면 한 절의 조각으로 묶지 않고 따로 싣는다", async () => {
+    manager.searchGuide.mockResolvedValue([
+      { ...chunk("i1", "설치 (1/3)", "첫째 설치 절의 본문"), score: 0.1 },
+      { ...chunk("i2", "설치 (2/3)", "둘째 설치 절의 본문"), score: 0.2 },
+    ]);
+    const { runEgovSearchKnowledge } = await loadGateway();
+
+    const result = await runEgovSearchKnowledge({ scope: "guide", query: "설치" });
+
+    expect(result.text).toContain("가이드 검색 결과 (2건)");
+    const blocks = resultBlocks(result.text);
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0]).toContain("첫째 설치 절의 본문");
+    expect(blocks[1]).toContain("둘째 설치 절의 본문");
+    expect(result.text).not.toContain("같은 절의 다른 조각");
+    expect(result.text).not.toContain("**조각**");
+    // 조각 목록은 절마다 한 번만 읽는다 (둘째 결과에서는 다시 읽지 않는다)
+    expect(manager.getSectionParts).toHaveBeenCalledTimes(1);
+  });
+
+  it("따로 실을 때 유사도 순서와 limit 을 지킨다", async () => {
+    manager.searchGuide.mockResolvedValue([
+      { ...chunk("i1", "설치 (1/3)", "첫째 설치 절의 본문"), score: 0.1 },
+      { ...chunk("x1", "개요", "개요 본문"), score: 0.2 },
+      { ...chunk("i2", "설치 (2/3)", "둘째 설치 절의 본문"), score: 0.3 },
+      { ...chunk("x2", "참고", "참고 본문"), score: 0.4 },
+    ]);
+    const { runEgovSearchKnowledge } = await loadGateway();
+
+    const result = await runEgovSearchKnowledge({ scope: "guide", query: "설치", limit: 3 });
+
+    const blocks = resultBlocks(result.text);
+    expect(blocks).toHaveLength(3);
+    expect(blocks[0]).toContain("첫째 설치 절의 본문");
+    expect(blocks[1]).toContain("개요 본문");
+    expect(blocks[2]).toContain("둘째 설치 절의 본문");
+    expect(result.text).not.toContain("참고 본문");
+  });
+
+  it("조각 목록에 그 청크가 없거나 번호와 조각 수가 section 의 표기와 다르면 조각으로 다루지 않는다", async () => {
+    // '설정' 절의 조각 목록은 s1 ~ s5 (5조각)다. 같은 문서에 section 이 '설정 (2/5)' 인 다른 행(z2),
+    // '설정 (2/4)' 로 적힌 행(s2 와 id 가 같다), '설정 (4/5)' 로 적힌 행(s3 과 id 가 같다)은 그 절의 조각이 아니다
+    manager.searchGuide.mockResolvedValue([
+      { ...chunk("z2", "설정 (2/5)", "목록에 없는 행의 본문"), score: 0.1 },
+      { ...chunk("s2", "설정 (2/4)", "조각 수가 다른 행의 본문"), score: 0.2 },
+      { ...chunk("s3", "설정 (4/5)", "번호가 다른 행의 본문"), score: 0.3 },
+    ]);
+    const { runEgovSearchKnowledge } = await loadGateway();
+
+    const result = await runEgovSearchKnowledge({ scope: "guide", query: "설정" });
+
+    expect(resultBlocks(result.text)).toHaveLength(3);
+    expect(result.text).not.toContain("**조각**");
+    expect(result.text).not.toContain("같은 절의 다른 조각");
+
+    manager.getChunkById.mockResolvedValue(chunk("z2", "설정 (2/5)", "목록에 없는 행의 본문"));
+    const read = await runEgovSearchKnowledge({ scope: "guide", filters: { chunkId: "z2" } });
+    expect(read.text).toContain("목록에 없는 행의 본문");
+    expect(read.text).not.toContain("조각");
+  });
+
+  it("조각으로 확인된 절의 결과 아래에도 확인된 조각만 묶는다", async () => {
+    // '설정' 절의 조각(s2)이 결과에 든 뒤에, section 은 '설정 (3/5)' 이지만 조각 목록에 없는 행(z3)이 검색된다
+    manager.searchGuide.mockResolvedValue([
+      { ...SETTING_PARTS[1], score: 0.1 },
+      { ...chunk("z3", "설정 (3/5)", "목록에 없는 행의 본문"), score: 0.2 },
+      { ...SETTING_PARTS[3], score: 0.3 },
+    ]);
+    const { runEgovSearchKnowledge } = await loadGateway();
+
+    const result = await runEgovSearchKnowledge({ scope: "guide", query: "설정" });
+
+    const blocks = resultBlocks(result.text);
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0]).toContain('> 같은 절의 다른 조각도 검색되었습니다: 4/5 (chunkId "s4").');
+    expect(blocks[1]).toContain("목록에 없는 행의 본문");
+    expect(blocks[1]).not.toContain("조각");
+    expect(manager.getSectionParts).toHaveBeenCalledTimes(1);
+  });
+
+  it("실제로 조각으로 나뉜 절은 지금처럼 묶고, 나뉘지 않은 절과 섞여 검색되어도 조각끼리만 묶는다", async () => {
+    manager.searchGuide.mockResolvedValue([
+      { ...SETTING_PARTS[1], score: 0.1 },
+      { ...chunk("i1", "설치 (1/3)", "첫째 설치 절의 본문"), score: 0.2 },
+      { ...SETTING_PARTS[3], score: 0.3 },
+      { ...chunk("i2", "설치 (2/3)", "둘째 설치 절의 본문"), score: 0.4 },
+    ]);
+    const { runEgovSearchKnowledge } = await loadGateway();
+
+    const result = await runEgovSearchKnowledge({ scope: "guide", query: "설정 설치" });
+
+    const blocks = resultBlocks(result.text);
+    expect(blocks).toHaveLength(3);
+    expect(blocks[0]).toContain('- **조각**: 2/5 (이 조각의 chunkId: "s2", 이전 조각: "s1", 다음 조각: "s3")');
+    expect(blocks[0]).toContain('> 같은 절의 다른 조각도 검색되었습니다: 4/5 (chunkId "s4").');
+    expect(blocks[1]).toContain("첫째 설치 절의 본문");
+    expect(blocks[1]).not.toContain("조각");
+    expect(blocks[2]).toContain("둘째 설치 절의 본문");
+    expect(blocks[2]).not.toContain("조각");
+  });
+});
+
+describe("후보를 다시 가져올 때 빼는 청크", () => {
+  it("조각이 아닌 것으로 확인된 절과 이름이 같은 다른 절은 빼지 않는다", async () => {
+    // '설치 (1/3)' 은 나뉘지 않은 절이다. 같은 문서에 번호 없는 '설치' 절이 있으면 조각 목록 조회는 그 절을 돌려준다
+    // (조각이 아닌 이름으로 조회하면 section 전체가 그 이름과 같은 행이 나온다). 그 절은 '설치 (1/3)' 의 조각이 아니므로
+    // 아직 결과에 싣지 않았다면 다음 조회에서 빼면 안 된다
+    const fillers = Array.from({ length: 18 }, (_, index) => chunk(`d${index + 1}`, "개요", "개요 본문"));
+    const ranked = [chunk("i1", "설치 (1/3)", "첫째 설치 절의 본문"), ...fillers, chunk("plain", "설치", "번호 없는 설치 절의 본문")];
+    manager.searchGuide.mockImplementation(async (_query: string, options: { limit: number; excludeIds?: string[] }) =>
+      ranked
+        .filter((row) => !(options.excludeIds ?? []).includes(row.id))
+        .slice(0, options.limit)
+        .map((row, index) => ({ ...row, score: 0.1 + index * 0.001 })),
+    );
+    manager.getSectionParts.mockImplementation(async (_source: string, base: string) =>
+      base === "설치" ? [{ id: "plain", part: 1, count: 1 }] : [],
+    );
+    const { runEgovSearchKnowledge } = await loadGateway();
+
+    // limit 3 이면 후보를 19건씩 가져온다. 첫 조회의 19건은 '설치 (1/3)' 과 본문이 같은 '개요' 18건이라 결과가 2건뿐이고,
+    // 그래서 받은 청크를 빼고 다시 가져온다
+    const result = await runEgovSearchKnowledge({ scope: "guide", query: "설치", limit: 3 });
+
+    const blocks = resultBlocks(result.text);
+    expect(blocks).toHaveLength(3);
+    expect(blocks[0]).toContain("첫째 설치 절의 본문");
+    expect(blocks[1]).toContain("개요 본문");
+    expect(blocks[2]).toContain("번호 없는 설치 절의 본문");
+    const secondCall = manager.searchGuide.mock.calls[1]?.[1] as { excludeIds?: string[] };
+    expect(secondCall.excludeIds).toContain("i1");
+    expect(secondCall.excludeIds).not.toContain("plain");
+  });
+});
+
+describe("조각 목록을 읽는 횟수", () => {
+  it("결과로 싣는 절마다 한 번만 읽는다 (함께 검색된 조각마다 읽지 않는다)", async () => {
+    manager.searchGuide.mockResolvedValue([
+      { ...SETTING_PARTS[1], score: 0.1 },
+      { ...SETTING_PARTS[3], score: 0.2 },
+      { ...SETTING_PARTS[0], score: 0.3 },
+      { ...chunk("x1", "개요", "다른 절의 본문"), score: 0.4 },
+    ]);
+    const { runEgovSearchKnowledge } = await loadGateway();
+
+    await runEgovSearchKnowledge({ scope: "guide", query: "MyBatis 설정" });
+
+    expect(manager.getSectionParts).toHaveBeenCalledTimes(1);
+    expect(manager.getSectionParts).toHaveBeenCalledWith(SOURCE, "설정");
+  });
+
+  it("limit 을 넘어 결과에 싣지 않는 후보의 조각 목록은 읽지 않는다", async () => {
+    manager.searchGuide.mockResolvedValue([
+      { ...chunk("x1", "개요", "개요 본문"), score: 0.1 },
+      { ...SETTING_PARTS[0], score: 0.2 },
+      { ...chunk("i1", "설치 (1/3)", "첫째 설치 절의 본문"), score: 0.3 },
+    ]);
+    const { runEgovSearchKnowledge } = await loadGateway();
+
+    const result = await runEgovSearchKnowledge({ scope: "guide", query: "MyBatis", limit: 1 });
+
+    expect(resultBlocks(result.text)).toHaveLength(1);
+    expect(manager.getSectionParts).not.toHaveBeenCalled();
+  });
+});
+
 describe("검색 결과의 잘린 본문", () => {
   it("1,500자를 넘는 본문은 잘라 싣고 chunkId 로 이어 읽는 방법을 알려 준다", async () => {
     manager.searchGuide.mockResolvedValue([{ ...chunk("long1", "개요", "가".repeat(2000)), score: 0.1 }]);
