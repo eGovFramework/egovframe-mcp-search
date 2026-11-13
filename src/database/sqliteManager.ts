@@ -15,7 +15,9 @@ import {
   dropGenericTerms,
   extractSearchTerms,
   flexibleForm,
+  isEnglishFunctionWord,
   isEnglishTerm,
+  listedTargetWord,
   parseKeywordQuery,
   particleStrippedForms,
   wordStartGlobPattern,
@@ -347,7 +349,7 @@ export class SQLiteManager {
       return { rows: [], total: 0 };
     }
     const page: SqlPage = { limit: toSqlLimit(limit), offset: 0 };
-    const found = this.allTermsStage<CompatibilitySoftware>(target, terms, NO_FILTER, page);
+    const found = this.allTermsStage<CompatibilitySoftware>(target, terms, NO_FILTER, page, []);
     return found ? { rows: found.rows, total: found.total } : { rows: [], total: 0 };
   }
 
@@ -363,8 +365,8 @@ export class SQLiteManager {
    * - query 가 없거나 검색어가 하나도 추출되지 않으면("*", "?" 등) 필터에 맞는 행을
    *   확인일자가 최근인 순으로 돌려준다.
    * - 확인일자 순은 어느 경로에서나 같다 (COMPATIBILITY_NEWEST_FIRST): verified_date 가 날짜 꼴이 아닌 행은
-   *   맨 뒤로 간다. 키워드 검색에서는 일치한 검색어 수, 낱말의 처음에서 일치한 영문 검색어 수, 이름에 일치한
-   *   검색어 수가 모두 같은 행끼리 이 순서를 따른다.
+   *   맨 뒤로 간다. 키워드 검색에서는 앞선 정렬 기준(selectByMatchedTerms: 일치한 검색어 수, 이름에 일치한 검색어 수
+   *   등)이 모두 같은 행끼리 이 순서를 따른다.
    *
    * total 은 같은 조건에 맞는 전체 건수이고, rows 는 그 가운데 offset 부터 limit 건이다.
    * rows 에는 내부용 컬럼(id, created_at)을 넣지 않는다.
@@ -464,13 +466,13 @@ export class SQLiteManager {
    * 일치 판정은 아래의 모든 단계가 termMatcher 가 만든 조건 하나를 쓴다. 대체 검색은 그대로는 일치하는 행이 없는
    * 검색어를 조사를 뗀 꼴과 유연한 꼴(구분 기호의 자리를 너그럽게 견주는 flexibleTermMatcher)로도 견준다.
    *
-   * 0) 행을 가려 주지 못하는 낱말을 검색어에서 뺀다 (dropGenericTerms): 영어 기능어와, 대상의 모든 항목에
-   *    해당하는 낱말(target.genericTerms). 다른 검색어가 남을 때만 뺀다.
+   * 0) 행을 가려 주지 못하는 낱말을 검색어에서 뺀다 (selectSearchTerms): 영어 기능어와, 대상의 모든 항목에
+   *    해당하는 낱말(target.genericTerms). 빼도 찾을 것이 남을 때만 뺀다.
    * 1) 모든 검색어가 일치하는 행을 찾는다 (allTermsStage). 한 글자 검색어도 쓰고, 그렇게 해서 찾은 행이 없을
    *    때만 한 글자 검색어를 빼고 다시 찾는다.
    * 2) 필터까지 적용한 결과가 0건이면 한 글자 검색어를 뺀 채로(dropSingleCharacterTerms) 대체 검색
-   *    (anyTermSearch)으로 넘어간다: 일치하는 행이 있는 검색어만 남기고(그대로, 조사를 뗀 꼴, 유연한 꼴 가운데
-   *    일치하는 행이 있는 첫 꼴을 쓴다), 그 절반 이상이 일치하는 행을 찾는다.
+   *    (anyTermSearch)으로 넘어간다: 일치하는 행이 있는 검색어만 남기고(usableTerms. 그대로, 조사를 뗀 꼴, 유연한 꼴
+   *    가운데 일치하는 행이 있는 첫 꼴을 쓴다), 그 절반 이상이 일치하는 행을 찾는다.
    *    그런 행이 없으면 일치 기준을 낮춰 가며 찾는다. 대상 행의 절반 넘게 일치하는 흔한 검색어만 일치한 행은
    *    돌려주지 않는다.
    *    0건인지는 페이지가 아니라 전체 건수로 판단한다 (offset 이 끝을 넘었다고 검색 방식을 바꾸지 않는다).
@@ -479,8 +481,9 @@ export class SQLiteManager {
    * 찾는 것이라, 둘 다 든 행이 있다고 거기서 끝내면 한쪽만 든 행이 빠진다. 이때는 일치하는 행이 있는 검색어 가운데
    * 하나 이상이 일치하는 행을 모두 돌려준다 (일치 기준 1, 흔한 검색어만 일치한 행도 돌려준다).
    *
-   * 어느 경로에서나 일치한 검색어가 많은 행, 낱말의 처음에서 일치한 영문 검색어가 많은 행, 이름 컬럼(nameColumns)에
-   * 일치한 검색어가 많은 행, 대상의 기본 정렬, rowid 순으로 돌려준다 (selectByMatchedTerms).
+   * 어느 경로에서나 일치한 검색어가 많은 행, 뺀 대상 낱말이 이름 컬럼(nameColumns)에 든 행, 낱말의 처음에서 일치한
+   * 영문 검색어가 많은 행, 이름 컬럼에 일치한 검색어가 많은 행, 대상의 기본 정렬, rowid 순으로 돌려준다
+   * (selectByMatchedTerms).
    *
    * 결과의 terms 는 실제로 쓴 검색어(used), 일치하는 행이 없어 쓰지 않은 검색어(ignored), 일치하는 행이 있는지와
    * 관계없이 검색에서 뺀 검색어(dropped: 가려 주지 못하는 낱말과 한 글자 검색어), 결과의 행마다 일치한 검색어의
@@ -492,27 +495,138 @@ export class SQLiteManager {
     filter: SqlCondition,
     page: SqlPage,
   ): { rows: Row[]; total: number; matchMode: KeywordMatchMode; terms: KeywordTermUsage } {
-    const { terms, orQuery } = query;
-    /** 검색에 넘긴 검색어(searched)에 들지 못한, 검색에서 뺀 검색어. query 에 적힌 순서다 */
-    const droppedFrom = (searched: string[]): string[] => terms.filter((term) => !searched.includes(term));
-
-    const kept = dropGenericTerms(terms, target.genericTerms, query.joinedTerms);
+    const { orQuery } = query;
+    // 검색어의 쓸 꼴은 0단계와 대체 검색이 함께 쓴다. 검색어마다 한 번만 구한다
+    const formOf = this.formResolver(target, filter);
+    const selected = this.selectSearchTerms(target, query, filter, formOf);
+    /**
+     * 검색에서 뺀 검색어: 가려 주지 못해 뺀 낱말과, 고른 검색어 가운데 검색에 넘긴 검색어(searched)에 들지 못한
+     * 한 글자 검색어. query 에 적힌 순서다
+     */
+    const droppedFrom = (searched: string[]): string[] =>
+      query.terms.filter(
+        (term) => selected.dropped.includes(term) || (selected.terms.includes(term) && !searched.includes(term)),
+      );
 
     // OR 가 있으면 모든 검색어가 일치하는 행을 먼저 찾지 않는다
-    const allTerms = orQuery ? null : this.allTermsStage<Row>(target, kept, filter, page);
+    const allTerms = orQuery
+      ? null
+      : this.allTermsStage<Row>(target, selected.terms, filter, page, selected.droppedInName);
     if (allTerms) {
       const { used, rows, total } = allTerms;
       const usage: KeywordTermUsage = { used, ignored: [], dropped: droppedFrom(used), required: used.length };
       return { rows, total, matchMode: 'all-terms', terms: usage };
     }
 
-    const searchable = dropSingleCharacterTerms(kept);
-    const fallback = this.anyTermSearch<Row>(target, searchable, filter, page, orQuery);
+    const searchable = dropSingleCharacterTerms(selected.terms);
+    const { usable, ignored } = usableTerms(searchable, formOf);
+    const fallback = this.anyTermSearch<Row>(target, usable, filter, page, orQuery, selected.droppedInName);
     return {
       rows: fallback.rows,
       total: fallback.total,
       matchMode: 'any-term',
-      terms: { ...fallback.terms, dropped: droppedFrom(searchable), ...(orQuery ? { orQuery: true } : {}) },
+      terms: {
+        // 조사를 떼어 쓴 것은 뗀 꼴, 유연한 꼴로 쓴 것은 그 꼴을 만든 검색어 그대로다
+        used: usable.map((term) => term.form),
+        ignored,
+        dropped: droppedFrom(searchable),
+        required: fallback.required,
+        ...(orQuery ? { orQuery: true } : {}),
+      },
+    };
+  }
+
+  /**
+   * 0단계: query 에서 추출한 검색어 가운데 검색에 쓸 것을 고른다. 행을 가려 주지 못하는 낱말을 빼는 규칙은 여기에만 있다.
+   *
+   * 가려 주지 못하는 낱말은 두 가지다 (목록과 판정은 utils/fts5Query).
+   * - 영어 기능어(isEnglishFunctionWord): 영어 문장으로 물을 때 섞이는 낱말이다. 부분 문자열로 견주면 제품명의
+   *   일부와 우연히 일치한다 ('is' 가 'aXis' 와).
+   * - 대상 낱말(listedTargetWord): 검색 대상의 모든 항목에 해당하는 낱말(target.genericTerms)과 그 조사 붙은 꼴이다
+   *   ('eGovFrame', '전자정부의', 공통컴포넌트에서는 '컴포넌트' 도). 검색어로 쓰면 설명에 그 낱말이 우연히 든 행으로
+   *   결과가 좁혀지거나, 어느 행에도 없어 모든 검색어가 일치하는 행을 찾지 못한다.
+   *
+   * 빼도 찾을 것이 남을 때만 뺀다.
+   * (가) 영어 기능어는 query 에 영어 기능어가 아닌 두 글자 이상의 검색어가 하나라도 있을 때만 뺀다. 그 검색어가 대상
+   *      낱말이어도 된다 ("the eGovFrame" 의 'the' 는 뺀다). 그런 검색어가 없으면 빼지 않는다: 남는 것이 한 글자뿐이면
+   *      그 글자의 부분 문자열 검색이 되고("in S" 에서 'in' 을 빼면 'S' 가 든 수백 행), 기능어처럼 보이는 낱말이 찾는
+   *      이름일 수 있다 (제품 'in_S', "Q A").
+   * (나) 대상 낱말은, 영어 기능어도 대상 낱말도 아닌 두 글자 이상의 검색어 가운데 쓸 수 있는 것이 하나라도 있을 때만
+   *      뺀다. 쓸 수 있다는 것은 필터를 적용한 대상 안에 일치하는 행이 있다는 뜻이고, 대체 검색과 같은 꼴 고르기
+   *      (formOf: 그대로, 조사를 뗀 꼴, 유연한 꼴)로 판정한다. 그런 검색어가 없는데 빼면 남은 검색어로는 한 행도 찾지
+   *      못한다 ("컴포넌트 목록", "eGovFrame 8"). 빼지 않은 대상 낱말은 보통의 검색어로 쓴다.
+   * (다) query 에 OR 가 있을 때는, 필터를 적용한 대상 안에 이름 컬럼(nameColumns)에 그 낱말이 든 행이 있는 대상
+   *      낱말을 빼지 않는다 ("eGov OR JEUS" 는 제품명에 eGov 가 든 행도 돌려준다). 그런 행이 없는 대상 낱말은
+   *      (나)를 따른다.
+   * (라) 뺀 대상 낱말은 정렬에 쓴다: 그 낱말이 이름 컬럼에 든 행을 먼저 돌려준다 (droppedInName. selectByMatchedTerms 의
+   *      정렬 기준). "eGov CMS" 는 CMS 가 든 행을 모두 돌려주되 제품명에 eGov 가 든 제품을 맨 앞에 놓는다.
+   *      조사가 붙은 꼴은 목록에 있는 꼴로 견주고('eGovFrame에서' → 'eGovFrame'), 같은 낱말은 한 번만 센다.
+   *      영어 기능어는 정렬에 쓰지 않는다.
+   *
+   * 어느 경우에도 검색어가 하나는 남는다: (가)는 기능어가 아닌 검색어가 있을 때만, (나)는 쓸 수 있는 다른 검색어가 있을
+   * 때만 빼기 때문이다. 영어 기능어뿐이거나 대상 낱말뿐인 query 는 그대로 찾는다.
+   *
+   * dropped 는 뺀 낱말(query 에 적힌 꼴, 적힌 순서)이다. 빼지 않고 쓴 영어 기능어와 대상 낱말은 넣지 않는다.
+   */
+  private selectSearchTerms(
+    target: KeywordSearchTarget,
+    query: KeywordQuery,
+    filter: SqlCondition,
+    formOf: FormResolver,
+  ): { terms: string[]; dropped: string[]; droppedInName: SqlExpression[] } {
+    const { terms, joinedTerms, orQuery } = query;
+    const isFunctionWord = (term: string): boolean => isEnglishFunctionWord(term, joinedTerms);
+    const listedOf = (term: string): string | null => listedTargetWord(term, target.genericTerms);
+    /** 대상 낱말(목록에 있는 꼴)이 이름 컬럼에 들어 있다는 조건. 목록의 낱말은 짧고 NUL 이 없어 패턴을 그대로 만든다 */
+    const inName = (listed: string): SqlExpression =>
+      likeAnyColumn(target.nameColumns, `%${escapeLikePattern(listed)}%`);
+
+    // (가) 영어 기능어. 대상 낱말은 모두 두 글자 이상이라, 대상 낱말이 하나라도 있으면 영어 기능어는 여기서 모두 빠진다
+    const dropsFunctionWords = terms.some((term) => !isFunctionWord(term) && codePointLength(term) >= 2);
+    const functionWords = dropsFunctionWords ? terms.filter(isFunctionWord) : [];
+    const kept = terms.filter((term) => !functionWords.includes(term));
+
+    // (다) 뺄 후보인 대상 낱말. OR 가 있으면 이름 컬럼에 든 행이 있는 것은 후보에서 뺀다
+    const candidates = kept.flatMap((term) => {
+      const listed = listedOf(term);
+      if (listed === null || (orQuery && this.countInScope(target, inName(listed), filter) > 0)) {
+        return [];
+      }
+      return [{ term, listed }];
+    });
+    if (candidates.length === 0) {
+      return { terms: kept, dropped: functionWords, droppedInName: [] };
+    }
+
+    // (나) 후보를 빼고 남는 검색어 가운데, 대상 낱말이 아닌 두 글자 이상의 검색어를 하나라도 쓸 수 있어야 뺀다
+    const droppable = candidates.map((candidate) => candidate.term);
+    const remaining = kept.filter((term) => !droppable.includes(term));
+    const findsRows = remaining.some(
+      (term) => listedOf(term) === null && codePointLength(term) >= 2 && formOf(term) !== null,
+    );
+    if (!findsRows) {
+      return { terms: kept, dropped: functionWords, droppedInName: [] };
+    }
+
+    // (라) 뺀 대상 낱말마다 이름 컬럼에 든 행을 가리는 조건 하나 (대소문자만 다른 낱말은 같은 낱말이다)
+    const droppedWords = new Map(candidates.map(({ listed }) => [listed.toLowerCase(), listed]));
+    return {
+      terms: remaining,
+      dropped: terms.filter((term) => functionWords.includes(term) || droppable.includes(term)),
+      droppedInName: [...droppedWords.values()].map(inName),
+    };
+  }
+
+  /** 검색어의 쓸 꼴을 고르는 함수를 만든다 (firstMatchingForm). 같은 검색어는 한 번만 조회한다. */
+  private formResolver(target: KeywordSearchTarget, filter: SqlCondition): FormResolver {
+    const resolved = new Map<string, UsableTerm | null>();
+    return (term) => {
+      let form = resolved.get(term);
+      if (form === undefined) {
+        form = this.firstMatchingForm(target, term, filter);
+        resolved.set(term, form);
+      }
+      return form;
     };
   }
 
@@ -524,17 +638,20 @@ export class SQLiteManager {
    * 그렇게 해서 0건이고 두 글자 이상인 검색어가 함께 있으면, 한 글자 검색어를 빼고 한 번 더 찾는다.
    * 부분 문자열로 견주는 한 글자는 어느 행에도 없거나 엉뚱한 행에만 있는 일이 흔해, 나머지 검색어가 모두
    * 일치하는 행이 있는데도 그 한 글자 때문에 대체 검색으로 넘어가는 것을 막는다.
+   *
+   * droppedInName 은 정렬에 쓰는 조건이다 (selectByMatchedTerms).
    */
   private allTermsStage<Row>(
     target: KeywordSearchTarget,
     terms: string[],
     filter: SqlCondition,
     page: SqlPage,
+    droppedInName: SqlExpression[],
   ): { rows: Row[]; total: number; used: string[] } | null {
     const withoutSingles = dropSingleCharacterTerms(terms);
     const attempts = withoutSingles.length < terms.length ? [terms, withoutSingles] : [terms];
     for (const used of attempts) {
-      const found = this.allTermsSearch<Row>(target, used, filter, page);
+      const found = this.allTermsSearch<Row>(target, used, filter, page, droppedInName);
       if (found) {
         return { ...found, used };
       }
@@ -551,6 +668,7 @@ export class SQLiteManager {
     terms: string[],
     filter: SqlCondition,
     page: SqlPage,
+    droppedInName: SqlExpression[],
   ): { rows: Row[]; total: number } | null {
     const matchers: TermMatcher[] = [];
     for (const term of terms) {
@@ -565,7 +683,7 @@ export class SQLiteManager {
       return null;
     }
 
-    const found = this.selectByMatchedTerms<Row>(target, matchers, matchers.length, filter, page);
+    const found = this.selectByMatchedTerms<Row>(target, matchers, matchers.length, filter, page, droppedInName);
     return found.total > 0 ? found : null;
   }
 
@@ -574,12 +692,15 @@ export class SQLiteManager {
    *
    * 정렬:
    * (1) 일치한 검색어 수가 많은 행.
-   * (2) 낱말의 처음에서 일치한 영문 검색어 수가 많은 행 (TermMatcher.startsWord). 두세 글자 영문 검색어는 다른
+   * (2) 뺀 대상 낱말이 이름 컬럼에 든 수가 많은 행 (droppedInName. selectSearchTerms 의 (라)). 대상 낱말은 검색어에서
+   *     빼지만, 그 낱말이 제품명에 든 제품('MC@CMS eGov')을 찾는 query 일 수 있어 그런 행을 앞에 놓는다.
+   *     뺀 대상 낱말이 없는 조회에는 이 기준이 없다.
+   * (3) 낱말의 처음에서 일치한 영문 검색어 수가 많은 행 (TermMatcher.startsWord). 두세 글자 영문 검색어는 다른
    *     낱말 속에서도 일치해('TimeCMS' 의 'ECM'), 낱말로 일치한 행('ECM Solution')이 그런 행에 밀리지 않게 한다.
    *     한글이나 기호가 든 검색어와 숫자뿐인 검색어는 세지 않으므로, 영문 검색어가 없는 조회에는 이 기준이 없다.
-   * (3) 이름 컬럼에 일치한 검색어 수가 많은 행. 설명에만 검색어가 든 행은 버리지 않고 뒤로 보낸다.
-   * (4) 대상의 기본 정렬.
-   * (5) rowid.
+   * (4) 이름 컬럼에 일치한 검색어 수가 많은 행. 설명에만 검색어가 든 행은 버리지 않고 뒤로 보낸다.
+   * (5) 대상의 기본 정렬.
+   * (6) rowid.
    * (흔한 검색어만 일치한 행을 거르는 일은 대체 검색이 filter 에 조건을 더해서 한다. distinctiveScope 참조.)
    */
   private selectByMatchedTerms<Row>(
@@ -588,6 +709,7 @@ export class SQLiteManager {
     required: number,
     filter: SqlCondition,
     page: SqlPage,
+    droppedInName: SqlExpression[],
   ): { rows: Row[]; total: number } {
     const matchedTerms = countOf(matchers.map((matcher) => matcher.matches));
     const matchedInName = countOf(matchers.map((matcher) => matcher.inName));
@@ -605,7 +727,12 @@ export class SQLiteManager {
     }
 
     // 정렬 기준과 그 바인딩 값을 같은 순서로 잇는다
-    const ranking = [matchedTerms, ...(matchedAtWordStart ? [matchedAtWordStart] : []), matchedInName];
+    const ranking = [
+      matchedTerms,
+      ...(droppedInName.length > 0 ? [countOf(droppedInName)] : []),
+      ...(matchedAtWordStart ? [matchedAtWordStart] : []),
+      matchedInName,
+    ];
     const rows = this.db
       .prepare(
         `SELECT ${target.columns} ${from}
@@ -620,7 +747,7 @@ export class SQLiteManager {
   /**
    * 대체 검색: 모든 검색어가 일치하는 행이 없을 때, 쓸 수 있는 검색어의 절반 이상이 일치하는 행을 찾는다.
    *
-   * 쓸 수 있는 검색어는 필터를 적용한 대상 안에 일치하는 행이 있는 검색어다 (usableTerms). 문장으로 물을 때
+   * 쓸 수 있는 검색어(usable)는 필터를 적용한 대상 안에 일치하는 행이 있는 검색어다 (usableTerms). 문장으로 물을 때
    * 섞이는 군말('추천', '되나요')이 일치 기준을 올려 결과를 0건으로 만들지 않게 한다.
    *
    * 쓸 수 있는 검색어가 k 개일 때 ceil(k/2) 개 이상 일치한 행을 돌려준다 (k 가 0 이면 빈 결과).
@@ -629,29 +756,26 @@ export class SQLiteManager {
    * 쓸 수 있는 검색어는 저마다 대상 안에 일치하는 행이 있으므로, k 가 1 이상이면 결과가 0건이 되지 않는다.
    *
    * 흔한 검색어만 일치한 행은 돌려주지 않는다 (distinctiveScope). 일치 기준도 그 조건을 건 채로 낮춘다.
-   * 정렬과 필터 적용은 selectByMatchedTerms 를 따른다.
+   * 정렬과 필터 적용은 selectByMatchedTerms 를 따른다 (droppedInName 은 그 정렬에 쓰는 조건이다).
    *
    * anyOne 이 true 이면(query 에 OR 가 있다) 쓸 수 있는 검색어 가운데 하나 이상이 일치하는 행을 모두 돌려준다:
    * 일치 기준은 처음부터 1 이고, 흔한 검색어만 일치한 행도 거르지 않는다. 호출자가 낱말을 OR 로 이어 어느 것이든
    * 든 행을 달라고 한 것이라, 절반 이상이 일치한 행이 있다고 나머지를 빼거나 흔한 낱말이라고 거르지 않는다.
    *
-   * 결과의 terms.used 는 쓸 수 있는 검색어(조사를 떼어 쓴 것은 뗀 꼴, 유연한 꼴로 쓴 것은 그 꼴을 만든 검색어 그대로),
-   * terms.ignored 는 쓰지 않은 검색어, terms.required 는 실제로 적용한 일치 기준이다 (k 가 0 이면 0).
-   * 검색에서 뺀 검색어(dropped)와 OR 로 찾았다는 표시(orQuery)는 호출부가 채운다.
+   * 결과의 required 는 실제로 적용한 일치 기준이다 (k 가 0 이면 0).
    */
   private anyTermSearch<Row>(
     target: KeywordSearchTarget,
-    terms: string[],
+    usable: UsableTerm[],
     filter: SqlCondition,
     page: SqlPage,
-    anyOne: boolean = false,
-  ): { rows: Row[]; total: number; terms: Pick<KeywordTermUsage, 'used' | 'ignored' | 'required'> } {
-    const { usable, ignored } = this.usableTerms(target, terms, filter);
+    anyOne: boolean,
+    droppedInName: SqlExpression[],
+  ): { rows: Row[]; total: number; required: number } {
     if (usable.length === 0) {
-      return { rows: [], total: 0, terms: { used: [], ignored, required: 0 } };
+      return { rows: [], total: 0, required: 0 };
     }
 
-    const used = usable.map((term) => term.form);
     const matchers = usable.map((term) => term.matcher);
     const scope = anyOne ? filter : this.distinctiveScope(target, usable, filter);
 
@@ -660,12 +784,12 @@ export class SQLiteManager {
     // 표를 다시 훑지 않는다.
     // 행이 있는지는 페이지가 아니라 전체 건수로 판단한다 (offset 이 끝을 넘었다고 기준을 낮추지 않는다)
     let required = anyOne ? 1 : Math.ceil(matchers.length / 2);
-    let found = this.selectByMatchedTerms<Row>(target, matchers, required, scope, page);
+    let found = this.selectByMatchedTerms<Row>(target, matchers, required, scope, page, droppedInName);
     if (found.total === 0 && required > 1) {
       required = this.highestMatchCount(target, matchers, scope);
-      found = this.selectByMatchedTerms<Row>(target, matchers, required, scope, page);
+      found = this.selectByMatchedTerms<Row>(target, matchers, required, scope, page, droppedInName);
     }
-    return { ...found, terms: { used, ignored, required } };
+    return { ...found, required };
   }
 
   /**
@@ -683,33 +807,6 @@ export class SQLiteManager {
       )
       .get(...matchedTerms.params, ...scope.params) as { highest: number };
     return row.highest;
-  }
-
-  /**
-   * 대체 검색에 쓸 수 있는 검색어를 고른다: 필터를 적용한 대상 안에 일치하는 행이 있는 검색어.
-   *
-   * 검색어마다 일치하는 행이 있는 첫 꼴을 쓰고(firstMatchingForm), 어느 꼴도 일치하는 행이 없는 검색어는 쓰지
-   * 않는다 (ignored). 쓰는 꼴이 다른 검색어와 같으면 한 번만 쓴다 ('JEUS JEUS는' 의 'JEUS', 'K2Web-Wizard
-   * K2Web_Wizard' 의 유연한 꼴). 같은 꼴인지는 견주는 조건의 키(TermMatcher.key)로 가린다.
-   */
-  private usableTerms(
-    target: KeywordSearchTarget,
-    terms: string[],
-    filter: SqlCondition,
-  ): { usable: UsableTerm[]; ignored: string[] } {
-    const usable: UsableTerm[] = [];
-    const ignored: string[] = [];
-    const usedKeys = new Set<string>();
-    for (const term of terms) {
-      const match = this.firstMatchingForm(target, term, filter);
-      if (match === null) {
-        ignored.push(term);
-      } else if (!usedKeys.has(match.matcher.key)) {
-        usedKeys.add(match.matcher.key);
-        usable.push(match);
-      }
-    }
-    return { usable, ignored };
   }
 
   /**
@@ -1381,13 +1478,14 @@ interface KeywordSearchTarget {
    */
   termConditions?: (term: string) => SqlExpression[];
   /**
-   * 이 대상의 모든 항목에 해당해 행을 가려 주지 못하는 낱말 (소문자). 다른 검색어가 남을 때만 검색어에서 뺀다.
-   * 영어 기능어는 어느 대상에나 적용하므로 여기에 넣지 않는다 (utils/fts5Query 의 dropGenericTerms)
+   * 이 대상의 모든 항목에 해당해 행을 가려 주지 못하는 낱말 (소문자). 언제 검색어에서 빼는지는 selectSearchTerms 가
+   * 정한다. 영어 기능어는 어느 대상에나 적용하므로 여기에 넣지 않는다 (utils/fts5Query 의 ENGLISH_FUNCTION_WORDS)
    */
   genericTerms: ReadonlySet<string>;
   /**
-   * 기본 정렬. 키워드 검색에서 일치한 검색어 수, 낱말의 처음에서 일치한 영문 검색어 수, 이름에 일치한 검색어 수
-   * 다음에 적용하고, 호환성 소프트웨어는 키워드 없는 필터 조회에도 이 정렬을 쓴다
+   * 기본 정렬. 키워드 검색에서는 selectByMatchedTerms 의 정렬 기준(일치한 검색어 수, 뺀 대상 낱말이 이름에 든 수,
+   * 낱말의 처음에서 일치한 영문 검색어 수, 이름에 일치한 검색어 수) 다음에 적용하고, 호환성 소프트웨어는 키워드 없는
+   * 필터 조회에도 이 정렬을 쓴다
    */
   defaultOrder: string;
 }
@@ -1420,6 +1518,35 @@ interface UsableTerm {
   matcher: TermMatcher;
   /** 필터를 적용한 대상 안에서 그 꼴과 일치하는 행 수 (1 이상) */
   rows: number;
+}
+
+/**
+ * 검색어의 쓸 꼴을 돌려주는 함수: 필터를 적용한 대상 안에 일치하는 행이 있는 첫 꼴이고, 없으면 null 이다.
+ * SQLiteManager 의 formResolver 가 조회 한 번(대상과 필터)에 하나씩 만든다.
+ */
+type FormResolver = (term: string) => UsableTerm | null;
+
+/**
+ * 대체 검색에 쓸 수 있는 검색어를 고른다: 필터를 적용한 대상 안에 일치하는 행이 있는 검색어.
+ *
+ * 검색어마다 일치하는 행이 있는 첫 꼴을 쓰고(formOf), 어느 꼴도 일치하는 행이 없는 검색어는 쓰지 않는다 (ignored).
+ * 쓰는 꼴이 다른 검색어와 같으면 한 번만 쓴다 ('JEUS JEUS는' 의 'JEUS', 'K2Web-Wizard K2Web_Wizard' 의 유연한 꼴).
+ * 같은 꼴인지는 견주는 조건의 키(TermMatcher.key)로 가린다.
+ */
+function usableTerms(terms: string[], formOf: FormResolver): { usable: UsableTerm[]; ignored: string[] } {
+  const usable: UsableTerm[] = [];
+  const ignored: string[] = [];
+  const usedKeys = new Set<string>();
+  for (const term of terms) {
+    const match = formOf(term);
+    if (match === null) {
+      ignored.push(term);
+    } else if (!usedKeys.has(match.matcher.key)) {
+      usedKeys.add(match.matcher.key);
+      usable.push(match);
+    }
+  }
+  return { usable, ignored };
 }
 
 /** 어떤 행이나 채우는 조건 (필터만 적용한 대상의 행 수를 셀 때 쓴다) */

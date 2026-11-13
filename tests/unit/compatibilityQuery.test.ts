@@ -455,6 +455,232 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     });
   });
 
+  describe("가려 주지 못하는 낱말을 빼는 조건", () => {
+    /**
+     * 제품명에 프레임워크 자체를 가리키는 낱말(eGovframe)이 든 제품.
+     * 분류는 'CMS Solution' 이고, 확인일자는 고정 데이터의 어느 행보다도 오래됐다.
+     */
+    const EGOV_NAMED: SoftwareSeed = {
+      ...CATALOGUE[5],
+      product_name: "DL-WCMS for eGovframe",
+      product_version: "DL-WCMS for eGovframe v1.0",
+      verified_date: "2015-01-01",
+      description: "설명 없음",
+    };
+
+    beforeEach(() => {
+      sqlite.addCompatibilitySoftwareBatch([EGOV_NAMED]);
+    });
+
+    const search = (query: string, filters = {}) => sqlite.queryCompatibleSoftware({ query, filters });
+
+    it("영어 기능어는 영어 기능어가 아닌 두 글자 이상의 낱말이 있을 때만 뺀다", () => {
+      // 'on' 은 'CMS Solution' 의 끝에 들어 있다. 두 글자 이상인 다른 낱말(JEUS)이 있으면 뺀다
+      expect(search("on JEUS").terms).toEqual({ used: ["JEUS"], ignored: [], dropped: ["on"], required: 1 });
+
+      // 남는 것이 한 글자 검색어뿐이면 빼지 않는다. 빼면 그 한 글자의 부분 문자열 검색이 된다
+      // ('T' 는 네 행에 들어 있고, 'on' 과 'T' 가 모두 든 행은 분류가 'CMS Solution' 인 세 행이다)
+      const short = search("on T");
+      expect(short.terms).toEqual({ used: ["on", "T"], ignored: [], dropped: [], required: 2 });
+      expect(short.matchMode).toBe("all-terms");
+      expect(versionsOf(short.rows).sort()).toEqual(["DL-WCMS for eGovframe v1.0", "OtherCMS 2.0", "SampleCMS 1.0"]);
+      expect(search("T").total).toBeGreaterThan(short.total);
+
+      // 영어 기능어뿐인 query 도 그대로 찾는다 ('as' 는 'WAS' 의 뒤쪽에 들어 있다)
+      expect(search("on as").terms).toEqual({ used: ["on", "as"], ignored: [], dropped: [], required: 1 });
+    });
+
+    it("영어 기능어가 아닌 낱말이 대상 낱말뿐이어도 영어 기능어는 뺀다", () => {
+      // 'the' 는 'OtherCMS' 의 가운데에 들어 있다. 빼지 않으면 OtherCMS 가 함께 나온다
+      const result = search("the eGovframe");
+      expect(versionsOf(result.rows)).toEqual(["DL-WCMS for eGovframe v1.0"]);
+      expect(result.terms).toEqual({ used: ["eGovframe"], ignored: [], dropped: ["the"], required: 1 });
+    });
+
+    it("대상 낱말은 쓸 수 있는 다른 검색어가 있을 때만 뺀다", () => {
+      // CMS 가 든 행이 있으므로 eGovframe 을 뺀다
+      expect(search("eGovframe CMS").terms).toEqual({ used: ["CMS"], ignored: [], dropped: ["eGovframe"], required: 1 });
+
+      // '없는말' 은 어느 행에도 없다. eGovframe 을 빼면 남은 검색어로는 한 행도 찾지 못하므로, 빼지 않고 검색어로 쓴다
+      const kept = search("eGovframe 없는말");
+      expect(versionsOf(kept.rows)).toEqual(["DL-WCMS for eGovframe v1.0"]);
+      expect(kept.matchMode).toBe("any-term");
+      expect(kept.terms).toEqual({ used: ["eGovframe"], ignored: ["없는말"], dropped: [], required: 1 });
+    });
+
+    it("한 글자 검색어, 영어 기능어, 다른 대상 낱말은 쓸 수 있는 다른 검색어로 세지 않는다", () => {
+      // '8' 은 JEUS 8.5 에 들어 있지만 한 글자다. eGovframe 을 빼면 '8' 한 글자의 부분 문자열 검색이 된다
+      const single = search("eGovframe 8");
+      expect(versionsOf(single.rows)).toEqual(["DL-WCMS for eGovframe v1.0"]);
+      expect(single.matchMode).toBe("all-terms");
+      expect(single.terms).toEqual({ used: ["eGovframe"], ignored: [], dropped: ["8"], required: 1 });
+
+      // 'on' 은 일치하는 행이 있지만('CMS Solution') 영어 기능어다
+      const preposition = search("eGovframe on");
+      expect(versionsOf(preposition.rows)).toEqual(["DL-WCMS for eGovframe v1.0"]);
+      expect(preposition.terms).toEqual({ used: ["eGovframe"], ignored: [], dropped: ["on"], required: 1 });
+
+      // '표준프레임워크' 도 대상 낱말이다 (여섯 행의 설명에 들어 있다). 두 낱말 모두 검색어로 쓴다
+      expect(search("eGovframe 표준프레임워크").terms).toEqual({
+        used: ["eGovframe", "표준프레임워크"],
+        ignored: [],
+        dropped: [],
+        required: 1,
+      });
+    });
+
+    it("다른 검색어를 쓸 수 있는지는 대체 검색과 같은 꼴 고르기로 판정한다 (조사를 뗀 꼴, 유연한 꼴)", () => {
+      // 'JEUS는' 은 그대로는 어느 행에도 없고 조사를 뗀 'JEUS' 가 있다
+      expect(search("eGovframe JEUS는").terms).toEqual({ used: ["JEUS"], ignored: [], dropped: ["eGovframe"], required: 1 });
+      // 'Web-Logic' 은 유연한 꼴로 'WebLogic' 과 일치한다
+      expect(search("eGovframe Web-Logic").terms).toEqual({
+        used: ["Web-Logic"],
+        ignored: [],
+        dropped: ["eGovframe"],
+        required: 1,
+      });
+    });
+
+    it("다른 검색어를 쓸 수 있는지는 필터를 적용한 대상 안에서 판정한다", () => {
+      expect(search("eGovframe JEUS").terms?.dropped).toEqual(["eGovframe"]);
+      // JEUS 는 표에는 있지만 CMS Solution 안에는 없다. 그 안에서는 eGovframe 을 빼지 않는다
+      const inCms = search("eGovframe JEUS", { category: "CMS Solution" });
+      expect(versionsOf(inCms.rows)).toEqual(["DL-WCMS for eGovframe v1.0"]);
+      expect(inCms.terms).toEqual({ used: ["eGovframe"], ignored: ["JEUS"], dropped: [], required: 1 });
+    });
+
+    it("대상 낱말을 뺄지 정하려고 견준 검색어는 대체 검색에서 다시 조회하지 않는다", () => {
+      // 두 query 모두 검색어 둘을 한 번씩만 견준다. 'eGovframe 없는말' 은 '없는말' 을 대상 낱말을 뺄지 정할 때 이미 견줬다
+      const statements = (query: string) => statementsOf(sqlite, () => search(query)).length;
+      expect(statements("eGovframe 없는말")).toBe(statements("CMS 없는말"));
+    });
+
+    it("query 에 OR 가 있으면 이름 컬럼에 든 행이 있는 대상 낱말을 빼지 않는다", () => {
+      // OR 가 없으면 뺀다 (JEUS 를 쓸 수 있다)
+      expect(search("eGovframe JEUS").terms?.dropped).toEqual(["eGovframe"]);
+      // OR 로 이으면 제품명에 eGovframe 이 든 행도 돌려준다
+      const result = search("eGovframe OR JEUS");
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "JEUS 8.5", "DL-WCMS for eGovframe v1.0"]);
+      expect(result.terms).toEqual({ used: ["eGovframe", "JEUS"], ignored: [], dropped: [], required: 1, orQuery: true });
+      // 조사가 붙은 꼴은 목록에 있는 꼴(eGovframe)로 견준다
+      expect(search("eGovframe은 OR JEUS").terms).toEqual({
+        used: ["eGovframe", "JEUS"],
+        ignored: [],
+        dropped: [],
+        required: 1,
+        orQuery: true,
+      });
+    });
+
+    it("이름 컬럼에 든 행이 없는 대상 낱말은 OR 가 있어도 다른 검색어를 쓸 수 있으면 뺀다", () => {
+      // '표준프레임워크' 는 여섯 행의 설명에만 들어 있다. 빼지 않으면 그 여섯 행이 모두 나온다
+      const result = search("표준프레임워크 OR JEUS");
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(result.terms).toEqual({ used: ["JEUS"], ignored: [], dropped: ["표준프레임워크"], required: 1, orQuery: true });
+
+      // 이름 컬럼에 든 행이 있는지도 필터를 적용한 대상 안에서 본다: WAS 안에는 제품명에 eGovframe 이 든 행이 없다
+      expect(search("eGovframe OR JEUS", { category: "WAS" }).terms).toEqual({
+        used: ["JEUS"],
+        ignored: [],
+        dropped: ["eGovframe"],
+        required: 1,
+        orQuery: true,
+      });
+
+      // 다른 검색어를 쓸 수 없으면 OR 가 없을 때와 같이 빼지 않는다
+      expect(search("표준프레임워크 OR 없는말").terms).toEqual({
+        used: ["표준프레임워크"],
+        ignored: ["없는말"],
+        dropped: [],
+        required: 1,
+        orQuery: true,
+      });
+    });
+
+    it("뺀 대상 낱말이 이름 컬럼에 든 행을 먼저 돌려준다", () => {
+      // CMS 가 든 세 행은 확인일자 순이다
+      expect(versionsOf(search("CMS").rows)).toEqual(["SampleCMS 1.0", "OtherCMS 2.0", "DL-WCMS for eGovframe v1.0"]);
+      // 'eGovframe CMS': 제품명에 eGovframe 이 든 행은 확인일자가 가장 오래됐지만 맨 앞에 온다
+      const result = search("eGovframe CMS");
+      expect(result.matchMode).toBe("all-terms");
+      expect(versionsOf(result.rows)).toEqual(["DL-WCMS for eGovframe v1.0", "SampleCMS 1.0", "OtherCMS 2.0"]);
+      // 조사가 붙은 꼴은 목록에 있는 꼴로 견준다
+      expect(versionsOf(search("eGovframe에서 CMS").rows)[0]).toBe("DL-WCMS for eGovframe v1.0");
+      // 대체 검색 결과에도 같은 기준을 적용한다
+      const fallback = search("eGovframe CMS 없는말");
+      expect(fallback.matchMode).toBe("any-term");
+      expect(versionsOf(fallback.rows)).toEqual(["DL-WCMS for eGovframe v1.0", "SampleCMS 1.0", "OtherCMS 2.0"]);
+    });
+
+    it("그 기준은 일치한 검색어 수보다 뒤서고, 낱말의 처음과 이름 컬럼의 기준보다 앞선다", () => {
+      // 일치한 검색어 수: CMS 와 2024(확인일자)가 모두 일치한 SampleCMS 가 맨 앞이고,
+      // 하나만 일치한 두 행 가운데에서는 제품명에 eGovframe 이 든 행이 먼저다
+      const counted = search("eGovframe CMS 2024 없는말");
+      expect(counted.terms).toEqual({ used: ["CMS", "2024"], ignored: ["없는말"], dropped: ["eGovframe"], required: 1 });
+      expect(versionsOf(counted.rows)).toEqual(["SampleCMS 1.0", "DL-WCMS for eGovframe v1.0", "OtherCMS 2.0"]);
+
+      const seed = (product_name: string, verified_date: string): SoftwareSeed => ({
+        ...CATALOGUE[5],
+        product_name,
+        product_version: `${product_name} 1.0`,
+        category: "기타",
+        verified_date,
+        description: "설명 없음",
+      });
+      // 낱말의 처음: 'beta' 가 이름의 낱말 가운데에 든 행('Xbeta')이, 낱말의 처음에 든 행보다 앞에 온다
+      // 이름 컬럼: 'gamma' 가 설명에만 든 행이, 이름에 든 행보다 앞에 온다 (두 경우 모두 확인일자는 뒤의 행이 더 최근이다)
+      sqlite.addCompatibilitySoftwareBatch([
+        seed("Alpha eGovframe Xbeta", "2001-01-01"),
+        seed("Beta Tool", "2030-01-01"),
+        { ...seed("Delta eGovframe", "2002-01-01"), description: "gamma 를 지원" },
+        seed("Gamma Tool", "2031-01-01"),
+      ]);
+      expect(versionsOf(search("eGovframe beta").rows)).toEqual(["Alpha eGovframe Xbeta 1.0", "Beta Tool 1.0"]);
+      expect(versionsOf(search("eGovframe gamma").rows)).toEqual(["Delta eGovframe 1.0", "Gamma Tool 1.0"]);
+    });
+
+    it("뺀 대상 낱말마다 따로 세고, 같은 낱말은 한 번만 센다", () => {
+      const suite = (product_name: string, verified_date: string): SoftwareSeed => ({
+        ...CATALOGUE[5],
+        product_name,
+        product_version: `${product_name} 1.0`,
+        category: "기타",
+        verified_date,
+        description: "스위트 제품",
+      });
+      sqlite.addCompatibilitySoftwareBatch([
+        suite("Both eGov 전자정부", "2001-01-01"),
+        suite("Only eGov", "2030-01-01"),
+        suite("Only 전자정부", "2031-01-01"),
+      ]);
+      const expected = ["Both eGov 전자정부 1.0", "Only 전자정부 1.0", "Only eGov 1.0"];
+      // 뺀 낱말 둘이 모두 이름에 든 행이, 하나만 든 행보다 먼저다 (확인일자는 그 반대 순서다).
+      // 하나씩 든 두 행은 확인일자 순이다
+      const two = search("eGov 전자정부 스위트");
+      expect(two.terms).toEqual({ used: ["스위트"], ignored: [], dropped: ["eGov", "전자정부"], required: 1 });
+      expect(versionsOf(two.rows)).toEqual(expected);
+      // 같은 낱말을 조사만 달리 두 번 적어도 한 번만 센다. 두 번 세면 'eGov' 가 든 행이 '전자정부' 가 든 행보다 앞선다
+      const twice = search("eGov eGov에서 전자정부 스위트");
+      expect(twice.terms?.dropped).toEqual(["eGov", "eGov에서", "전자정부"]);
+      expect(versionsOf(twice.rows)).toEqual(expected);
+    });
+
+    it("영어 기능어는 빼더라도 정렬에 쓰지 않는다", () => {
+      // 'the' 는 'OtherCMS' 의 이름에 들어 있다. 정렬에 쓰면 OtherCMS 가 확인일자가 더 최근인 SampleCMS 보다 앞에 온다
+      const result = search("the CMS");
+      expect(result.terms?.dropped).toEqual(["the"]);
+      expect(versionsOf(result.rows)).toEqual(["SampleCMS 1.0", "OtherCMS 2.0", "DL-WCMS for eGovframe v1.0"]);
+    });
+
+    it("뺀 대상 낱말이 없으면 정렬에 그 기준을 두지 않는다", () => {
+      const criteria = (query: string) => orderByClausesOf(sqlite, () => search(query))[0].split(" DESC,").length;
+      // 'eGovframe 호환' 은 뺀 대상 낱말이 이름 컬럼에 든 수가 기준 하나로 더 들어간다
+      expect(criteria("eGovframe 호환")).toBe(criteria("호환") + 1);
+      // 영어 기능어만 뺀 조회에는 더하지 않는다
+      expect(criteria("the 호환")).toBe(criteria("호환"));
+    });
+  });
+
   describe("키워드 검색의 정렬", () => {
     it("이름(제품명·제품 버전 표기)에 일치한 검색어가 많은 행을 먼저 돌려준다", () => {
       // 분류에만 'CMS' 가 든 행은 확인일자가 가장 최근이어도 이름에 'CMS' 가 든 행 뒤에 온다
@@ -1312,7 +1538,8 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(search("T OR 9").terms).toEqual({ used: ["T"], ignored: ["9"], dropped: [], required: 1, orQuery: true });
     });
 
-    it("가려 주지 못하는 낱말은 OR 가 있어도 쓰지 않는다", () => {
+    it("영어 기능어와, 이름 컬럼에 든 행이 없는 대상 낱말은 OR 가 있어도 쓰지 않는다", () => {
+      // 고정 데이터에는 제품명에 eGovFrame 이 든 행이 없다 (있을 때의 동작은 "가려 주지 못하는 낱말을 빼는 조건" 참조)
       const result = search("eGovFrame OR JEUS OR with");
       expect(versionsOf(result.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
       expect(result.terms).toEqual({

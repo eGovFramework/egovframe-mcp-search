@@ -17,9 +17,11 @@ import {
   extractSearchTerms,
   flexibleForm,
   hasOrOperator,
+  isEnglishFunctionWord,
   isEnglishTerm,
   isGenericTerm,
   joinedTermKeys,
+  listedTargetWord,
   parseKeywordQuery,
   particleStrippedForms,
   trimEdgeSeparators,
@@ -328,6 +330,52 @@ describe("가려 주지 못하는 낱말 (dropGenericTerms, isGenericTerm)", () 
       "CMS",
     ]);
     expect(dropGenericTerms(["eGovFrame", "Spring"], COMPATIBILITY_GENERIC_WORDS, joined)).toEqual(["Spring"]);
+  });
+});
+
+describe("가려 주지 못하는 낱말의 판정 (isEnglishFunctionWord, listedTargetWord)", () => {
+  it("isEnglishFunctionWord 는 낱말 전체가 영어 기능어인지 알려 준다 (대소문자를 가리지 않는다)", () => {
+    for (const term of ["with", "Is", "THE", "a", "how"]) {
+      expect(isEnglishFunctionWord(term), term).toBe(true);
+    }
+    // 목록의 낱말이 일부일 뿐인 낱말, 한글이 붙은 꼴, 목록에 없는 낱말(was), 대상 낱말은 아니다
+    for (const term of ["within", "forum", "was", "IT서비스", "AS센터", "IT는", "eGovFrame", "컴포넌트", "JEUS", ""]) {
+      expect(isEnglishFunctionWord(term), JSON.stringify(term)).toBe(false);
+    }
+  });
+
+  it("다른 낱말과 이어 적힌 낱말은 영어 기능어가 아니다", () => {
+    // 'Q&A' 의 'A' 는 관사가 아니고, 'on/off' 의 'on' 은 전치사가 아니다. 이어 적힌 낱말은 joinedTermKeys 가 알려 준다
+    expect(isEnglishFunctionWord("A", new Set(["q", "a"]))).toBe(false);
+    expect(isEnglishFunctionWord("on", new Set(["on", "off"]))).toBe(false);
+    expect(isEnglishFunctionWord("A", new Set(["q"]))).toBe(true);
+    expect(isEnglishFunctionWord("A")).toBe(true);
+  });
+
+  it("listedTargetWord 는 대상의 모든 항목에 해당하는 낱말이면 목록에 있는 꼴을 적힌 표기대로 돌려준다", () => {
+    expect(listedTargetWord("eGovFrame", COMPATIBILITY_GENERIC_WORDS)).toBe("eGovFrame");
+    expect(listedTargetWord("EGOV", COMPATIBILITY_GENERIC_WORDS)).toBe("EGOV");
+    expect(listedTargetWord("전자정부", COMPATIBILITY_GENERIC_WORDS)).toBe("전자정부");
+    expect(listedTargetWord("Components", COMPONENT_GENERIC_WORDS)).toBe("Components");
+  });
+
+  it("조사가 붙은 꼴은 조사를 뗀 꼴이 목록에 있으면 그 뗀 꼴을 돌려준다", () => {
+    expect(listedTargetWord("eGovFrame에서", COMPATIBILITY_GENERIC_WORDS)).toBe("eGovFrame");
+    expect(listedTargetWord("표준프레임워크로", COMPATIBILITY_GENERIC_WORDS)).toBe("표준프레임워크");
+    expect(listedTargetWord("전자정부의", COMPATIBILITY_GENERIC_WORDS)).toBe("전자정부");
+    expect(listedTargetWord("컴포넌트를", COMPONENT_GENERIC_WORDS)).toBe("컴포넌트");
+    expect(listedTargetWord("components는", COMPONENT_GENERIC_WORDS)).toBe("components");
+  });
+
+  it("대상의 낱말이 아니면 null 을 돌려준다 (대상마다 목록이 다르다)", () => {
+    // 컴포넌트를 가리키는 낱말은 공통컴포넌트의 목록에만 있다
+    expect(listedTargetWord("컴포넌트", COMPATIBILITY_GENERIC_WORDS)).toBeNull();
+    expect(listedTargetWord("component", COMPATIBILITY_GENERIC_WORDS)).toBeNull();
+    // 목록의 낱말이 일부일 뿐인 낱말, 뜻이 비슷한 낱말, 영어 기능어는 아니다
+    const others = ["eGovFrameWeb", "egov-cms", "subcomponent", "전자정부포털", "egovframework.com.cop.bbs", "framework", "프레임워크", "JEUS", "with", ""];
+    for (const term of others) {
+      expect(listedTargetWord(term, COMPONENT_GENERIC_WORDS), JSON.stringify(term)).toBeNull();
+    }
   });
 });
 

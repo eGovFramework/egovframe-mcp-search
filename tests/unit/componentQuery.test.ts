@@ -353,8 +353,61 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
         expect(result.terms?.dropped, `query=${query}`).toEqual([]);
       }
       expect(termsOf("Q&A 관리")).toEqual({ used: ["Q", "A", "관리"], ignored: [], dropped: [], required: 3 });
-      // 따로 적은 'a' 는 관사로 보고 뺀다
-      expect(termsOf("a Q")).toEqual({ used: ["Q"], ignored: [], dropped: ["a"], required: 1 });
+      // 따로 적은 'a' 는 영어 기능어지만, 두 글자 이상인 다른 낱말이 없으면 빼지 않는다 ('Q A' 로 띄어 적은 것일 수 있다)
+      expect(termsOf("Q A")).toEqual({ used: ["Q", "A"], ignored: [], dropped: [], required: 2 });
+      expect(termsOf("a Q")).toEqual({ used: ["a", "Q"], ignored: [], dropped: [], required: 2 });
+      // 두 글자 이상인 다른 낱말이 있으면 관사로 보고 뺀다
+      expect(termsOf("a Q 관리")).toEqual({ used: ["Q", "관리"], ignored: [], dropped: ["a"], required: 2 });
+    });
+  });
+
+  describe("가려 주지 못하는 낱말을 빼는 조건", () => {
+    /** 설명에만 '컴포넌트' 가 든 컴포넌트 */
+    const WED = extra("wed", "웹에디터", "Web Editor", "게시판 등 다른 컴포넌트가 함께 쓰는 편집기");
+    /** 이름과 영문명에 '컴포넌트', 'Component' 가 든 컴포넌트 */
+    const CPM = extra("cpm", "컴포넌트 관리", "Component Management", "설치한 항목을 관리함");
+
+    const termsOf = (query: string) => sqlite.queryComponents({ query }).terms;
+
+    it("대상 낱말은 쓸 수 있는 다른 검색어가 있을 때만 뺀다", () => {
+      sqlite.addCommonComponentsBatch([WED]);
+      // '목록' 은 어느 컴포넌트에도 없다. '컴포넌트' 를 빼면 0건이 되므로, 빼지 않고 검색어로 쓴다
+      const list = sqlite.queryComponents({ query: "컴포넌트 목록" });
+      expect(idsOf(list.rows)).toEqual(["wed"]);
+      expect(list.matchMode).toBe("any-term");
+      expect(list.terms).toEqual({ used: ["컴포넌트"], ignored: ["목록"], dropped: [], required: 1 });
+      // 조사가 붙은 꼴도 같다. 빼지 않은 '컴포넌트를' 은 보통의 검색어처럼 조사를 뗀 꼴로 찾는다
+      expect(termsOf("어떤 컴포넌트를 쓰나요")).toEqual({
+        used: ["컴포넌트"],
+        ignored: ["어떤", "쓰나요"],
+        dropped: [],
+        required: 1,
+      });
+      // 쓸 수 있는 다른 검색어가 있으면 뺀다
+      expect(termsOf("컴포넌트 게시판 목록")).toEqual({ used: ["게시판"], ignored: ["목록"], dropped: ["컴포넌트"], required: 1 });
+    });
+
+    it("query 에 OR 가 있으면 이름 컬럼에 든 컴포넌트가 있는 대상 낱말을 빼지 않는다", () => {
+      // 고정 데이터에는 ID·이름·영문명에 '컴포넌트' 가 든 컴포넌트가 없어, OR 가 있어도 뺀다
+      expect(termsOf("게시판 OR 컴포넌트")?.dropped).toEqual(["컴포넌트"]);
+      // 그런 컴포넌트가 있으면 빼지 않고, 그 컴포넌트도 돌려준다
+      sqlite.addCommonComponentsBatch([CPM]);
+      const result = sqlite.queryComponents({ query: "게시판 OR 컴포넌트" });
+      expect(idsOf(result.rows)).toEqual(["bbs", "cpm", "tpl"]);
+      expect(result.terms).toEqual({ used: ["게시판", "컴포넌트"], ignored: [], dropped: [], required: 1, orQuery: true });
+    });
+
+    it("뺀 대상 낱말이 이름 컬럼에 든 컴포넌트를 먼저 돌려준다", () => {
+      sqlite.addCommonComponentsBatch([CPM]);
+      // '관리' 가 이름에 든 세 컴포넌트는 이름이 짧은 순이다
+      expect(idsOf(sqlite.queryComponents({ query: "관리" }).rows)).toEqual(["ram", "drm", "cpm", "tpl"]);
+      // '컴포넌트 관리': 이름에 '컴포넌트' 가 든 컴포넌트가 이름이 더 짧은 컴포넌트보다 앞에 온다
+      const result = sqlite.queryComponents({ query: "컴포넌트 관리" });
+      expect(result.matchMode).toBe("all-terms");
+      expect(result.terms).toEqual({ used: ["관리"], ignored: [], dropped: ["컴포넌트"], required: 1 });
+      expect(idsOf(result.rows)).toEqual(["cpm", "ram", "drm", "tpl"]);
+      // 영문 낱말도 같다 (영문명 'Component Management')
+      expect(idsOf(sqlite.queryComponents({ query: "component management" }).rows)).toEqual(["cpm", "ram", "drm"]);
     });
   });
 

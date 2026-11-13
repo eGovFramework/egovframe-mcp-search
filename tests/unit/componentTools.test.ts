@@ -216,11 +216,12 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
       const sentence = searchComponents("게시판 컴포넌트 DDL 보여줘");
       expect(sentence.ignoredTerms).toEqual(["DDL", "보여줘"]);
       expect(sentence.droppedTerms).toEqual(["컴포넌트"]);
-      // 결과가 0건이어도 알린다
+      // 결과가 0건이어도 알린다. 쓸 수 있는 다른 검색어가 없으면 '컴포넌트' 도 빼지 않고 검색어로 견주므로,
+      // 일치하는 컴포넌트가 없는 검색어로 함께 실린다 (고정 데이터에는 '컴포넌트' 가 든 컴포넌트가 없다)
       const nothing = searchComponents("컴포넌트 DDL 보여줘");
       expect(nothing.total).toBe(0);
-      expect(nothing.ignoredTerms).toEqual(["DDL", "보여줘"]);
-      expect(nothing.droppedTerms).toEqual(["컴포넌트"]);
+      expect(nothing.ignoredTerms).toEqual(["컴포넌트", "DDL", "보여줘"]);
+      expect(nothing).not.toHaveProperty("droppedTerms");
       // 필터를 적용한 대상 안에서 일치하는 컴포넌트가 없는 검색어도 알린다
       expect(searchComponents("증서 게시판", 20, { categoryId: "로그인" }).ignoredTerms).toEqual(["게시판"]);
     });

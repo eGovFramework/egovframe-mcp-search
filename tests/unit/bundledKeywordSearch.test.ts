@@ -16,6 +16,8 @@
  * - 낱말을 저장된 표기와 다른 기호로 이으면 0건이었다 ("K2Web-Wizard", "sts_com", "JEUS-8").
  * - 기호에서 나눈 조각으로 찾으면 조각이 다른 낱말의 일부와 일치해 결과가 부풀었다 ("egovframework.com.zzz" 가
  *   전체 컴포넌트, "REST-API 게시판" 에서 게시판이 4위, 주소를 적은 query 가 여러 건).
+ * - 가려 주지 못하는 낱말을 일치 여부와 관계없이 빼, 제품명에 그 낱말이 든 제품이 묻히거나("eGov CMS"),
+ *   남은 낱말로는 한 행도 찾지 못하거나("컴포넌트 목록"), 한 글자 검색이 되었다 ("eGovFrame 8", "in S").
  * - 두세 글자 영문 검색어가 다른 낱말 속에서 일치한 행이, 낱말로 일치한 행보다 앞에 왔다 ("ECM Solution", "ERS",
  *   컴포넌트 ID "ist").
  * - OR 로 이은 낱말이 모두 든 행만 돌려줬다 ("게시판 OR 댓글", "CMS OR Portal").
@@ -110,6 +112,31 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       const alone = sqlite.queryComponents({ query: "컴포넌트" });
       expect(alone.terms).toEqual({ used: ["컴포넌트"], ignored: [], dropped: [], required: 1 });
       expect(idsOf(alone.rows)).toContain("wed");
+    });
+
+    it("대상 낱말을 빼면 한 건도 찾지 못하는 query 는 대상 낱말로 찾는다", () => {
+      // '컴포넌트' 를 다른 낱말이 있으면 일치 여부와 관계없이 빼던 때에는 "컴포넌트 목록" 이 0건이었다
+      // ('목록', '어떤', '있나요' 는 어느 컴포넌트에도 없다)
+      const cases: Array<[string, string, string[]]> = [
+        ["컴포넌트 목록", "컴포넌트", ["목록"]],
+        ["공통컴포넌트 목록", "공통컴포넌트", ["목록"]],
+        ["어떤 컴포넌트가 있나요", "컴포넌트", ["어떤", "있나요"]],
+      ];
+      for (const [query, word, ignored] of cases) {
+        const expected = sqlite.queryComponents({ query: word });
+        const result = sqlite.queryComponents({ query });
+        expect(expected.total, `query=${word}`).toBeGreaterThan(0);
+        expect(idsOf(result.rows), `query=${query}`).toEqual(idsOf(expected.rows));
+        expect(result.terms, `query=${query}`).toEqual({ used: [word], ignored, dropped: [], required: 1 });
+      }
+      // 대상 낱말이 둘이어도 같다 ('종류' 는 어느 컴포넌트에도 없다)
+      const two = sqlite.queryComponents({ query: "전자정부 컴포넌트 종류" });
+      expect(two.terms).toEqual({ used: ["전자정부", "컴포넌트"], ignored: ["종류"], dropped: [], required: 1 });
+      const union = new Set([
+        ...idsOf(sqlite.queryComponents({ query: "전자정부" }).rows),
+        ...idsOf(sqlite.queryComponents({ query: "컴포넌트" }).rows),
+      ]);
+      expect(idsOf(two.rows).sort()).toEqual([...union].sort());
     });
 
     it("흔한 낱말이 섞인 문장형 질의는 가려 주는 낱말이 든 컴포넌트만 돌려준다", () => {
@@ -589,6 +616,77 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       expect(full.terms).toEqual({ used: ["DL-WCMS"], ignored: [], dropped: ["for", "eGovframe"], required: 1 });
       expect(full.rows.every((row) => row.product_name === "DL-WCMS for eGovframe")).toBe(true);
       expect(full.total).toBeGreaterThan(0);
+    });
+
+    it("제품명에 프레임워크를 가리키는 낱말이 든 제품은 다른 검색어와 함께 적어도 맨 앞에 온다", () => {
+      // 'eGov' 를 다른 검색어가 있으면 일치 여부와 관계없이 빼기만 하던 때에는 "eGov CMS" 가 CMS 가 든 300건 남짓을
+      // 확인일자 순으로 돌려줘, 제품명에 eGov 가 든 제품(MC@CMS eGov, DL-WCMS for eGovframe)이 40번째 뒤로 밀렸다
+      const named = compatible("eGov");
+      expect(named.matchMode).toBe("all-terms");
+      expect(named.total).toBeGreaterThan(1);
+      expect(named.rows.every((row) => /egov/i.test(row.product_name))).toBe(true);
+
+      const result = compatible("eGov CMS");
+      expect(result.matchMode).toBe("all-terms");
+      expect(result.terms).toEqual({ used: ["CMS"], ignored: [], dropped: ["eGov"], required: 1 });
+      // CMS 가 든 행을 모두 돌려주되, 제품명에 eGov 가 든 행이 맨 앞이다
+      expect(rowSet(result)).toEqual(rowSet(compatible("CMS")));
+      expect(rowKeys(result).slice(0, named.total).sort()).toEqual(rowSet(named));
+
+      // 다른 낱말, 버전, 프레임워크 버전과 함께 적어도 그 제품이 맨 앞이다
+      const first = (query: string) => compatible(query).rows[0];
+      for (const query of ["eGovframe CMS", "CMS for eGovframe", "eGovframe v1.0", "WCMS eGovframe"]) {
+        expect(first(query)?.product_name, `query=${query}`).toBe("DL-WCMS for eGovframe");
+      }
+      expect(first("eGov 4.2")).toMatchObject({ product_name: "MC@CMS eGov", framework_version: "4.2" });
+      for (const query of ["표준프레임워크 3.7", "표준프레임워크 V1.0"]) {
+        expect(first(query)?.product_name, `query=${query}`).toBe("전사개발표준프레임워크");
+      }
+      // "eGov 제품": 설명에 '제품' 이 든 350건 남짓 가운데, 제품명에 eGov 가 든 세 행이 앞의 세 행이다
+      const products = compatible("eGov 제품");
+      expect(products.total).toBeGreaterThan(100);
+      expect(products.rows.slice(0, 4).map((row) => /egov/i.test(row.product_name))).toEqual([true, true, true, false]);
+
+      // 제품명 전체를 적으면 남은 낱말이 모두 든 행 가운데 그 제품이 맨 앞이다
+      const full = compatible("MC@CMS eGov");
+      expect(full.terms).toEqual({ used: ["MC", "CMS"], ignored: [], dropped: ["eGov"], required: 2 });
+      expect(full.rows.slice(0, 3).every((row) => row.product_name === "MC@CMS eGov")).toBe(true);
+    });
+
+    it('"eGov OR JEUS" 는 JEUS 행과 제품명에 eGov 가 든 행을 모두 돌려준다', () => {
+      // OR 가 있어도 'eGov' 를 빼던 때에는 JEUS 세 행만 나왔다
+      const either = compatible("eGov OR JEUS");
+      expect(either.matchMode).toBe("any-term");
+      expect(either.terms).toEqual({ used: ["eGov", "JEUS"], ignored: [], dropped: [], required: 1, orQuery: true });
+      const union = new Set([...rowKeys(compatible("eGov")), ...rowKeys(compatible("JEUS"))]);
+      expect(rowSet(either)).toEqual([...union].sort());
+      expect(either.total).toBeGreaterThan(compatible("JEUS").total);
+    });
+
+    it("대상 낱말을 빼면 한 행도 찾지 못하거나 한 글자 검색어만 남는 query 는 대상 낱말로 찾는다", () => {
+      // "eGovFrame 8" 은 'eGovFrame' 을 빼고 '8' 한 글자가 든 115건을, "eGovFrame compatible software" 는 0건을 돌려줬다
+      const named = compatible("eGovFrame");
+      expect(named.total).toBeGreaterThan(0);
+      const single = compatible("eGovFrame 8");
+      expect(rowKeys(single)).toEqual(rowKeys(named));
+      expect(single.terms).toEqual({ used: ["eGovFrame"], ignored: [], dropped: ["8"], required: 1 });
+      const sentence = compatible("eGovFrame compatible software");
+      expect(rowKeys(sentence)).toEqual(rowKeys(named));
+      expect(sentence.terms).toEqual({
+        used: ["eGovFrame"],
+        ignored: ["compatible", "software"],
+        dropped: [],
+        required: 1,
+      });
+    });
+
+    it('"in S" 는 영어 기능어를 빼지 않고 두 낱말이 모두 든 행을 돌려준다', () => {
+      // 'in' 을 빼던 때에는 'S' 한 글자가 든 460건 남짓이 나와, 제품 in_S 가 180번째였다
+      const result = compatible("in S");
+      expect(result.matchMode).toBe("all-terms");
+      expect(result.terms).toEqual({ used: ["in", "S"], ignored: [], dropped: [], required: 2 });
+      expect(result.total).toBeLessThanOrEqual(compatible("in").total);
+      expect(result.rows.some((row) => row.product_name === "in_S")).toBe(true);
     });
 
     it('분류 이름 "WAS" 는 영어 기능어로 빼지 않는다', () => {
