@@ -339,8 +339,24 @@ function matchStoredValues(input: string, stored: string[]): string[] {
   return stored.filter((value) => value.toLowerCase() === lowered);
 }
 
+/** 오류 문구에 나열하는 '사용할 수 있는 값'의 최대 개수 */
+const MAX_LISTED_FILTER_VALUES = 30;
+
+/**
+ * 오류 문구에 넣을 값 목록. 앞에서 30개까지만 나열하고 나머지는 '외 N개' 로 줄인다.
+ *
+ * 고유 값이 많은 테이블(예: 경로 전체가 layer 로 색인된 옛 인덱스)에서 오류 한 건이 수만 자가
+ * 되지 않게 한다. 목록은 청크 수 내림차순이라 앞쪽이 주요 값이다.
+ */
 function listValues(values: string[]): string {
-  return values.length > 0 ? values.join(', ') : '(없음)';
+  if (values.length === 0) {
+    return '(없음)';
+  }
+  if (values.length <= MAX_LISTED_FILTER_VALUES) {
+    return values.join(', ');
+  }
+  const omitted = values.length - MAX_LISTED_FILTER_VALUES;
+  return `${values.slice(0, MAX_LISTED_FILTER_VALUES).join(', ')} 외 ${omitted}개`;
 }
 
 /**
@@ -349,7 +365,8 @@ function listValues(values: string[]): string {
  * 필터는 저장된 값과 정확히 일치해야 걸리는데 호출자는 저장된 값을 알 방법이 없다.
  * 대소문자와 앞뒤 공백 차이는 흡수하고, 대응되는 값이 없으면 "결과 없음" 대신 유효한 값을
  * 나열한 UserFacingError 를 던진다. layer 는 전체를, category 는 layer 가 주어졌으면 그 layer 의
- * category 만 나열한다 (같은 이름의 category 가 여러 layer 에 있다).
+ * category 만 나열한다 (같은 이름의 category 가 여러 layer 에 있다). 나열은 청크가 많은 값부터
+ * 30개까지이고 나머지는 '외 N개' 로 줄인다 (listValues).
  *
  * @returns where 절에 넣을 저장 값 (필터가 없으면 빈 배열)
  */

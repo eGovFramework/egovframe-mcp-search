@@ -198,6 +198,103 @@ describe("resolveGuideFilter", () => {
   });
 });
 
+describe("resolveGuideFilter — 오류 문구의 '사용할 수 있는 값' 목록", () => {
+  /** 오류 문구에 나열하는 값의 최대 개수 */
+  const MAX_LISTED = 30;
+
+  /** 거부 오류의 문구 (거부하지 않으면 테스트 실패) */
+  const rejection = (facets: GuideFacets, layer?: string, category?: string): string => {
+    const error = catchError(() => resolveGuideFilter(facets, layer, category));
+    expect(error).toBeInstanceOf(UserFacingError);
+    return (error as Error).message;
+  };
+
+  /** 문구 끝의 '외 N개' 표기 (없으면 빈 문자열) */
+  const omittedNote = (message: string): string => message.match(/ 외 \d+개$/)?.[0] ?? "";
+
+  /** 문구에서 나열된 값만 꺼낸다 ('외 N개' 표기는 뺀다) */
+  const listedValues = (message: string): string[] =>
+    message
+      .slice(0, message.length - omittedNote(message).length)
+      .split("사용할 수 있는 값: ")[1]
+      .split(", ");
+
+  /**
+   * 고유 값이 count 개인 청크 목록. i 번째 값은 (count - i) 개의 청크를 가지므로
+   * 청크 수 내림차순 목록에서 i 번째에 온다.
+   */
+  const rowsWithValues = (count: number, toRow: (name: string) => { layer: string; category: string }) =>
+    Array.from({ length: count }, (_, i) =>
+      Array.from({ length: count - i }, () => toRow(`value-${String(i + 1).padStart(4, "0")}`)),
+    ).flat();
+
+  const layerFacets = (count: number) =>
+    buildGuideFacets(rowsWithValues(count, (name) => ({ layer: name, category: "" })));
+  const categoryFacets = (count: number) =>
+    buildGuideFacets(rowsWithValues(count, (name) => ({ layer: "runtime", category: name })));
+
+  it("값이 30개 이하면 전부 나열한다", () => {
+    expect(rejection(SAMPLE_FACETS, "runtime")).toBe(
+      '알 수 없는 layer 값입니다: "runtime". 사용할 수 있는 값: egovframe-runtime, common-component, docs',
+    );
+    expect(rejection(SAMPLE_FACETS, undefined, "데이터처리")).toBe(
+      '알 수 없는 category 값입니다: "데이터처리". 사용할 수 있는 값: persistence-layer, intro, security',
+    );
+    expect(rejection(SAMPLE_FACETS, "egovframe-runtime", "security")).toBe(
+      '알 수 없는 category 값입니다: "security" (layer egovframe-runtime). 사용할 수 있는 값: persistence-layer, intro',
+    );
+    expect(rejection(SAMPLE_FACETS, "docs", "intro")).toBe(
+      '알 수 없는 category 값입니다: "intro" (layer docs). 사용할 수 있는 값: (없음)',
+    );
+  });
+
+  it("값이 정확히 30개면 '외 N개' 없이 전부 나열한다", () => {
+    const facets = layerFacets(MAX_LISTED);
+    const message = rejection(facets, "없는-layer");
+    expect(omittedNote(message)).toBe("");
+    expect(listedValues(message)).toEqual(facets.layers.map((facet) => facet.value));
+  });
+
+  it("layer 값이 31개 이상이면 청크가 많은 30개만 나열하고 나머지는 '외 N개' 로 줄인다", () => {
+    const facets = layerFacets(MAX_LISTED + 1);
+    const message = rejection(facets, "없는-layer");
+
+    expect(omittedNote(message)).toBe(" 외 1개");
+    expect(listedValues(message)).toEqual(facets.layers.slice(0, MAX_LISTED).map((facet) => facet.value));
+    expect(message).not.toContain(facets.layers[MAX_LISTED].value);
+  });
+
+  it("고유 값이 수천 개여도 문구가 길어지지 않는다", () => {
+    // 경로 전체가 layer 로 색인된 옛 인덱스: 문서마다 layer 값이 하나씩 생긴다
+    const total = 5000;
+    const facets = buildGuideFacets(
+      Array.from({ length: total }, (_, i) => ({
+        layer: `egovframe-runtime\\persistence-layer\\dataaccess-mybatis-guide-${i}.md`,
+        category: "",
+      })),
+    );
+    const message = rejection(facets, "egovframe-runtime");
+
+    expect(message.length).toBeLessThan(2500);
+    expect(omittedNote(message)).toBe(` 외 ${total - MAX_LISTED}개`);
+    expect(listedValues(message)).toHaveLength(MAX_LISTED);
+  });
+
+  it("category 목록에도 같은 상한을 적용한다 (layer 를 준 경우와 주지 않은 경우 모두)", () => {
+    const facets = categoryFacets(MAX_LISTED + 12);
+    const expected = facets.categories.slice(0, MAX_LISTED).map((facet) => facet.value);
+
+    const withoutLayer = rejection(facets, undefined, "없는-category");
+    expect(omittedNote(withoutLayer)).toBe(" 외 12개");
+    expect(listedValues(withoutLayer)).toEqual(expected);
+
+    const withLayer = rejection(facets, "runtime", "없는-category");
+    expect(withLayer).toContain("(layer runtime)");
+    expect(omittedNote(withLayer)).toBe(" 외 12개");
+    expect(listedValues(withLayer)).toEqual(expected);
+  });
+});
+
 describe.skipIf(!HAS_BUNDLED_TABLES)("가이드 검색 — 동봉 테이블의 layer / category 필터", () => {
   let manager: GuideSearchManager;
   let rows: VectorRow[];
