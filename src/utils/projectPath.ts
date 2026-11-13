@@ -6,9 +6,15 @@
 import path from 'path';
 import fs from 'fs';
 
+/** 시작 디렉토리별로 찾아 둔 프로젝트 루트 */
+const projectRootCache = new Map<string, string>();
+
 /**
  * 프로젝트 루트 디렉토리 찾기
  * package.json이 있는 디렉토리를 프로젝트 루트로 간주
+ *
+ * 조회 호출마다 불리므로 찾은 결과를 시작 디렉토리별로 기억한다. 같은 디렉토리에서 다시 찾을 때는
+ * 파일 시스템을 뒤지지 않고 로그도 남기지 않는다 (서버 로그가 같은 두 줄로 채워지지 않게 한다).
  */
 export function findProjectRoot(startPath?: string): string {
   let currentDir = startPath || process.cwd();
@@ -16,6 +22,12 @@ export function findProjectRoot(startPath?: string): string {
   // startPath가 파일인 경우 디렉토리로 변환
   if (startPath && fs.existsSync(startPath) && fs.statSync(startPath).isFile()) {
     currentDir = path.dirname(startPath);
+  }
+
+  const startDir = currentDir;
+  const cached = projectRootCache.get(startDir);
+  if (cached !== undefined) {
+    return cached;
   }
   
   console.error(`🔍 프로젝트 루트 찾기 시작: ${currentDir}`);
@@ -25,6 +37,7 @@ export function findProjectRoot(startPath?: string): string {
     const packageJsonPath = path.join(currentDir, 'package.json');
     if (fs.existsSync(packageJsonPath)) {
       console.error(`✅ 프로젝트 루트 발견: ${currentDir}`);
+      projectRootCache.set(startDir, currentDir);
       return currentDir;
     }
     

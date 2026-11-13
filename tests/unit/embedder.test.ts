@@ -50,6 +50,18 @@ describe("LocalEmbedder — 모델 로드 실패", () => {
     expect(toUserMessage(error)).not.toContain(tmpDir);
   });
 
+  it("모델 파일이 없는 것은 예상된 상황이므로 로그에 스택을 남기지 않는다", async () => {
+    const logged = vi.mocked(console.error);
+    logged.mockClear();
+
+    await new LocalEmbedder().initialize().catch(() => {});
+
+    // 오류 객체를 통째로 넘기면 호출마다 여러 줄의 스택이 stderr 에 찍힌다
+    const errorObjects = logged.mock.calls.flat().filter((argument) => argument instanceof Error);
+    expect(errorObjects).toEqual([]);
+    expect(logged.mock.calls.flat().join("\n")).toContain("임베딩 모델");
+  });
+
   // 가중치(onnx)만 없는 불완전한 모델 디렉토리 — 설정·토크나이저는 실제 모델의 것을 써야 해서 모델이 있을 때만 돈다
   it.skipIf(!hasEmbeddingModel())("모델 파일 가운데 일부만 없어도 같은 안내를 던진다", async () => {
     const modelDir = path.join(tmpDir, EMBEDDING_MODEL_ID);

@@ -101,12 +101,14 @@ export class LocalEmbedder {
       this.model = await pipeline('feature-extraction', this.modelName);
       console.error('✅ 임베딩 모델 로드 완료');
     } catch (error) {
-      // 상세 내용(절대 경로 포함)은 서버 로그에만 남긴다
-      console.error('❌ 임베딩 모델 로드 실패:', error);
       if (isModelNotFound(error)) {
+        // 모델을 내려받지 않은 설치에서는 예상되는 상황이다. 호출마다 스택을 찍지 않고 한 줄만 남긴다
+        console.error(`❌ 임베딩 모델을 찾을 수 없습니다: ${env.localModelPath}`);
         throw new UserFacingError(MODEL_NOT_FOUND_MESSAGE);
       }
-      // 그 밖의 실패(깨진 파일, 런타임 오류 등)는 원래 오류를 그대로 던진다 — 서버가 고정 문구로 바꾼다
+      // 그 밖의 실패(깨진 파일, 런타임 오류 등)는 상세 내용(절대 경로 포함)을 서버 로그에 남기고
+      // 원래 오류를 그대로 던진다 — 서버가 고정 문구로 바꾼다
+      console.error('❌ 임베딩 모델 로드 실패:', error);
       throw error;
     }
   }
