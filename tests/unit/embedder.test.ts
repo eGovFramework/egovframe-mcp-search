@@ -36,6 +36,8 @@ describe("LocalEmbedder — 모델 로드 실패", () => {
     env.localModelPath = savedModelPath;
     vi.restoreAllMocks();
     await fs.remove(tmpDir);
+    // 모델 파일을 복사해 넣는 테스트가 있다 — 임시 디렉토리가 남지 않았는지 확인한다
+    expect(await fs.pathExists(tmpDir)).toBe(false);
   });
 
   it("모델 파일이 없으면 조치 방법을 담은 UserFacingError 를 던진다", async () => {
@@ -52,8 +54,9 @@ describe("LocalEmbedder — 모델 로드 실패", () => {
   it.skipIf(!hasEmbeddingModel())("모델 파일 가운데 일부만 없어도 같은 안내를 던진다", async () => {
     const modelDir = path.join(tmpDir, EMBEDDING_MODEL_ID);
     await fs.ensureDir(modelDir);
+    // 링크를 걸지 않고 복사한다 — Windows 에서는 권한 없이 파일 심볼릭 링크를 만들 수 없다
     for (const file of ["config.json", "tokenizer.json", "tokenizer_config.json"]) {
-      await fs.symlink(path.join(savedModelPath, EMBEDDING_MODEL_ID, file), path.join(modelDir, file));
+      await fs.copyFile(path.join(savedModelPath, EMBEDDING_MODEL_ID, file), path.join(modelDir, file));
     }
 
     const error = await new LocalEmbedder().initialize().catch((e: unknown) => e);
