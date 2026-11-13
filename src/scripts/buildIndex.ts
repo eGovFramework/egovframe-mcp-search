@@ -595,7 +595,7 @@ async function writeStateAndArtifacts(
     normalizeVersionLabel(sourceVersion) !== normalizeVersionLabel(metadataVersion)
   ) {
     console.error(`  ⚠️ 공통컴포넌트 소스(${sourceVersion})와 메타(${metadataVersion}) 버전이 다릅니다.`);
-    console.error('     목록·설명·FTS 검색은 메타(common-components.json) 기준입니다 — 메타 재생성을 검토하세요.');
+    console.error('     목록·설명·키워드 검색은 메타(common-components.json) 기준입니다 — 메타 재생성을 검토하세요.');
   }
 
   // SQLite 리소스 (호환성 SW) — 사용자 update 의 현재 버전 기준값.
