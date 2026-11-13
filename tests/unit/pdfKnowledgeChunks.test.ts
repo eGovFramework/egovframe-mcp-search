@@ -471,7 +471,35 @@ describe("chunkPdfText — 이웃한 청크의 겹침", () => {
 });
 
 describe("chunkPdfText — 처리 시간", () => {
-  it("문장 부호가 없는 긴 줄이 많은 본문을 1초 안에 나눈다", () => {
+  /**
+   * 본문 하나를 나누는 데 쓸 수 있는 CPU 시간의 한계(밀리초).
+   *
+   * 걸린 시간은 벽시계 시간이 아니라 이 프로세스가 쓴 CPU 시간(process.cpuUsage 의 user 와 system 의 합)으로 잰다.
+   * 벽시계 시간은 다른 프로세스가 코어를 쓰는 동안에도 흐르므로, 바쁜 장비에서는 구현이 그대로여도 늘어난다.
+   * CPU 시간은 프로세스 전체의 값이라 가비지 컬렉션처럼 다른 스레드가 쓴 시간도 들어간다. 테스트 파일을 병렬로
+   * 실행하면 다른 파일을 실행하는 스레드가 쓴 시간까지 들어간다 (vitest.config.mjs 는 파일을 순차로 실행한다).
+   *
+   * Apple M4 Max(코어 16개)에서 이 파일을 vitest 로 실행해 잰 CPU 시간은 다음과 같다. 실행마다 한 번씩 잰 표본의 범위다.
+   * - 긴 줄 본문: 따로 부하를 걸지 않은 60번 실행에서 122~194ms. 계산만 하는 프로세스 32개를 함께 돌린 32번 실행에서
+   *   168~245ms (그때의 벽시계 시간은 287~507ms).
+   * - 닫는 괄호 본문: 같은 60번 실행에서 2~5ms, 같은 32번 실행에서 2~11ms.
+   * - 구현을 되돌린 사본(4번씩 실행): splitSpan 이 본문 전체에서 찾게 하면 긴 줄 본문에 10.8~13.9초를 쓰고, 문장 경계
+   *   정규식의 맨 앞 조건 (?=\s) 를 빼면 닫는 괄호 본문에 25.8~31.5초를 쓴다.
+   * - 테스트 파일을 병렬로 실행하게 하고 전체 테스트를 돌린 3번에서는 긴 줄 본문의 CPU 시간이 2.7~3.4초였다.
+   * 5초는 파일을 순차로 실행할 때 지금 구현이 쓴 가장 큰 값(245ms)의 약 20배이고, 되돌린 구현이 쓴 가장 작은 값(10.8초)의
+   * 절반보다 작다.
+   */
+  const CPU_TIME_LIMIT_MS = 5000;
+
+  /** run 을 한 번 실행하는 동안 이 프로세스가 쓴 CPU 시간(밀리초)과 run 의 결과 */
+  const withCpuTime = <T>(run: () => T): { cpuMs: number; result: T } => {
+    const before = process.cpuUsage();
+    const result = run();
+    const used = process.cpuUsage(before);
+    return { cpuMs: (used.user + used.system) / 1000, result };
+  };
+
+  it("문장 부호가 없는 긴 줄이 많은 본문을 CPU 시간 5초 안에 나눈다", () => {
     // 낱말이 공백으로만 나뉜 700자 남짓한 줄 4,000개 (약 280만 자).
     // 긴 줄 하나를 문장 경계에서 나누려 할 때 그 줄이 아니라 본문의 끝까지 훑으면, 걸리는 시간이 줄 수의 제곱으로 늘어난다
     const longLine = (seed: number): string => {
@@ -484,26 +512,22 @@ describe("chunkPdfText — 처리 시간", () => {
     const text = Array.from({ length: 4000 }, (_, i) => longLine(i)).join("\n");
     expect(text.length).toBeGreaterThan(2_800_000);
 
-    const startedAt = performance.now();
-    const chunks = chunkPdfText(text);
-    const elapsedMs = performance.now() - startedAt;
+    const { cpuMs, result: chunks } = withCpuTime(() => chunkPdfText(text));
 
-    expect(elapsedMs).toBeLessThan(1000);
+    expect(cpuMs, "쓴 CPU 시간(ms)").toBeLessThan(CPU_TIME_LIMIT_MS);
     // 빨리 끝난 결과가 올바른 결과인지도 본다
     expect(Math.max(...chunks.map((chunk) => chunk.length))).toBeLessThanOrEqual(PDF_CHUNK_MAX_CHARS);
     expectChunksCoverSource(text, chunks);
   }, 120_000);
 
-  it("닫는 괄호가 길게 이어진 본문을 1초 안에 나눈다", () => {
+  it("닫는 괄호가 길게 이어진 본문을 CPU 시간 5초 안에 나눈다", () => {
     // 문장 경계는 끝 부호 뒤에 닫는 따옴표나 괄호가 몇 개든 이어질 수 있다고 본다. 그 조건을 공백이 아닌 자리에서도
     // 따지면, 닫는 괄호가 이어진 글자열 안의 자리마다 그 앞의 괄호를 모두 되짚어 길이의 제곱만큼 시간이 걸린다
     const text = `가나다${")".repeat(200_000)} 라마바. 사아자`;
 
-    const startedAt = performance.now();
-    const chunks = chunkPdfText(text);
-    const elapsedMs = performance.now() - startedAt;
+    const { cpuMs, result: chunks } = withCpuTime(() => chunkPdfText(text));
 
-    expect(elapsedMs).toBeLessThan(1000);
+    expect(cpuMs, "쓴 CPU 시간(ms)").toBeLessThan(CPU_TIME_LIMIT_MS);
     // 공백이 없는 글자열은 겹치지 않으므로, 청크를 이으면 공백을 뺀 본문과 같다
     expect(Math.max(...chunks.map((chunk) => chunk.length))).toBeLessThanOrEqual(PDF_CHUNK_MAX_CHARS);
     expect(chunks.join("").replace(/\s/g, "")).toBe(text.replace(/\s/g, ""));
