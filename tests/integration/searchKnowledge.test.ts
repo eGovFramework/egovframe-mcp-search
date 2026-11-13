@@ -442,6 +442,25 @@ describe("integration — egov_search_knowledge 공통컴포넌트 조회", () =
     }
   });
 
+  it("상세 정보의 사용 테이블은 컴포넌트가 실제로 쓰는 테이블이다", async () => {
+    // 메타의 useTables 에는 공통코드가 출퇴근 테이블로, 메뉴생성관리가 개인정보 로그 테이블로 적혀 있다
+    const code = await search({ scope: "components", action: "get", filters: { componentId: "cca" } });
+    expect(code.isError).toBe(false);
+    expect(code.text).toContain("COMTCCMMNCODE");
+    expect(code.text).not.toContain("COMTNCOMMUTE");
+
+    const menu = await search({ scope: "components", action: "get", filters: { componentId: "mcm" } });
+    expect(menu.text).toContain("COMTNMENUINFO");
+    expect(menu.text).not.toContain("COMTNPRIVACYLOG");
+  });
+
+  it.skipIf(!hasComponentSources())("ddl 은 컴포넌트가 실제로 쓰는 테이블의 CREATE 문을 돌려준다", async () => {
+    const res = await search({ scope: "components", action: "ddl", filters: { componentId: "cca" } });
+    expect(res.isError).toBe(false);
+    expect(res.text).toMatch(/CREATE TABLE COMTCCMMNCODE\b/);
+    expect(res.text).not.toMatch(/CREATE TABLE COMTNCOMMUTE\b/);
+  });
+
   it("동봉 DB 에는 메타에 적힌 컴포넌트가 모두 들어 있다", async () => {
     const meta = JSON.parse(
       fs.readFileSync(path.join(REPO_ROOT, "templates", "common-components.json"), "utf-8"),

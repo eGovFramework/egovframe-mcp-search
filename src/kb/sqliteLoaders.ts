@@ -11,6 +11,11 @@ import fs from 'fs-extra';
 import { z } from 'zod';
 import { SQLiteManager } from '../database/sqliteManager.js';
 import { assignUniqueComponentIds, type RenamedComponentId } from './componentIds.js';
+import {
+  deriveComponentTables,
+  loadComponentTableContext,
+  type ComponentTableSource,
+} from './componentTables.js';
 
 // ─── 호환성 SW (JSON) ────────────────────────────────────
 
@@ -116,6 +121,20 @@ export interface ComponentLoadResult {
   dependencies: number;
   /** id 가 다른 항목과 겹쳐서 새 id 를 받은 컴포넌트 (kb/componentIds 의 규칙) */
   renamed: Array<RenamedComponentId & { name: string }>;
+  /**
+   * 사용 테이블 목록을 어디에서 얻었는지별 컴포넌트 수 (kb/componentTables 의 규칙).
+   * 소스 트리가 없어서 메타의 목록을 그대로 적재했으면 null.
+   */
+  tableSources: Partial<Record<ComponentTableSource, number>> | null;
+}
+
+/** loadCommonComponentsFromJson 의 선택 사항 */
+export interface ComponentLoadOptions {
+  /**
+   * 공통컴포넌트 소스 트리의 루트. 주면 사용 테이블 목록을 메타 대신 소스 트리의
+   * 컴포넌트별 DDL 스크립트와 매퍼 XML 에서 도출한다 (메타의 목록은 믿을 수 없다).
+   */
+  componentsSrcRoot?: string;
 }
 
 /**
@@ -124,10 +143,12 @@ export interface ComponentLoadResult {
  *
  * 메타의 id 는 서로 겹칠 수 있으므로 적재 전에 고유한 id 로 바꾼다. 겹친 채로 적재하면
  * 뒤 항목이 앞 항목을 덮어써 컴포넌트가 사라진다 (kb/componentIds 참조).
+ * options.componentsSrcRoot 를 주면 사용 테이블 목록을 소스 트리에서 도출한다 (kb/componentTables 참조).
  */
 export async function loadCommonComponentsFromJson(
   sqlite: SQLiteManager,
   jsonPath: string,
+  options: ComponentLoadOptions = {},
 ): Promise<ComponentLoadResult> {
   let data: unknown;
   try {
@@ -144,6 +165,18 @@ export async function loadCommonComponentsFromJson(
   }
   const meta = parsed.data;
   const { ids, renamed } = assignUniqueComponentIds(meta.components);
+
+  // 사용 테이블 목록: 소스 트리가 있으면 거기에서 도출하고, 없으면 메타의 목록을 그대로 쓴다
+  const tableContext = options.componentsSrcRoot ? loadComponentTableContext(options.componentsSrcRoot) : null;
+  const tableSources: Partial<Record<ComponentTableSource, number>> = {};
+  const useTables = meta.components.map((component, index) => {
+    if (!tableContext) {
+      return component.useTables ?? [];
+    }
+    const derived = deriveComponentTables(component, meta.components[index - 1]?.useTables, tableContext);
+    tableSources[derived.source] = (tableSources[derived.source] ?? 0) + 1;
+    return derived.tables;
+  });
 
   sqlite.clearCommonComponents();
 
@@ -166,7 +199,7 @@ export async function loadCommonComponentsFromJson(
       package_name: component.packageName,
       description: component.description ?? undefined,
       description_en: component.descriptionEn ?? undefined,
-      use_tables: JSON.stringify(component.useTables ?? []),
+      use_tables: JSON.stringify(useTables[index]),
       // 버전이 비어 있으면 SQLiteManager 가 기본값을 채운다
       version: component.version ?? '',
       has_web: component.hasWeb ?? false,
@@ -191,5 +224,6 @@ export async function loadCommonComponentsFromJson(
     components: meta.components.length,
     dependencies: dependencies.length,
     renamed: renamed.map((entry) => ({ ...entry, name: meta.components[entry.index].name })),
+    tableSources: tableContext ? tableSources : null,
   };
 }

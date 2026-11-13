@@ -730,8 +730,20 @@ async function loadCommonComponents(sqlite: SQLiteManager, srcReady: boolean) {
     return;
   }
 
-  // 카테고리·컴포넌트·의존성 적재와 FTS 재구축 (메타의 id 가 겹치면 고유한 id 로 바꿔 적재한다)
-  const result = await loadCommonComponentsFromJson(sqlite, componentsFile);
+  // 카테고리·컴포넌트·의존성 적재와 FTS 재구축 (메타의 id 가 겹치면 고유한 id 로 바꿔 적재한다).
+  // 소스 트리가 있으면 사용 테이블 목록을 메타 대신 소스 트리에서 도출한다.
+  const result = await loadCommonComponentsFromJson(sqlite, componentsFile, {
+    componentsSrcRoot: srcReady ? COMPONENTS_SRC_DIR : undefined,
+  });
+
+  if (result.tableSources) {
+    const counts = Object.entries(result.tableSources)
+      .map(([source, count]) => `${source} ${count}개`)
+      .join(', ');
+    console.error(`  ℹ️ 사용 테이블 목록을 소스 트리에서 도출했습니다 (${counts}).`);
+  } else {
+    console.warn('  ⚠️ 사용 테이블 목록을 메타에서 그대로 적재했습니다 — 메타의 목록은 부정확할 수 있습니다 (소스 트리가 있어야 도출할 수 있습니다).');
+  }
 
   if (result.renamed.length > 0) {
     console.error(`  ℹ️ 메타의 id 가 겹쳐 새 id 를 부여한 컴포넌트 ${result.renamed.length}개:`);

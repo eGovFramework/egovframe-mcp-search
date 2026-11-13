@@ -182,6 +182,75 @@ describe('sqliteLoaders', () => {
       }
     });
 
+    describe('사용 테이블(use_tables) 도출', () => {
+      const useTablesOf = (componentId: string): string[] =>
+        JSON.parse(sqlite.getComponentById(componentId)?.use_tables ?? '[]');
+
+      /** 컴포넌트별 스크립트와 통합 스크립트만 갖춘 작은 소스 트리를 만든다. */
+      async function writeSourceTree(): Promise<string> {
+        const root = path.join(tmpDir, 'components-src');
+        const ddl = (...tables: string[]) => tables.map((t) => `CREATE TABLE ${t}\n(\n  ID INT\n)\n;\n`).join('\n');
+        await fs.outputFile(
+          path.join(root, 'script/ddl/mysql/com_DDL_mysql.sql'),
+          ddl('COMTECOPSEQ', 'COMTCCMMNCODE', 'COMTNBBS', 'COMTNCOMMUTE'),
+        );
+        await fs.outputFile(
+          path.join(root, 'src/script/ddl/mysql/cop.bbs_create_mysql.sql'),
+          ddl('COMTECOPSEQ', 'COMTNBBS'),
+        );
+        await fs.outputFile(
+          path.join(root, 'src/script/ddl/mysql/uss.cmt_create_mysql.sql'),
+          ddl('COMTECOPSEQ', 'COMTNCOMMUTE'),
+        );
+        await fs.outputFile(
+          path.join(root, 'src/main/resources/egovframework/mapper/com/sym/ccm/cca/EgovCode_SQL_mysql.xml'),
+          '<mapper><select>SELECT * FROM COMTCCMMNCODE</select></mapper>',
+        );
+        return root;
+      }
+
+      it('소스 트리를 주면 메타의 목록 대신 스크립트와 매퍼에서 도출한 목록을 적재한다', async () => {
+        const componentsSrcRoot = await writeSourceTree();
+        const jsonPath = await writeMeta([
+          component('cmt', '출퇴근관리', 'egovframework.com.uss.cmt', { useTables: ['COMTNCOMMUTE'] }),
+          // 메타에는 앞 항목의 값이 채워져 내려와 있다
+          component('cca', '공통코드', 'egovframework.com.sym.ccm.cca', { useTables: ['COMTNCOMMUTE'] }),
+          component('bbs', '게시판', 'egovframework.com.cop.bbs', { useTables: ['COMTNCOMMUTE'] }),
+        ]);
+
+        const result = await loadCommonComponentsFromJson(sqlite, jsonPath, { componentsSrcRoot });
+
+        expect(useTablesOf('cmt')).toEqual(['COMTECOPSEQ', 'COMTNCOMMUTE']);
+        expect(useTablesOf('cca')).toEqual(['COMTECOPSEQ', 'COMTCCMMNCODE']);
+        expect(useTablesOf('bbs')).toEqual(['COMTECOPSEQ', 'COMTNBBS']);
+        expect(result.tableSources).toEqual({ script: 2, mapper: 1 });
+      });
+
+      it('소스 트리를 주지 않으면 메타의 목록을 그대로 적재하고 그 사실을 알린다', async () => {
+        const jsonPath = await writeMeta([
+          component('cca', '공통코드', 'egovframework.com.sym.ccm.cca', { useTables: ['COMTNCOMMUTE'] }),
+        ]);
+
+        const result = await loadCommonComponentsFromJson(sqlite, jsonPath);
+
+        expect(useTablesOf('cca')).toEqual(['COMTNCOMMUTE']);
+        expect(result.tableSources).toBeNull();
+      });
+
+      it('컴포넌트별 스크립트가 없는 소스 트리에서도 메타의 목록을 그대로 적재한다', async () => {
+        const emptyRoot = path.join(tmpDir, 'empty-src');
+        await fs.ensureDir(emptyRoot);
+        const jsonPath = await writeMeta([
+          component('cca', '공통코드', 'egovframework.com.sym.ccm.cca', { useTables: ['COMTNCOMMUTE'] }),
+        ]);
+
+        const result = await loadCommonComponentsFromJson(sqlite, jsonPath, { componentsSrcRoot: emptyRoot });
+
+        expect(useTablesOf('cca')).toEqual(['COMTNCOMMUTE']);
+        expect(result.tableSources).toBeNull();
+      });
+    });
+
     it('components 배열이 없는 파일은 거부한다', async () => {
       const jsonPath = path.join(tmpDir, 'bad-components.json');
       await fs.writeJSON(jsonPath, { categories: [] });
