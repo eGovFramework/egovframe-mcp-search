@@ -440,6 +440,17 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(termsOf("JEUS on")).toEqual({ used: ["JEUS"], ignored: [], dropped: ["on"], required: 1 });
     });
 
+    it("쉼표나 아포스트로피로 붙여 적은 영어 기능어는 검색어로 쓰지 않는다", () => {
+      // 낱말을 잇는 기호는 '&', '/', '+' 뿐이다. 'Tibero,is' 의 'is' 는 따로 적힌 영어 기능어다
+      const result = sqlite.queryCompatibleSoftware({ query: "Tibero,is it ok" });
+      expect(versionsOf(result.rows)).toEqual(["Tibero 7"]);
+      expect(result.terms).toEqual({ used: ["Tibero"], ignored: ["ok"], dropped: ["is", "it"], required: 1 });
+      // 'on' 은 'CMS Solution' 에 들어 있다. 검색어로 쓰면 그 분류의 행이 함께 나온다
+      for (const query of ["JEUS,on", "JEUS(on)", "JEUS'on", "JEUS:on", '"JEUS"on']) {
+        expect(termsOf(query), `query=${query}`).toEqual({ used: ["JEUS"], ignored: [], dropped: ["on"], required: 1 });
+      }
+    });
+
     it("한 글자라서 뺀 검색어와 함께 query 에 적힌 순서대로 dropped 에 싣는다", () => {
       // Is, with: 영어 기능어 / 9: JEUS 와 함께 든 행이 없는 한 글자 검색어
       const result = sqlite.queryCompatibleSoftware({ query: "Is JEUS 9 with eGovFrame" });

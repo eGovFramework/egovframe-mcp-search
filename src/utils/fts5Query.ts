@@ -72,11 +72,14 @@ export function extractSearchTerms(raw: string, maxTerms: number = MAX_SEARCH_TE
 }
 
 /**
- * query 에서 다른 낱말과 공백 없이 기호로 이어 적힌 낱말을 소문자로 돌려준다
- * ('Q&A' 의 'q' 와 'a', 'on/off' 의 'on' 과 'off').
+ * query 에서 다른 낱말과 이어 적힌 낱말을 소문자로 돌려준다 ('Q&A' 의 'q' 와 'a', 'on/off' 의 'on' 과 'off').
+ *
+ * 이어 적혔다는 것은 두 낱말 사이의 글자가 낱말을 잇는 기호 '&', '/', '+' 로만 되어 있다는 뜻이다 ('R&D', 'C/C++').
+ * 공백이 끼었거나 다른 기호(아포스트로피, 쉼표, 괄호, 따옴표 등)로 붙여 적은 것은 따로 적힌 낱말이다:
+ * "What's" 의 'What' 과 "Tibero,is it ok" 의 'is' 는 영어 기능어 그대로다.
  *
  * extractSearchTerms 는 '&', '/' 같은 기호에서 낱말을 나누므로, 추출된 검색어만으로는 그 낱말이 따로 적힌
- * 것인지 다른 낱말에 붙여 적힌 것인지 알 수 없다. 영어 기능어를 가리는 isGenericTerm 이 이 구분을 쓴다.
+ * 것인지 다른 낱말에 이어 적힌 것인지 알 수 없다. 영어 기능어를 가리는 isEnglishFunctionWord 가 이 구분을 쓴다.
  * 읽는 범위와 정규화는 extractSearchTerms 와 같다. 한 번이라도 이어 적힌 낱말은 이어 적힌 낱말로 본다.
  */
 export function joinedTermKeys(raw: string): Set<string> {
@@ -111,7 +114,7 @@ export interface KeywordQuery {
    * 검색에 쓰는 것은 이 가운데 가려 주지 못하는 낱말을 뺀 뒤의 앞 MAX_SEARCH_TERMS 개다
    */
   terms: string[];
-  /** 다른 낱말과 공백 없이 기호로 이어 적힌 낱말, 소문자 (joinedTermKeys 의 결과) */
+  /** 다른 낱말과 '&', '/', '+' 로 이어 적힌 낱말, 소문자 (joinedTermKeys 의 결과) */
   joinedTerms: ReadonlySet<string>;
   /** query 에 단독 낱말 OR 가 있는지 (hasOrOperator 의 결과) */
   orQuery: boolean;
@@ -130,9 +133,12 @@ export function parseKeywordQuery(raw: string): KeywordQuery {
 interface QueryWord {
   /** 양끝의 '.', '-', '_' 를 뗀 낱말 */
   text: string;
-  /** 앞이나 뒤의 낱말과 공백 없이 기호로 이어 적혔는지 */
+  /** 앞이나 뒤의 낱말과 낱말을 잇는 기호로 이어 적혔는지 (WORD_JOINING_GAP) */
   joined: boolean;
 }
+
+/** 두 낱말 사이의 글자가 낱말을 잇는 기호('&', '/', '+')로만 되어 있는 경우 ('Q&A', 'on/off', 'R&D') */
+const WORD_JOINING_GAP = /^[&/+]+$/;
 
 /**
  * query 를 낱말로 나눈다 (extractSearchTerms 의 주석에 적은 규칙: 앞 MAX_KEYWORD_QUERY_LENGTH 자, NFC, 반각 변환,
@@ -152,8 +158,8 @@ function queryWords(raw: string): QueryWord[] {
       continue;
     }
     const start = match.index ?? 0;
-    // 두 낱말 사이에 공백이 하나도 없으면 기호로 이어 적은 것이다
-    const joined = previousEnd !== -1 && !/\s/u.test(text.slice(previousEnd, start));
+    // 두 낱말 사이의 글자가 낱말을 잇는 기호뿐이면 이어 적은 것이다 (공백이나 다른 기호가 끼면 따로 적은 것이다)
+    const joined = previousEnd !== -1 && WORD_JOINING_GAP.test(text.slice(previousEnd, start));
     if (joined) {
       words[words.length - 1].joined = true;
     }
@@ -212,8 +218,8 @@ const NO_JOINED_TERMS: ReadonlySet<string> = new Set();
  * 같아야 한다 ('within' 은 아니다). 한글이 붙은 꼴도 아니다: 영어 기능어 뒤에 한글이 붙은 꼴은 다른 낱말일 수
  * 있다 ('IT서비스', 'AS센터').
  *
- * query 에 따로 적힌 낱말일 때만 기능어로 본다. 다른 낱말과 이어 적힌 낱말(joinedTerms, joinedTermKeys 의 결과)은
- * 기능어가 아니다: 'Q&A' 의 'A' 는 관사가 아니고 'on/off' 의 'on' 은 전치사가 아니다.
+ * query 에 따로 적힌 낱말일 때만 기능어로 본다. 다른 낱말과 '&', '/', '+' 로 이어 적힌 낱말(joinedTerms,
+ * joinedTermKeys 의 결과)은 기능어가 아니다: 'Q&A' 의 'A' 는 관사가 아니고 'on/off' 의 'on' 은 전치사가 아니다.
  */
 export function isEnglishFunctionWord(term: string, joinedTerms: ReadonlySet<string> = NO_JOINED_TERMS): boolean {
   const key = term.toLowerCase();

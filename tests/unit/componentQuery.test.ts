@@ -359,6 +359,20 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
       // 두 글자 이상인 다른 낱말이 있으면 관사로 보고 뺀다
       expect(termsOf("a Q 관리")).toEqual({ used: ["Q", "관리"], ignored: [], dropped: ["a"], required: 2 });
     });
+
+    it("아포스트로피로 붙여 적은 영어 기능어는 검색어로 쓰지 않는다", () => {
+      // 낱말을 잇는 기호는 '&', '/', '+' 뿐이다. "What's" 의 'What' 은 영어 기능어다.
+      // 한 글자 's' 는 모든 검색어가 일치하는 행을 찾을 때 쓴다 ('login' 과 's' 가 모두 든 컴포넌트는 sec 다)
+      const question = sqlite.queryComponents({ query: "What's the login component?" });
+      expect(idsOf(question.rows)).toEqual(["sec"]);
+      expect(question.matchMode).toBe("all-terms");
+      expect(question.terms).toEqual({
+        used: ["s", "login"],
+        ignored: [],
+        dropped: ["What", "the", "component"],
+        required: 2,
+      });
+    });
   });
 
   describe("가려 주지 못하는 낱말을 빼는 조건", () => {

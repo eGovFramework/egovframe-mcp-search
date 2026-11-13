@@ -393,11 +393,23 @@ describe("가려 주지 못하는 낱말의 판정 (isEnglishFunctionWord, liste
 describe("joinedTermKeys", () => {
   const joined = (raw: string) => [...joinedTermKeys(raw)].sort();
 
-  it("앞이나 뒤의 낱말과 공백 없이 기호로 이어 적힌 낱말을 소문자로 돌려준다", () => {
+  it("앞이나 뒤의 낱말과 낱말을 잇는 기호('&', '/', '+')로 이어 적힌 낱말을 소문자로 돌려준다", () => {
     expect(joined("Q&A 관리")).toEqual(["a", "q"]);
     expect(joined("on/off 스위치")).toEqual(["off", "on"]);
-    expect(joined("JEUS,Tibero+WebLogic")).toEqual(["jeus", "tibero", "weblogic"]);
-    expect(joined("게시판(BBS)")).toEqual(["bbs", "게시판"]);
+    expect(joined("R&D 센터")).toEqual(["d", "r"]);
+    expect(joined("Tibero+WebLogic")).toEqual(["tibero", "weblogic"]);
+    // 그 기호가 이어져 있어도 같다
+    expect(joined("and/&/or 그리고 A&&B")).toEqual(["a", "and", "b", "or"]);
+  });
+
+  it("그 밖의 기호는 낱말을 잇지 않는다 (아포스트로피, 쉼표, 괄호, 따옴표, 콜론 등)", () => {
+    // "What's" 의 What 과 "Tibero,is" 의 is 는 따로 적힌 낱말이다. 이어 적힌 낱말로 보면 영어 기능어인데도 검색어로 쓰인다
+    expect(joined("What's the login component?")).toEqual([]);
+    expect(joined("Tibero,is it ok")).toEqual([]);
+    expect(joined('게시판(BBS) "is"it [on]off egov:framework MC@CMS a=b a|b a*b a#b')).toEqual([]);
+    expect(joined("JEUS,Tibero+WebLogic")).toEqual(["tibero", "weblogic"]);
+    // 잇는 기호에 다른 기호가 섞여 있어도 잇지 않는다
+    expect(joined("Q&(A) on/'off'")).toEqual([]);
   });
 
   it("공백으로 떨어져 있으면 이어 적힌 것이 아니다 (문장부호가 붙어 있어도 같다)", () => {

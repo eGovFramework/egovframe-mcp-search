@@ -139,6 +139,21 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       expect(idsOf(two.rows).sort()).toEqual([...union].sort());
     });
 
+    it("아포스트로피로 붙여 적은 영어 기능어도 검색어로 쓰지 않는다", () => {
+      // 공백이 없으면 어떤 기호든 낱말을 이은 것으로 보던 때에는 "What's" 의 'What' 이 검색어로 쓰여,
+      // 영문 설명에 'what to do today' 가 든 메모/할일관리(mtm)가 결과에 섞였다
+      const login = sqlite.queryComponents({ query: "login" });
+      const result = sqlite.queryComponents({ query: "What's the login component?" });
+      expect(result.terms?.dropped).toEqual(["What", "the", "component"]);
+      // 한 글자 's' 는 모든 검색어가 일치하는 컴포넌트를 찾을 때 함께 쓴다
+      expect(result.terms?.used).toEqual(["s", "login"]);
+      expect(result.matchMode).toBe("all-terms");
+      // login 이 든 컴포넌트만 나온다
+      expect(result.total).toBeGreaterThan(1);
+      expect(idsOf(result.rows).every((id) => idsOf(login.rows).includes(id))).toBe(true);
+      expect(idsOf(result.rows)).not.toContain("mtm");
+    });
+
     it("흔한 낱말이 섞인 문장형 질의는 가려 주는 낱말이 든 컴포넌트만 돌려준다", () => {
       // '기능' 은 컴포넌트 대부분의 설명에 들어 있다. 그 낱말만 일치한 컴포넌트까지 돌려주던 때에는
       // "게시판 기능 알려줘" 가 130건 남짓이 되고, 첫 20건 가운데 14건에 '게시판' 이 없었다
@@ -348,6 +363,20 @@ describe("동봉 지식베이스의 키워드 검색", () => {
       expect(result.terms).toEqual({ used: ["JEUS"], ignored: [], dropped: functionWords, required: 1 });
       expect(rowKeys(result)).toEqual(rowKeys(compatible("JEUS")));
       expect(result.total).toBeGreaterThan(0);
+    });
+
+    it("쉼표로 붙여 적은 영어 기능어도 검색어로 쓰지 않는다", () => {
+      // "Tibero,is it ok" 의 'is' 를 Tibero 와 이어 적은 낱말로 보던 때에는 'is' 가 검색어로 쓰여,
+      // aXis, WISE 처럼 'is' 가 든 스무 건 남짓이 Tibero 뒤에 딸려 나왔다
+      const tibero = compatible("Tibero");
+      const result = compatible("Tibero,is it ok");
+      expect(result.terms?.dropped).toEqual(["is", "it"]);
+      expect(result.terms?.used[0]).toBe("Tibero");
+      expect(result.terms?.used).not.toContain("is");
+      // Tibero 행이 맨 앞이고, 'is' 가 제품명의 일부일 뿐인 행은 없다
+      expect(tibero.total).toBeGreaterThan(0);
+      expect(rowKeys(result).slice(0, tibero.total)).toEqual(rowKeys(tibero));
+      expect(result.rows.some((row) => /^(aXis|WISE)/i.test(row.product_name))).toBe(false);
     });
 
     it("영어 기능어가 제품명의 일부와 일치한 행은 결과에 섞이지 않는다", () => {
