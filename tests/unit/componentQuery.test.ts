@@ -7,10 +7,20 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { SQLiteManager } from "../../src/database/sqliteManager.js";
 import { COMPONENTS, idsOf, seedComponents } from "./_componentFixture.js";
-import { orderByClausesOf } from "./_sqlStatements.js";
+import { connectionOf, orderByClausesOf, statementsOf } from "./_sqlStatements.js";
 import fs from "fs-extra";
 import path from "node:path";
 import os from "node:os";
+
+/** 고정 데이터에 없는 컴포넌트 하나 (검색 대상 컬럼의 값만 정하고 나머지는 cmm 의 것을 쓴다). */
+const extra = (component_id: string, name: string, name_en: string, description: string) => ({
+  ...COMPONENTS[7],
+  component_id,
+  name,
+  name_en,
+  package_name: `egovframework.com.extra.${component_id}`,
+  description,
+});
 
 describe("SQLiteManager 공통컴포넌트 조회", () => {
   let tmpDir: string;
@@ -27,7 +37,7 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     await fs.remove(tmpDir);
   });
 
-  describe("부분 일치 대체 검색", () => {
+  describe("1단계: 모든 검색어가 부분 문자열로 일치하는 컴포넌트 (all-terms)", () => {
     it("모든 검색어가 일치하는 컴포넌트가 있으면 그것만 돌려주고 matchMode 는 all-terms 다", () => {
       const result = sqlite.queryComponents({ query: "게시판 템플릿" });
       expect(idsOf(result.rows)).toEqual(["tpl"]);
@@ -35,14 +45,124 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
       expect(result.matchMode).toBe("all-terms");
     });
 
-    it("낱말 중간에 있는 검색어는 부분 문자열로 찾고 matchMode 는 any-term 이다", () => {
-      // '인증서로그인'·'공인인증서로' 의 중간이라 접두 일치("증서"*)로는 찾지 못한다
-      const result = sqlite.queryComponents({ query: "증서" });
-      expect(idsOf(result.rows)).toEqual(["sec"]);
-      expect(result.total).toBe(1);
-      expect(result.matchMode).toBe("any-term");
+    it("낱말의 가운데나 뒤쪽에 든 검색어도 찾는다", () => {
+      // 낱말 단위 접두 일치로는 '인증서로그인' 의 '증서', '게시판' 의 '시판' 을 찾지 못했다
+      const cases: Array<[string, string[]]> = [
+        ["증서", ["sec"]],
+        ["시판", ["bbs", "tpl"]],
+        ["로그인", ["sec", "uia"]],
+        ["시판 플릿", ["tpl"]],
+      ];
+      for (const [query, expected] of cases) {
+        const result = sqlite.queryComponents({ query });
+        expect(idsOf(result.rows), `query=${query}`).toEqual(expected);
+        expect(result.matchMode, `query=${query}`).toBe("all-terms");
+      }
     });
 
+    it("낱말의 앞에서 일치하는 컴포넌트가 있어도 뒤쪽에 든 컴포넌트를 빠뜨리지 않는다", () => {
+      // 접두 일치 결과가 한 건이라도 있으면 거기서 멈춰, '코드' 로는 '코드관리' 만 나오고 '공통코드' 가 빠졌다
+      sqlite.addCommonComponentsBatch([
+        extra("acr", "코드관리", "Code Management", "코드를 관리함"),
+        extra("cca", "공통코드", "Common Code", "공통으로 쓰는 값을 관리함"),
+      ]);
+      const result = sqlite.queryComponents({ query: "코드" });
+      expect(idsOf(result.rows)).toEqual(["acr", "cca"]);
+      expect(result.matchMode).toBe("all-terms");
+    });
+
+    it("많은 컴포넌트에 들어 있는 검색어도 그대로 쓴다", () => {
+      // '능을'('기능을' 의 뒤쪽)과 '공함'('제공함' 의 뒤쪽)은 일곱 컴포넌트의 설명에 들어 있다
+      const result = sqlite.queryComponents({ query: "능을 공함" });
+      expect(result.total).toBe(7);
+      expect(result.matchMode).toBe("all-terms");
+      expect(idsOf(result.rows)).not.toContain("cmm");
+    });
+
+    it("컴포넌트 ID·이름·영문명·설명·영문 설명·패키지명에서 찾는다", () => {
+      sqlite.addCommonComponentsBatch([
+        {
+          ...extra("x9-only-id", "웹로그", "Blog", "글을 올리는 기능"),
+          package_name: "egovframework.com.cop.blg",
+          description_en: "Manages personal weblog postings",
+        },
+      ]);
+      const found = (query: string) => idsOf(sqlite.queryComponents({ query }).rows);
+      expect(found("x9-only")).toEqual(["x9-only-id"]); // component_id 에만 있다
+      expect(found("반로그")).toEqual(["uia"]); // name
+      expect(found("ertificat")).toEqual(["sec"]); // name_en
+      expect(found("밀번호")).toEqual(["uia"]); // description
+      expect(found("ostings")).toEqual(["x9-only-id"]); // description_en 에만 있다
+      expect(found("tl.se")).toEqual(["sec"]); // package_name
+    });
+
+    it("카테고리 이름에서는 찾지 않는다 (카테고리는 categoryId 필터로 지정한다)", () => {
+      // '역할' 은 카테고리 '역할/권한관리' 의 이름에만 있다
+      expect(sqlite.queryComponents({ query: "역할" }).rows).toEqual([]);
+    });
+
+    it("영문자의 대소문자를 가리지 않는다", () => {
+      expect(idsOf(sqlite.queryComponents({ query: "LOGIN" }).rows)).toEqual(["sec", "uia"]);
+      expect(idsOf(sqlite.queryComponents({ query: "EGOVFRAMEWORK.COM.COP.BBS" }).rows)).toEqual(["bbs"]);
+    });
+
+    it("두 글자 이상인 검색어가 있으면 한 글자 검색어는 쓰지 않는다", () => {
+      // 'y' 는 영문명 'Authority Management' 를 쓰는 두 컴포넌트(ram, drm)에만 들어 있다.
+      // 검색어로 쓰면 '증서' 와 함께 든 컴포넌트가 없어 결과가 달라진다
+      const result = sqlite.queryComponents({ query: "x y 증서" });
+      expect(idsOf(result.rows)).toEqual(["sec"]);
+      expect(result.matchMode).toBe("all-terms");
+    });
+
+    it("모든 검색어가 한 글자이면 그대로 쓴다", () => {
+      const result = sqlite.queryComponents({ query: "y" });
+      expect(idsOf(result.rows)).toEqual(["drm", "ram"]);
+      expect(result.matchMode).toBe("all-terms");
+    });
+
+    it("FTS5 인덱스를 읽지 않는다 (인덱스가 없어도 같은 결과를 돌려준다)", () => {
+      // 1단계에서 끝나는 조회와 2단계까지 가는 조회 모두 FTS5 표를 읽지 않는다
+      for (const query of ["게시판 템플릿", "게시판을 없는말"]) {
+        const statements = statementsOf(sqlite, () => sqlite.queryComponents({ query }));
+        expect(statements.length, `query=${query}`).toBeGreaterThan(0);
+        expect(statements.filter((sql) => /MATCH|_fts/i.test(sql)), `query=${query}`).toEqual([]);
+      }
+
+      const before = sqlite.queryComponents({ query: "게시판 템플릿" });
+      connectionOf(sqlite).exec("DROP TABLE components_fts");
+      expect(sqlite.queryComponents({ query: "게시판 템플릿" })).toEqual(before);
+      expect(idsOf(before.rows)).toEqual(["tpl"]);
+    });
+
+    it("조회 중 오류는 결과 없음으로 가리지 않고 그대로 던진다", () => {
+      connectionOf(sqlite).exec("DROP TABLE component_dependencies; DROP TABLE common_components;");
+      expect(() => sqlite.queryComponents({ query: "게시판" })).toThrow(/common_components/);
+    });
+  });
+
+  describe("키워드 검색의 정렬", () => {
+    it("이름(컴포넌트 ID·이름·영문명)에 일치한 검색어가 많은 컴포넌트를 먼저 돌려준다", () => {
+      // '통계': bst 는 이름에, 새로 넣은 aaa 는 설명에만 들어 있다. 컴포넌트 ID 순으로는 aaa 가 먼저다
+      sqlite.addCommonComponentsBatch([extra("aaa", "집계", "Summary", "통계 자료를 모음")]);
+      expect(idsOf(sqlite.queryComponents({ query: "통계" }).rows)).toEqual(["bst", "aaa"]);
+    });
+
+    it("이름에 일치한 검색어 수가 같으면 컴포넌트 ID 순으로 돌려준다", () => {
+      // 적재 순서는 uia, sec, bbs, tpl, ram, drm, bst, cmm 이다
+      expect(idsOf(sqlite.queryComponents({ query: "egovframework" }).rows)).toEqual([
+        "bbs",
+        "bst",
+        "cmm",
+        "drm",
+        "ram",
+        "sec",
+        "tpl",
+        "uia",
+      ]);
+    });
+  });
+
+  describe("부분 일치 대체 검색", () => {
     it("문장으로 물어도 뜻이 있는 검색어가 일치하는 컴포넌트를 찾는다", () => {
       // 게시판: 2행 / 컴포넌트: 0행(제외) → k=1
       const result = sqlite.queryComponents({ query: "게시판 컴포넌트" });
@@ -73,48 +193,33 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
       expect(idsOf(sqlite.queryComponents({ query: "기능 게시판 없는말" }).rows)).toEqual(["bbs", "tpl"]);
       // 시판: bbs, tpl / 플릿: tpl / 통계: bst → k=3, 두 개 이상 일치해야 하므로 tpl 만 남는다
       expect(idsOf(sqlite.queryComponents({ query: "시판 플릿 통계" }).rows)).toEqual(["tpl"]);
-      // 능을('기능을' 의 중간): 7행(제외) / 공함('제공함' 의 중간): 7행(제외) → k=0
-      const nothing = sqlite.queryComponents({ query: "능을 공함" });
-      expect(nothing.rows).toEqual([]);
-      expect(nothing.total).toBe(0);
-      expect(nothing.matchMode).toBe("any-term");
     });
 
-    it("일치한 검색어 수가 많은 컴포넌트를 먼저, 같으면 컴포넌트 ID 순으로 돌려준다", () => {
-      // 시판: bbs, tpl / 플릿: tpl → tpl 은 2개, bbs 는 1개 일치
-      expect(idsOf(sqlite.queryComponents({ query: "시판 플릿" }).rows)).toEqual(["tpl", "bbs"]);
-      // 한 개씩 일치하면 ID 순
-      expect(idsOf(sqlite.queryComponents({ query: "시판 없는말" }).rows)).toEqual(["bbs", "tpl"]);
+    it("일치한 검색어 수가 많은 컴포넌트를 먼저 돌려준다 (컴포넌트 ID 순보다 앞선 기준이다)", () => {
+      // bst 는 게시물·통계·조회 세 개, bbs 는 게시물·조회 두 개가 일치한다 (네 개가 모두 든 컴포넌트는 없다).
+      // tpl 은 템플릿 하나만 일치해 기준(절반)에 못 미친다
+      const result = sqlite.queryComponents({ query: "게시물 통계 조회 템플릿" });
+      expect(idsOf(result.rows)).toEqual(["bst", "bbs"]);
+      expect(result.total).toBe(2);
+      expect(result.matchMode).toBe("any-term");
     });
 
-    it("이름·영문명·설명·패키지명에서 찾는다", () => {
-      expect(idsOf(sqlite.queryComponents({ query: "반로그" }).rows)).toEqual(["uia"]); // name
-      expect(idsOf(sqlite.queryComponents({ query: "ertificat" }).rows)).toEqual(["sec"]); // name_en
-      expect(idsOf(sqlite.queryComponents({ query: "밀번호" }).rows)).toEqual(["uia"]); // description
-      expect(idsOf(sqlite.queryComponents({ query: "tl.se" }).rows)).toEqual(["sec"]); // package_name
-    });
-
-    it("한 글자 검색어는 대체 검색에서 쓰지 않는다", () => {
-      // 'y' 는 영문명 'Authority Management' 를 쓰는 두 행(ram, drm)에 들어 있다.
-      // 검색어로 세면 '증서' 와 무관한 그 두 행이 결과에 함께 나온다
-      expect(idsOf(sqlite.queryComponents({ query: "x y 증서" }).rows)).toEqual(["sec"]);
+    it("일치한 검색어 수가 같으면 컴포넌트 ID 순으로 돌려준다", () => {
+      // 증서: sec / 시판: bbs, tpl → 함께 든 컴포넌트는 없고, 세 컴포넌트 모두 하나씩 일치한다
+      expect(idsOf(sqlite.queryComponents({ query: "증서 시판" }).rows)).toEqual(["bbs", "sec", "tpl"]);
     });
 
     it("limit 은 대체 검색 결과에도 적용하고, total 은 전체 일치 건수다", () => {
-      const result = sqlite.queryComponents({ query: "시판 플릿", limit: 1 });
-      expect(idsOf(result.rows)).toEqual(["tpl"]);
+      const result = sqlite.queryComponents({ query: "게시판 컴포넌트", limit: 1 });
+      expect(idsOf(result.rows)).toEqual(["bbs"]);
       expect(result.total).toBe(2);
-    });
-
-    it("FTS5 질의 오류가 아닌 오류는 다른 검색으로 바꾸지 않고 그대로 던진다", () => {
-      (sqlite as any).db.exec("DROP TABLE components_fts");
-      expect(() => sqlite.queryComponents({ query: "게시판" })).toThrow(/components_fts/);
+      expect(result.matchMode).toBe("any-term");
     });
   });
 
   describe("필터", () => {
     it("키워드 검색 결과에 카테고리 필터를 함께 적용한다", () => {
-      // '관리' 는 tpl(게시판), ram·drm(역할-권한관리)의 설명과 일치한다
+      // '관리' 는 ram·drm(역할-권한관리)의 이름, tpl(게시판)의 설명과 일치한다
       expect(idsOf(sqlite.queryComponents({ query: "관리" }).rows).sort()).toEqual(["drm", "ram", "tpl"]);
       expect(
         idsOf(sqlite.queryComponents({ query: "관리", filters: { categoryId: "역할-권한관리" } }).rows).sort(),
@@ -126,7 +231,7 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     });
 
     it("hasWeb, version, keyword 필터도 키워드 검색에 적용한다", () => {
-      // '게시' 로 시작하는 낱말: bbs, tpl(4.3.1), bst(5.0.0)
+      // '게시' 가 든 컴포넌트: bbs, tpl(4.3.1), bst(5.0.0)
       expect(idsOf(sqlite.queryComponents({ query: "게시" }).rows).sort()).toEqual(["bbs", "bst", "tpl"]);
       expect(idsOf(sqlite.queryComponents({ query: "게시", filters: { version: "5.0.0" } }).rows)).toEqual(["bst"]);
       expect(idsOf(sqlite.queryComponents({ query: "게시", filters: { keyword: "템플릿" } }).rows)).toEqual(["tpl"]);
@@ -467,8 +572,8 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
       // SQL 은 정렬 기준이 같은 행의 순서를 보장하지 않으므로, 실행한 문에 id 기준이 있는지를 직접 확인한다.
       const paths: Array<[string, () => unknown]> = [
         ["필터 목록", () => sqlite.queryComponents({ filters: { categoryId: "게시판" } })],
-        ["접두 일치 검색", () => sqlite.queryComponents({ query: "게시판" })],
-        ["부분 일치 대체 검색", () => sqlite.queryComponents({ query: "시판" })],
+        ["키워드 검색(all-terms)", () => sqlite.queryComponents({ query: "게시판" })],
+        ["대체 검색(any-term)", () => sqlite.queryComponents({ query: "시판 없는말" })],
       ];
       for (const [name, run] of paths) {
         const clauses = orderByClausesOf(sqlite, run);

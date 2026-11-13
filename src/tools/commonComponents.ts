@@ -122,11 +122,12 @@ export function getComponentInfo(componentId: string): {
 /**
  * 컴포넌트 검색 (키워드 검색)
  *
- * 모든 검색어가 접두 일치하는 컴포넌트를 먼저 찾고, 없으면 부분 일치 대체 검색으로 찾는다.
+ * 검색어는 컴포넌트 ID·이름·영문명·설명·영문 설명·패키지명에 부분 문자열로 들어 있으면 일치한다.
+ * 모든 검색어가 일치하는 컴포넌트를 먼저 찾고, 없으면 대체 검색으로 찾는다.
  * filters(categoryId, hasWeb, version, keyword)를 주면 검색 결과에 함께(AND) 적용한다.
  * - total: 일치하는 전체 건수 (results 는 그 가운데 앞에서부터 limit 건)
- * - matchMode: 결과를 찾은 방식 (all-terms: 모든 검색어 접두 일치, any-term: 부분 일치 대체 검색.
- *   일부 검색어만 일치하는 컴포넌트가 포함될 수 있다). 검색어가 하나도 추출되지 않으면 없다.
+ * - matchMode: 결과를 찾은 방식 (all-terms: 모든 검색어가 일치하는 컴포넌트, any-term: 그런 컴포넌트가 없어
+ *   대체 검색으로 찾은 컴포넌트. 일부 검색어만 일치한다). 검색어가 하나도 추출되지 않으면 없다.
  */
 export function searchComponents(
   query: string,

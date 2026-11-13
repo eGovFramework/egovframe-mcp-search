@@ -8,7 +8,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { getSQLiteDBPath } from '../utils/projectPath.js';
-import { buildFts5MatchQuery, extractSearchTerms } from '../utils/fts5Query.js';
+import { extractSearchTerms } from '../utils/fts5Query.js';
 import { escapeLikePattern } from '../utils/sqlLike.js';
 import { UserFacingError } from '../utils/errors.js';
 import {
@@ -304,14 +304,15 @@ export class SQLiteManager {
   }
 
   /**
-   * 전체 텍스트 검색 — 모든 검색어가 접두 일치하는 행을 배열로 돌려준다. 행에는 id 와 created_at 도 들어 있다.
+   * 키워드 검색 — 모든 검색어가 일치하는 행을 배열로 돌려준다. 행에는 id 와 created_at 도 들어 있다.
+   * 일치 규칙과 정렬은 queryCompatibleSoftware 의 1단계(all-terms)와 같다 (이름과 달리 FTS5 인덱스는 쓰지 않는다).
    *
-   * queryCompatibleSoftware 와 달리 부분 일치 대체 검색으로 넘어가지 않는다. 배열만 돌려주는 이 메서드는
-   * 결과를 찾은 방식(matchMode)을 알릴 수 없어, 대체 검색 결과를 돌려주면 호출부가 관련성이 낮은 행을
-   * 아무 표시 없이 쓰게 된다. 접두 일치 결과가 없거나 검색어가 하나도 추출되지 않으면 빈 배열을 돌려준다.
+   * queryCompatibleSoftware 와 달리 대체 검색(any-term)으로 넘어가지 않는다. 배열만 돌려주는 이 메서드는
+   * 결과를 찾은 방식(matchMode)을 알릴 수 없어, 대체 검색 결과를 돌려주면 호출부가 일부 검색어만 일치한 행을
+   * 아무 표시 없이 쓰게 된다. 모든 검색어가 일치하는 행이 없거나 검색어가 하나도 추출되지 않으면 빈 배열을 돌려준다.
    */
   fullTextSearchCompatibility(query: string, limit: number = 20): CompatibilitySoftware[] {
-    const terms = extractSearchTerms(query);
+    const terms = dropSingleCharacterTerms(extractSearchTerms(query));
     if (terms.length === 0) {
       return [];
     }
@@ -324,14 +325,13 @@ export class SQLiteManager {
    * 호환성 소프트웨어 조회 (키워드 + 필터).
    *
    * 필터는 키워드 검색과 같은 SQL 문에서 적용하고 LIMIT 은 그 뒤에 적용한다.
-   * - query 에서 검색어가 추출되면 모든 검색어가 접두 일치하는 행을 먼저 찾고(all-terms),
-   *   그런 행이 없으면 부분 일치 대체 검색(partialTermSearch)으로 찾는다(any-term). 대체 검색은
-   *   검색어의 절반 이상이 부분 문자열로 들어 있는 행을 돌려주므로, 일부 검색어만 일치하는 행도
-   *   모든 검색어가 일치하는 행도 나올 수 있다.
+   * - query 에서 검색어가 추출되면 키워드 검색(keywordSearch)으로 찾는다. 검색어는 제품명·제품 버전 표기·
+   *   업체명·분류·설명에 부분 문자열로 들어 있으면 일치한다. 모든 검색어가 일치하는 행을 먼저 찾고(all-terms),
+   *   그런 행이 없으면 대체 검색으로 찾는다(any-term).
    * - query 가 없거나 검색어가 하나도 추출되지 않으면("*", "?" 등) 필터에 맞는 행을
    *   확인일자가 최근인 순으로 돌려준다.
    * - 확인일자 순은 어느 경로에서나 같다 (COMPATIBILITY_NEWEST_FIRST): verified_date 가 날짜 꼴이 아닌 행은
-   *   맨 뒤로 간다. 키워드 검색에서는 검색 순위(또는 일치한 검색어 수)가 같은 행끼리 이 순서를 따른다.
+   *   맨 뒤로 간다. 키워드 검색에서는 일치한 검색어 수와 이름에 일치한 검색어 수가 같은 행끼리 이 순서를 따른다.
    *
    * total 은 같은 조건에 맞는 전체 건수이고, rows 는 그 가운데 offset 부터 limit 건이다.
    * rows 에는 내부용 컬럼(id, created_at)을 넣지 않는다.
@@ -413,9 +413,18 @@ export class SQLiteManager {
   /**
    * 키워드 검색 (호환성 소프트웨어와 공통컴포넌트가 함께 쓴다).
    *
-   * 1) 모든 검색어를 접두 일치 AND 로 묶은 FTS5 MATCH 로 찾는다 (allTermsSearch).
+   * 검색어가 행과 일치한다는 것은 검색어가 대상의 검색 컬럼(searchColumns) 가운데 하나에 부분 문자열로
+   * 들어 있다는 뜻이다 (LIKE. ASCII 영문자는 대소문자를 가리지 않는다). FTS5 인덱스는 쓰지 않는다:
+   * 낱말 단위 접두 일치로는 한국어 복합어의 뒤쪽이나 가운데에 든 낱말('공통코드' 의 '코드')을 찾지 못하고,
+   * 두 표 모두 수백 행이라 전체를 훑어도 느리지 않다.
+   *
+   * 한 글자 검색어는 두 글자 이상인 검색어가 있으면 쓰지 않는다 (dropSingleCharacterTerms).
+   * 1) 모든 검색어가 일치하는 행을 찾는다 (allTermsSearch).
    * 2) 필터까지 적용한 결과가 0건이면 부분 일치 대체 검색(partialTermSearch)으로 넘어간다.
    *    0건인지는 페이지가 아니라 전체 건수로 판단한다 (offset 이 끝을 넘었다고 검색 방식을 바꾸지 않는다).
+   *
+   * 두 단계 모두 일치한 검색어가 많은 행, 이름 컬럼(nameColumns)에 일치한 검색어가 많은 행, 대상의 기본 정렬,
+   * rowid 순으로 돌려준다 (selectByMatchedTerms).
    */
   private keywordSearch<Row>(
     target: KeywordSearchTarget,
@@ -423,18 +432,18 @@ export class SQLiteManager {
     filter: SqlCondition,
     page: SqlPage,
   ): { rows: Row[]; total: number; matchMode: KeywordMatchMode } {
-    const allTerms = this.allTermsSearch<Row>(target, terms, filter, page);
+    const searchable = dropSingleCharacterTerms(terms);
+
+    const allTerms = this.allTermsSearch<Row>(target, searchable, filter, page);
     if (allTerms) {
       return { ...allTerms, matchMode: 'all-terms' };
     }
-    return { ...this.partialTermSearch<Row>(target, terms, filter, page), matchMode: 'any-term' };
+    return { ...this.partialTermSearch<Row>(target, searchable, filter, page), matchMode: 'any-term' };
   }
 
   /**
-   * 접두 일치 AND 검색: 모든 검색어가 낱말의 앞부분과 일치하는 행을 FTS5 MATCH 로 찾는다.
-   *
-   * 필터까지 적용한 결과가 0건이거나 FTS5 가 MATCH 식을 해석하지 못하면 null 을 돌려준다.
-   * 그 밖의 오류(잠금, 손상, 테이블 없음 등)는 결과 없음으로 가리지 않고 그대로 던진다.
+   * 모든 검색어가 일치하는 행을 찾는다. 필터까지 적용한 결과가 0건이면 null 을 돌려준다.
+   * 조회 중 오류(잠금, 손상, 테이블 없음 등)는 결과 없음으로 가리지 않고 그대로 던진다.
    */
   private allTermsSearch<Row>(
     target: KeywordSearchTarget,
@@ -442,39 +451,66 @@ export class SQLiteManager {
     filter: SqlCondition,
     page: SqlPage,
   ): { rows: Row[]; total: number } | null {
-    const match = buildFts5MatchQuery(terms);
-    if (!match) {
+    const patterns: string[] = [];
+    for (const term of terms) {
+      const pattern = containsPattern(term);
+      // LIKE 패턴을 만들 수 없는 검색어는 어떤 행과도 일치하지 않으므로, 모든 검색어가 일치하는 행도 없다
+      if (pattern === null) {
+        return null;
+      }
+      patterns.push(pattern);
+    }
+    if (patterns.length === 0) {
       return null;
     }
 
-    const from = `FROM ${target.ftsTable} fts
-           JOIN ${target.table} ON ${target.rowid} = fts.rowid
-           ${target.joins ?? ''}
-           WHERE ${target.ftsTable} MATCH ?${filter.sql}`;
-    try {
-      const total = (
-        this.db.prepare(`SELECT COUNT(*) AS count ${from}`).get(match, ...filter.params) as { count: number }
-      ).count;
-      if (total === 0) {
-        return null;
-      }
-      // 검색 순위가 같은 행은 대상이 정한 정렬(rankTieOrder)을 따르고, 마지막에는 rowid 로 순서를 가른다
-      const rankTieOrder = target.rankTieOrder ? `${target.rankTieOrder}, ` : '';
-      const rows = this.db
-        .prepare(
-          `SELECT ${target.columns} ${from}
-             ORDER BY rank, ${rankTieOrder}${target.rowid}
-             LIMIT ? OFFSET ?`,
-        )
-        .all(match, ...filter.params, page.limit, page.offset) as Row[];
-      return { rows, total };
-    } catch (error) {
-      // MATCH 식을 FTS5 가 해석하지 못한 경우에만 결과 없음으로 본다.
-      if (!isFts5QueryError(error)) {
-        throw error;
-      }
-      return null;
+    const found = this.selectByMatchedTerms<Row>(target, patterns, patterns.length, filter, page);
+    return found.total > 0 ? found : null;
+  }
+
+  /**
+   * 검색어(LIKE 패턴) 가운데 required 개 이상이 일치하는 행을 조회한다. 필터는 같은 SQL 문에서 적용한다.
+   *
+   * 정렬: (1) 일치한 검색어 수가 많은 행, (2) 이름 컬럼에 일치한 검색어 수가 많은 행, (3) 대상의 기본 정렬,
+   * (4) rowid. 흔한 낱말만 일치한 행이나 설명에만 검색어가 든 행은 버리지 않고 뒤로 보낸다.
+   */
+  private selectByMatchedTerms<Row>(
+    target: KeywordSearchTarget,
+    patterns: string[],
+    required: number,
+    filter: SqlCondition,
+    page: SqlPage,
+  ): { rows: Row[]; total: number } {
+    // columns 가운데 하나라도 일치한 검색어의 수. 패턴은 검색어마다 컬럼 수만큼 바인딩한다.
+    const matchedCount = (columns: string[]) =>
+      patterns.map(() => `(CASE WHEN ${likeAnyColumn(columns)} THEN 1 ELSE 0 END)`).join(' + ');
+    const matchedCountParams = (columns: string[]) => patterns.flatMap((pattern) => columns.map(() => pattern));
+
+    const matchedTerms = matchedCount(target.searchColumns);
+    const from = `FROM ${target.table} ${target.joins ?? ''} WHERE (${matchedTerms}) >= ?${filter.sql}`;
+    const fromParams = [...matchedCountParams(target.searchColumns), required, ...filter.params];
+
+    const total = (this.db.prepare(`SELECT COUNT(*) AS count ${from}`).get(...fromParams) as { count: number })
+      .count;
+    if (total === 0) {
+      return { rows: [], total: 0 };
     }
+
+    const rows = this.db
+      .prepare(
+        `SELECT ${target.columns} ${from}
+         ORDER BY (${matchedTerms}) DESC, (${matchedCount(target.nameColumns)}) DESC,
+                  ${target.defaultOrder}, ${target.rowid}
+         LIMIT ? OFFSET ?`,
+      )
+      .all(
+        ...fromParams,
+        ...matchedCountParams(target.searchColumns),
+        ...matchedCountParams(target.nameColumns),
+        page.limit,
+        page.offset,
+      ) as Row[];
+    return { rows, total };
   }
 
   /**
@@ -487,7 +523,7 @@ export class SQLiteManager {
    *   (문장으로 물을 때 섞이는 군말이 일치 기준을 올려 결과를 0건으로 만들지 않게 한다)
    *
    * 남은 검색어가 k 개일 때 ceil(k/2) 개 이상 일치한 행만 돌려준다 (k 가 0 이면 빈 결과).
-   * 일치한 검색어 수가 많은 행을 먼저, 그다음은 대상의 기본 정렬을 따른다. 필터는 같은 SQL 문에서 적용한다.
+   * 정렬과 필터 적용은 selectByMatchedTerms 를 따른다.
    */
   private partialTermSearch<Row>(
     target: KeywordSearchTarget,
@@ -495,8 +531,8 @@ export class SQLiteManager {
     filter: SqlCondition,
     page: SqlPage,
   ): { rows: Row[]; total: number } {
-    const termMatches = likeAnyColumn(target.likeColumns);
-    const bindPattern = (pattern: string) => target.likeColumns.map(() => pattern);
+    const termMatches = likeAnyColumn(target.searchColumns);
+    const bindPattern = (pattern: string) => target.searchColumns.map(() => pattern);
 
     const tableRows = (
       this.db.prepare(`SELECT COUNT(*) AS count FROM ${target.table}`).get() as { count: number }
@@ -540,27 +576,7 @@ export class SQLiteManager {
     if (patterns.length === 0) {
       return { rows: [], total: 0 };
     }
-    const required = Math.ceil(patterns.length / 2);
-
-    const matchedTerms = patterns.map(() => `(CASE WHEN ${termMatches} THEN 1 ELSE 0 END)`).join(' + ');
-    const matchedTermsParams = patterns.flatMap(bindPattern);
-    const from = `FROM ${target.table} ${target.joins ?? ''} WHERE (${matchedTerms}) >= ?${filter.sql}`;
-    const fromParams = [...matchedTermsParams, required, ...filter.params];
-
-    const total = (this.db.prepare(`SELECT COUNT(*) AS count ${from}`).get(...fromParams) as { count: number })
-      .count;
-    if (total === 0) {
-      return { rows: [], total: 0 };
-    }
-
-    const rows = this.db
-      .prepare(
-        `SELECT ${target.columns} ${from}
-         ORDER BY (${matchedTerms}) DESC, ${target.defaultOrder}, ${target.rowid}
-         LIMIT ? OFFSET ?`,
-      )
-      .all(...fromParams, ...matchedTermsParams, page.limit, page.offset) as Row[];
-    return { rows, total };
+    return this.selectByMatchedTerms<Row>(target, patterns, Math.ceil(patterns.length / 2), filter, page);
   }
 
   /**
@@ -932,10 +948,9 @@ export class SQLiteManager {
    *
    * 필터(categoryId, hasWeb, version, keyword)는 키워드 검색과 같은 SQL 문에서 적용하고
    * LIMIT 은 그 뒤에 적용한다.
-   * - query 에서 검색어가 추출되면 모든 검색어가 접두 일치하는 컴포넌트를 먼저 찾고(all-terms),
-   *   그런 컴포넌트가 없으면 부분 일치 대체 검색(partialTermSearch)으로 찾는다(any-term). 대체 검색은
-   *   검색어의 절반 이상이 이름·영문명·설명·패키지명에 부분 문자열로 들어 있는 컴포넌트를 돌려주므로,
-   *   일부 검색어만 일치하는 컴포넌트도 모든 검색어가 일치하는 컴포넌트도 나올 수 있다.
+   * - query 에서 검색어가 추출되면 키워드 검색(keywordSearch)으로 찾는다. 검색어는 컴포넌트 ID·이름·영문명·
+   *   설명·영문 설명·패키지명에 부분 문자열로 들어 있으면 일치한다. 모든 검색어가 일치하는 컴포넌트를 먼저
+   *   찾고(all-terms), 그런 컴포넌트가 없으면 대체 검색으로 찾는다(any-term).
    * - query 가 없거나 검색어가 하나도 추출되지 않으면 필터에 맞는 컴포넌트를
    *   카테고리·이름 순으로 돌려준다.
    *
@@ -1148,19 +1163,17 @@ interface KeywordSearchTarget {
   table: string;
   /** 조회할 컬럼을 채우는 데 필요한 JOIN (행 수를 바꾸지 않는 것만) */
   joins?: string;
-  /** FTS5 테이블 이름 */
-  ftsTable: string;
-  /** FTS rowid 와 짝이 되는 본 테이블의 키. 정렬의 마지막 기준(동률 해소)으로도 쓴다 */
+  /** 본 테이블의 키. 정렬의 마지막 기준(동률 해소)으로 쓴다 */
   rowid: string;
-  /** 부분 일치 대체 검색이 검색어를 찾아보는 컬럼 */
-  likeColumns: string[];
+  /** 검색어를 찾아보는 컬럼. 이 가운데 하나에 검색어가 부분 문자열로 들어 있으면 그 검색어가 일치한 것이다 */
+  searchColumns: string[];
+  /** searchColumns 가운데 이름에 해당하는 컬럼. 여기에 일치한 검색어가 많은 행을 먼저 돌려준다 */
+  nameColumns: string[];
   /**
-   * 기본 정렬. 부분 일치 대체 검색에서 일치한 검색어 수 다음에 적용하고,
+   * 기본 정렬. 키워드 검색에서 일치한 검색어 수와 이름에 일치한 검색어 수 다음에 적용하고,
    * 호환성 소프트웨어는 키워드 없는 필터 조회에도 이 정렬을 쓴다
    */
   defaultOrder: string;
-  /** 접두 일치 검색에서 검색 순위(rank)가 같은 행에 적용하는 정렬. 없으면 rowid 로만 순서를 가른다 */
-  rankTieOrder?: string;
 }
 
 /**
@@ -1188,11 +1201,11 @@ const COMPATIBILITY_SEARCH: KeywordSearchTarget = {
     'cs.url',
   ].join(', '),
   table: 'compatibility_software cs',
-  ftsTable: 'compatibility_fts',
   rowid: 'cs.id',
-  likeColumns: ['cs.product_name', 'cs.vendor', 'cs.description', 'cs.category'],
+  // 제품 버전 표기(product_version, 예: 'JEUS 8')에만 든 낱말로도 찾을 수 있어야 한다
+  searchColumns: ['cs.product_name', 'cs.product_version', 'cs.vendor', 'cs.category', 'cs.description'],
+  nameColumns: ['cs.product_name', 'cs.product_version'],
   defaultOrder: COMPATIBILITY_NEWEST_FIRST,
-  rankTieOrder: COMPATIBILITY_NEWEST_FIRST,
 };
 
 /** 배열을 돌려주는 기존 메서드용: id 로 행을 구분하는 호출부가 있어 모든 컬럼을 조회한다. */
@@ -1202,9 +1215,9 @@ const COMPONENT_SEARCH: KeywordSearchTarget = {
   columns: 'c.*, cat.name as category_name',
   table: 'common_components c',
   joins: 'LEFT JOIN component_categories cat ON c.category_id = cat.category_id',
-  ftsTable: 'components_fts',
   rowid: 'c.id',
-  likeColumns: ['c.name', 'c.name_en', 'c.description', 'c.package_name'],
+  searchColumns: ['c.component_id', 'c.name', 'c.name_en', 'c.description', 'c.description_en', 'c.package_name'],
+  nameColumns: ['c.component_id', 'c.name', 'c.name_en'],
   defaultOrder: 'c.component_id',
 };
 
@@ -1269,9 +1282,19 @@ function toSqlOffset(offset: number | undefined): number {
   return Math.min(Math.max(0, Math.floor(offset)), Number.MAX_SAFE_INTEGER);
 }
 
-/** FTS5 가 MATCH 식을 해석하지 못해 낸 오류인지 판별한다. */
-function isFts5QueryError(error: unknown): boolean {
-  return error instanceof Database.SqliteError && error.message.startsWith('fts5:');
+/**
+ * 한 글자 검색어 규칙: 두 글자 이상인 검색어가 하나라도 있으면 한 글자 검색어를 뺀다.
+ * 부분 문자열로 찾으면 한 글자는 너무 많은 행과 일치한다 ('JEUS 8' 의 '8' 은 날짜나 다른 버전의 8 과도 일치한다).
+ * 모든 검색어가 한 글자이면 그대로 돌려준다. 글자 수는 코드 포인트로 센다.
+ */
+function dropSingleCharacterTerms(terms: string[]): string[] {
+  const longer = terms.filter((term) => codePointLength(term) >= 2);
+  return longer.length > 0 ? longer : terms;
+}
+
+/** 문자열의 글자 수 (코드 포인트 기준. String.length 는 UTF-16 단위라 한 글자가 2 로 나올 수 있다) */
+function codePointLength(value: string): number {
+  return Array.from(value).length;
 }
 
 /** 문자열 필터 값의 앞뒤 공백을 뗀다. 문자열이 아니거나 비어 있으면 빈 문자열. */

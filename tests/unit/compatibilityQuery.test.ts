@@ -5,10 +5,9 @@
  * 임시 디렉토리의 새 DB 만 사용한다 (knowledge-base/egovframe.db 에 의존하지 않음).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import Database from "better-sqlite3";
 import { SQLiteManager } from "../../src/database/sqliteManager.js";
 import { CATALOGUE, DATED, SAME_DAY, versionsOf } from "./_compatibilityFixture.js";
-import { orderByClausesOf } from "./_sqlStatements.js";
+import { connectionOf, orderByClausesOf, statementsOf } from "./_sqlStatements.js";
 import fs from "fs-extra";
 import path from "node:path";
 import os from "node:os";
@@ -29,20 +28,182 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     await fs.remove(tmpDir);
   });
 
-  describe("부분 일치 대체 검색", () => {
+  describe("1단계: 모든 검색어가 부분 문자열로 일치하는 행 (all-terms)", () => {
     it("모든 검색어가 일치하는 행이 있으면 그 행만 돌려주고 matchMode 는 all-terms 다", () => {
       const result = sqlite.queryCompatibleSoftware({ query: "JEUS" });
-      expect(versionsOf(result.rows).sort()).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(result.total).toBe(2);
       expect(result.matchMode).toBe("all-terms");
     });
 
-    it("낱말 중간에 있는 검색어는 부분 문자열로 찾고 matchMode 는 any-term 이다", () => {
-      // '한국오라클' 은 한 토큰이라 접두 일치("오라클"*)로는 찾지 못한다
-      const result = sqlite.queryCompatibleSoftware({ query: "오라클" });
-      expect(versionsOf(result.rows)).toEqual(["WebLogic 12c"]);
-      expect(result.matchMode).toBe("any-term");
+    it("낱말의 가운데나 뒤쪽에 든 검색어도 찾는다", () => {
+      // 낱말 단위 접두 일치로는 '한국오라클' 의 '오라클', '티맥스소프트' 의 '소프트', 'WebLogic' 의 'logic' 을 찾지 못했다
+      const cases: Array<[string, string[]]> = [
+        ["오라클", ["WebLogic 12c"]],
+        ["소프트", ["JEUS 21", "JEUS 8.5"]],
+        ["logic", ["WebLogic 12c"]],
+        ["맥스", ["JEUS 21", "Tibero 7", "JEUS 8.5"]],
+      ];
+      for (const [query, expected] of cases) {
+        const result = sqlite.queryCompatibleSoftware({ query });
+        expect(versionsOf(result.rows), `query=${query}`).toEqual(expected);
+        expect(result.matchMode, `query=${query}`).toBe("all-terms");
+      }
     });
 
+    it("많은 행에 들어 있는 검색어도 그대로 쓴다", () => {
+      // '프레임워크'('표준프레임워크' 의 뒤쪽)와 '호환' 은 여섯 행 모두의 설명에 들어 있다
+      for (const query of ["프레임워크", "호환 프레임"]) {
+        const result = sqlite.queryCompatibleSoftware({ query });
+        expect(result.total, `query=${query}`).toBe(CATALOGUE.length);
+        expect(result.matchMode, `query=${query}`).toBe("all-terms");
+      }
+    });
+
+    it("제품명·제품 버전 표기·업체명·분류·설명에서 찾는다", () => {
+      const found = (query: string) => versionsOf(sqlite.queryCompatibleSoftware({ query }).rows);
+      expect(found("WebLog")).toEqual(["WebLogic 12c"]); // product_name
+      expect(found("12c")).toEqual(["WebLogic 12c"]); // product_version 에만 있다
+      expect(found("샘플벤")).toEqual(["SampleCMS 1.0"]); // vendor
+      expect(found("DBMS")).toEqual(["Tibero 7"]); // category
+      expect(found("3.6")).toEqual(["WebLogic 12c"]); // description 에만 있다
+    });
+
+    it("프레임워크 버전·확인일자 컬럼에서는 찾지 않는다", () => {
+      // '4.2' 는 OtherCMS 의 framework_version 과 설명에 있지만, '2023-03-03' 은 verified_date 에만 있다
+      expect(sqlite.queryCompatibleSoftware({ query: "2023-03-03" }).rows).toEqual([]);
+      // framework_version 이 '4.3' 인 두 행은 설명에도 '4.3' 이 있어 찾힌다. 설명을 바꾼 행은 찾히지 않는다
+      sqlite.addCompatibilitySoftwareBatch([
+        { ...CATALOGUE[4], product_name: "NoVersionText", product_version: "NoVersionText 1.0", description: "설명 없음" },
+      ]);
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "4.3" }).rows)).toEqual(["JEUS 21", "SampleCMS 1.0"]);
+    });
+
+    it("제품 버전 표기에 든 검색어로 그 버전의 행을 가려낸다", () => {
+      // 'JEUS 21' 의 '21' 은 product_version 에만 있다
+      const result = sqlite.queryCompatibleSoftware({ query: "JEUS 21" });
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21"]);
+      expect(result.matchMode).toBe("all-terms");
+    });
+
+    it("여러 검색어는 서로 다른 컬럼에 들어 있어도 모두 일치하는 행만 돌려준다", () => {
+      // 티맥스: 업체명(JEUS 두 행, Tibero) / 4.0: 설명(JEUS 8.5, Tibero)
+      const result = sqlite.queryCompatibleSoftware({ query: "티맥스 4.0" });
+      expect(versionsOf(result.rows)).toEqual(["Tibero 7", "JEUS 8.5"]);
+      expect(result.matchMode).toBe("all-terms");
+      // 맥스 JEUS: Tibero 는 '맥스' 만 일치하므로 나오지 않는다
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "맥스 JEUS" }).rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+    });
+
+    it("영문자의 대소문자를 가리지 않는다", () => {
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "jeus" }).rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "WEBLOGIC 12C" }).rows)).toEqual(["WebLogic 12c"]);
+    });
+
+    it("검색어의 LIKE 와일드카드는 글자 그대로 비교한다", () => {
+      // '_' 가 와일드카드였다면 '티맥스소프트' 가 일치했을 것
+      expect(sqlite.queryCompatibleSoftware({ query: "티맥_소프트" }).rows).toEqual([]);
+      // '%' 는 구분자라 검색어에 남지 않는다 ('맥', '소프트' → '소프트' 만 쓴다)
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "맥%소프트" }).rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+    });
+
+    it("limit 과 total 은 일치한 전체 행을 기준으로 한다", () => {
+      const result = sqlite.queryCompatibleSoftware({ query: "맥스", limit: 1 });
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21"]);
+      expect(result.total).toBe(3);
+    });
+
+    it("FTS5 인덱스를 읽지 않는다 (인덱스가 없어도 같은 결과를 돌려준다)", () => {
+      // 1단계에서 끝나는 조회와 2단계까지 가는 조회 모두 FTS5 표를 읽지 않는다
+      for (const query of ["JEUS 티맥스", "JEUS Tibero 없는말은"]) {
+        const statements = statementsOf(sqlite, () => sqlite.queryCompatibleSoftware({ query }));
+        expect(statements.length, `query=${query}`).toBeGreaterThan(0);
+        expect(statements.filter((sql) => /MATCH|_fts/i.test(sql)), `query=${query}`).toEqual([]);
+      }
+
+      const before = sqlite.queryCompatibleSoftware({ query: "JEUS 티맥스" });
+      connectionOf(sqlite).exec("DROP TABLE compatibility_fts");
+      const after = sqlite.queryCompatibleSoftware({ query: "JEUS 티맥스" });
+      expect(versionsOf(after.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(after).toEqual(before);
+    });
+
+    it("조회 중 오류는 결과 없음으로 가리지 않고 그대로 던진다", () => {
+      connectionOf(sqlite).exec("DROP TABLE compatibility_software");
+      expect(() => sqlite.queryCompatibleSoftware({ query: "JEUS" })).toThrow(/compatibility_software/);
+    });
+  });
+
+  describe("한 글자 검색어", () => {
+    it("두 글자 이상인 검색어가 있으면 한 글자 검색어는 쓰지 않는다", () => {
+      // '8' 을 쓰면 설명이나 버전 표기에 8 이 든 JEUS 8.5 만 남는다
+      const versioned = sqlite.queryCompatibleSoftware({ query: "JEUS 8" });
+      expect(versionsOf(versioned.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
+      expect(versioned.matchMode).toBe("all-terms");
+      // T 와 M 은 각각 세 행(Tibero, SampleCMS, OtherCMS)에 들어 있지만 WebLogic 에는 없다
+      const mixed = sqlite.queryCompatibleSoftware({ query: "T M 오라클" });
+      expect(versionsOf(mixed.rows)).toEqual(["WebLogic 12c"]);
+      expect(mixed.matchMode).toBe("all-terms");
+    });
+
+    it("모든 검색어가 한 글자이면 그대로 쓴다", () => {
+      // T 와 M 이 모두 든 행: Tibero('Tibero', 'DBMS'), SampleCMS('Sample', 'Solution'), OtherCMS('Other', 'CMS')
+      const result = sqlite.queryCompatibleSoftware({ query: "T M" });
+      expect(versionsOf(result.rows).sort()).toEqual(["OtherCMS 2.0", "SampleCMS 1.0", "Tibero 7"]);
+      expect(result.matchMode).toBe("all-terms");
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "7" }).rows)).toEqual(["Tibero 7"]);
+    });
+
+    it("글자 수는 코드 포인트로 센다 (UTF-16 두 단위로 표현되는 한 글자도 한 글자다)", () => {
+      // '𠀀', '𠀁' 는 한 글자지만 String.length 는 2 다
+      expect("𠀀".length).toBe(2);
+      // 두 글자가 설명에 들어 있는 행을 둔다. 두 글자를 검색어로 쓰면 '오라클' 까지 든 행이 없어
+      // 2단계로 넘어가고, 세 검색어 가운데 둘이 일치하는 이 두 행이 WebLogic 대신 나온다
+      sqlite.addCompatibilitySoftwareBatch(
+        ["RareA", "RareB"].map((product_name) => ({
+          ...CATALOGUE[5],
+          product_name,
+          product_version: `${product_name} 1.0`,
+          description: "𠀀 𠀁 표준프레임워크 4.2 호환 확인",
+        })),
+      );
+      const result = sqlite.queryCompatibleSoftware({ query: "𠀀 𠀁 오라클" });
+      expect(versionsOf(result.rows)).toEqual(["WebLogic 12c"]);
+    });
+  });
+
+  describe("키워드 검색의 정렬", () => {
+    it("이름(제품명·제품 버전 표기)에 일치한 검색어가 많은 행을 먼저 돌려준다", () => {
+      // 분류에만 'CMS' 가 든 행은 확인일자가 가장 최근이어도 이름에 'CMS' 가 든 행 뒤에 온다
+      sqlite.addCompatibilitySoftwareBatch([
+        { ...CATALOGUE[4], product_name: "Portal X", product_version: "Portal X 1.0", verified_date: "2026-01-01" },
+      ]);
+      const result = sqlite.queryCompatibleSoftware({ query: "CMS" });
+      expect(versionsOf(result.rows)).toEqual(["SampleCMS 1.0", "OtherCMS 2.0", "Portal X 1.0"]);
+      expect(result.matchMode).toBe("all-terms");
+    });
+
+    it("이름에 일치한 검색어 수는 검색어마다 따로 센다", () => {
+      // 'T M': OtherCMS 는 이름에 둘 다, SampleCMS('m')와 Tibero('T')는 하나씩 들어 있다.
+      // 이름에 일치한 수가 같은 SampleCMS 와 Tibero 는 확인일자가 최근인 순이다
+      const result = sqlite.queryCompatibleSoftware({ query: "T M" });
+      expect(versionsOf(result.rows)).toEqual(["OtherCMS 2.0", "SampleCMS 1.0", "Tibero 7"]);
+    });
+
+    it("이름에 일치한 검색어 수가 같으면 확인일자가 최근인 행을 먼저 돌려준다", () => {
+      // 여섯 행 모두 설명에만 '호환' 이 들어 있다
+      expect(versionsOf(sqlite.queryCompatibleSoftware({ query: "호환" }).rows)).toEqual([
+        "JEUS 21",
+        "SampleCMS 1.0",
+        "OtherCMS 2.0",
+        "Tibero 7",
+        "JEUS 8.5",
+        "WebLogic 12c",
+      ]);
+    });
+  });
+
+  describe("부분 일치 대체 검색", () => {
     it("절반을 넘는 행에 들어 있는 검색어는 빼고, 남은 검색어로 찾는다", () => {
       // 호환: 6행 모두(제외) / JEUS: 2행 / 여부: 0행(제외) → k=1
       const result = sqlite.queryCompatibleSoftware({ query: "JEUS 호환 여부" });
@@ -80,82 +241,36 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       });
     });
 
-    it("일치한 검색어 수가 많은 행을 먼저, 같으면 확인일자가 최근인 행을 먼저 돌려준다", () => {
-      // 맥스: JEUS 두 행과 Tibero / JEUS: JEUS 두 행 → JEUS 두 행은 2개, Tibero 는 1개 일치
-      const result = sqlite.queryCompatibleSoftware({ query: "맥스 JEUS" });
-      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "JEUS 8.5", "Tibero 7"]);
+    it("일치한 검색어 수가 많은 행을 먼저 돌려준다 (확인일자보다 앞선 기준이다)", () => {
+      // JEUS 8.5 는 JEUS·8.5·4.0 세 개, Tibero 7 은 Tibero·4.0 두 개가 일치한다 (네 개가 모두 든 행은 없다).
+      // 확인일자는 Tibero 7 이 더 최근이다. JEUS 21 은 하나만 일치해 기준(절반)에 못 미친다
+      const result = sqlite.queryCompatibleSoftware({ query: "JEUS 8.5 Tibero 4.0" });
+      expect(versionsOf(result.rows)).toEqual(["JEUS 8.5", "Tibero 7"]);
+      expect(result.total).toBe(2);
       expect(result.matchMode).toBe("any-term");
     });
 
-    it("변별력 있는 검색어가 하나도 남지 않으면 빈 결과를 돌려준다", () => {
-      // 호환: 6행 모두 / 프레임: 6행 모두('표준프레임워크' 의 중간) → k=0
-      const result = sqlite.queryCompatibleSoftware({ query: "호환 프레임" });
-      expect(result.rows).toEqual([]);
+    it("일치한 검색어 수가 같으면 확인일자가 최근인 행을 먼저 돌려준다", () => {
+      // JEUS 와 Tibero 가 함께 든 행은 없다. 세 행 모두 하나씩 일치한다
+      const result = sqlite.queryCompatibleSoftware({ query: "JEUS Tibero" });
+      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "Tibero 7", "JEUS 8.5"]);
       expect(result.matchMode).toBe("any-term");
-    });
-
-    it("한 글자 검색어는 대체 검색에서 쓰지 않는다", () => {
-      // T 와 M 은 각각 3행(Tibero, SampleCMS, OtherCMS)에 들어 있다. 검색어로 세면 k=3 이 되어
-      // 그 세 행이 나오고, '오라클' 하나만 일치하는 WebLogic 이 탈락한다
-      const result = sqlite.queryCompatibleSoftware({ query: "T M 오라클" });
-      expect(versionsOf(result.rows)).toEqual(["WebLogic 12c"]);
-    });
-
-    it("글자 수는 코드 포인트로 센다 (UTF-16 두 단위로 표현되는 한 글자도 한 글자다)", () => {
-      // '𠀀', '𠀁' 는 한 글자지만 String.length 는 2 다
-      expect("𠀀".length).toBe(2);
-      // 두 글자가 설명에 들어 있는 행을 둔다. 두 글자를 검색어로 세면 k=3 이 되어
-      // 이 두 행이 나오고, '오라클' 하나만 일치하는 WebLogic 이 탈락한다
-      sqlite.addCompatibilitySoftwareBatch(
-        ["RareA", "RareB"].map((product_name) => ({
-          ...CATALOGUE[5],
-          product_name,
-          product_version: `${product_name} 1.0`,
-          description: "𠀀 𠀁 표준프레임워크 4.2 호환 확인",
-        })),
-      );
-      const result = sqlite.queryCompatibleSoftware({ query: "𠀀 𠀁 오라클" });
-      expect(versionsOf(result.rows)).toEqual(["WebLogic 12c"]);
-    });
-
-    it("검색어의 LIKE 와일드카드는 글자 그대로 비교한다", () => {
-      // '_' 가 와일드카드였다면 '티맥스소프트' 가 일치했을 것
-      expect(sqlite.queryCompatibleSoftware({ query: "티맥_소프트" }).rows).toEqual([]);
     });
 
     it("limit 은 대체 검색 결과에도 적용된다", () => {
-      const result = sqlite.queryCompatibleSoftware({ query: "맥스 JEUS", limit: 1 });
+      const result = sqlite.queryCompatibleSoftware({ query: "JEUS Tibero", limit: 1 });
       expect(versionsOf(result.rows)).toEqual(["JEUS 21"]);
+      expect(result.total).toBe(3);
     });
 
-    it("LIKE 패턴 길이 한도를 넘는 검색어가 있어도 오류 없이 처리한다", () => {
-      const huge = "가".repeat(20000); // UTF-8 60,000 바이트 — SQLite LIKE 패턴 한도(50,000)를 넘는다
+    it("아주 긴 검색어가 있어도 오류 없이 처리한다", () => {
+      // query 는 앞 2,000자만 읽으므로 검색어의 LIKE 패턴이 SQLite 의 길이 한도(50,000바이트)를 넘지 않는다
+      const huge = "가".repeat(20000);
       expect(sqlite.queryCompatibleSoftware({ query: huge }).rows).toEqual([]);
-      // 한도를 넘는 검색어는 어떤 행과도 일치할 수 없으므로 세지 않는다 (k=1)
+      // 어떤 행과도 일치하지 않는 긴 검색어는 세지 않는다 (k=1)
       expect(versionsOf(sqlite.queryCompatibleSoftware({ query: `오라클 ${huge}` }).rows)).toEqual([
         "WebLogic 12c",
       ]);
-    });
-
-    it("FTS5 가 MATCH 식을 해석하지 못하면 부분 일치 검색으로 넘어간다", () => {
-      // 지금의 MATCH 식 조립으로는 구문 오류가 나지 않으므로, 오류를 흉내 내어 안전망을 확인한다
-      const db = (sqlite as any).db;
-      const prepare = db.prepare.bind(db);
-      vi.spyOn(db, "prepare").mockImplementation((sql: unknown) => {
-        if (String(sql).includes("MATCH")) {
-          throw new Database.SqliteError('fts5: syntax error near "?"', "SQLITE_ERROR");
-        }
-        return prepare(sql);
-      });
-
-      const result = sqlite.queryCompatibleSoftware({ query: "JEUS" });
-      expect(versionsOf(result.rows)).toEqual(["JEUS 21", "JEUS 8.5"]);
-      expect(result.matchMode).toBe("any-term");
-    });
-
-    it("FTS5 질의 오류가 아닌 오류는 다른 검색으로 바꾸지 않고 그대로 던진다", () => {
-      (sqlite as any).db.exec("DROP TABLE compatibility_fts");
-      expect(() => sqlite.queryCompatibleSoftware({ query: "JEUS" })).toThrow(/compatibility_fts/);
     });
   });
 
@@ -387,8 +502,8 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     });
 
     it("부분 일치 대체 검색(any-term)에도 total 과 offset 을 적용한다", () => {
-      const result = sqlite.queryCompatibleSoftware({ query: "맥스 JEUS", limit: 1, offset: 2 });
-      expect(versionsOf(result.rows)).toEqual(["Tibero 7"]);
+      const result = sqlite.queryCompatibleSoftware({ query: "JEUS Tibero", limit: 1, offset: 2 });
+      expect(versionsOf(result.rows)).toEqual(["JEUS 8.5"]);
       expect(result.total).toBe(3);
       expect(result.matchMode).toBe("any-term");
     });
@@ -468,14 +583,15 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(versionsOf(paged)).toEqual(NEWEST_FIRST);
     });
 
-    it("접두 일치 검색에서 검색 순위가 같은 행도 같은 순서를 따른다", () => {
+    it("키워드 검색(all-terms)에서 일치한 검색어 수가 같은 행도 같은 순서를 따른다", () => {
       const result = sqlite.queryCompatibleSoftware({ query: "Dated" });
       expect(result.matchMode).toBe("all-terms");
       expect(versionsOf(result.rows)).toEqual(NEWEST_FIRST);
     });
 
-    it("부분 일치 대체 검색에서 일치한 검색어 수가 같은 행도 같은 순서를 따른다", () => {
-      const result = sqlite.queryCompatibleSoftware({ query: "ated" });
+    it("대체 검색(any-term)에서 일치한 검색어 수가 같은 행도 같은 순서를 따른다", () => {
+      // 'ated' 는 Dated 네 행에만 있고, '없는말' 은 어느 행에도 없다
+      const result = sqlite.queryCompatibleSoftware({ query: "ated 없는말" });
       expect(result.matchMode).toBe("any-term");
       expect(versionsOf(result.rows)).toEqual(NEWEST_FIRST);
     });
@@ -530,7 +646,7 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(versionsOf(sqlite.searchCompatibleSoftware(filters))).toEqual(BY_ID);
     });
 
-    it("접두 일치 검색은 검색 순위와 확인일자가 같은 행을 id 순으로 돌려준다", () => {
+    it("키워드 검색(all-terms)은 일치한 검색어 수와 확인일자가 같은 행을 id 순으로 돌려준다", () => {
       const result = sqlite.queryCompatibleSoftware({ query: "Tied", filters: { minLevel: 1 } });
       expect(result.matchMode).toBe("all-terms");
       expect(versionsOf(result.rows)).toEqual(BY_ID);
@@ -541,25 +657,27 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(versionsOf(sqlite.fullTextSearchCompatibility("Tied"))).toEqual(BY_ID);
     });
 
-    it("부분 일치 대체 검색은 일치한 검색어 수와 확인일자가 같은 행을 id 순으로 돌려준다", () => {
-      const result = sqlite.queryCompatibleSoftware({ query: "ied", filters: { minLevel: 1 } });
+    it("대체 검색(any-term)은 일치한 검색어 수와 확인일자가 같은 행을 id 순으로 돌려준다", () => {
+      // 'ied' 는 Tied 네 행에만 있고, '없는말' 은 어느 행에도 없다
+      const result = sqlite.queryCompatibleSoftware({ query: "ied 없는말", filters: { minLevel: 1 } });
       expect(result.matchMode).toBe("any-term");
       expect(versionsOf(result.rows)).toEqual(BY_ID);
       const paged = [0, 1, 2, 3].flatMap(
-        (offset) => sqlite.queryCompatibleSoftware({ query: "ied", filters: { minLevel: 1 }, limit: 1, offset }).rows,
+        (offset) =>
+          sqlite.queryCompatibleSoftware({ query: "ied 없는말", filters: { minLevel: 1 }, limit: 1, offset }).rows,
       );
       expect(versionsOf(paged)).toEqual(BY_ID);
     });
 
     it("행을 돌려주는 조회 문은 세 경로 모두 정렬의 마지막 기준으로 id 를 둔다", () => {
-      // 지금의 SQLite 는 정렬 기준이 모두 같은 행을 읽은 순서대로 내고, 접두 일치 검색에서는 FTS5 가 행을
-      // rowid(= id) 순으로 읽는다. 그래서 그 경로는 id 기준을 빼도 결과가 달라지지 않아, 위 테스트처럼 결과만
-      // 봐서는 빠진 것을 알 수 없다. SQL 은 정렬 기준이 같은 행의 순서를 보장하지 않으므로, 실행한 문에
-      // id 기준이 있는지를 직접 확인한다.
+      // 지금의 SQLite 는 정렬 기준이 모두 같은 행을 읽은 순서대로 내고, 필터가 없으면 표를 rowid(= id) 순으로
+      // 읽는다. 그래서 그 경로는 id 기준을 빼도 결과가 달라지지 않아, 위 테스트처럼 결과만 봐서는 빠진 것을
+      // 알 수 없다. SQL 은 정렬 기준이 같은 행의 순서를 보장하지 않으므로, 실행한 문에 id 기준이 있는지를
+      // 직접 확인한다.
       const paths: Array<[string, () => unknown]> = [
         ["필터 조회", () => sqlite.queryCompatibleSoftware({ filters: { category: "Tie Check" } })],
-        ["접두 일치 검색", () => sqlite.queryCompatibleSoftware({ query: "Tied" })],
-        ["부분 일치 대체 검색", () => sqlite.queryCompatibleSoftware({ query: "ied" })],
+        ["키워드 검색(all-terms)", () => sqlite.queryCompatibleSoftware({ query: "Tied" })],
+        ["대체 검색(any-term)", () => sqlite.queryCompatibleSoftware({ query: "ied 없는말" })],
       ];
       for (const [name, run] of paths) {
         const clauses = orderByClausesOf(sqlite, run);
@@ -585,7 +703,7 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
     it("내부용 id 와 created_at 을 빼고 정해진 컬럼만 돌려준다", () => {
       const listed = sqlite.queryCompatibleSoftware({ filters: { category: "WAS" } });
       const allTerms = sqlite.queryCompatibleSoftware({ query: "JEUS" });
-      const anyTerm = sqlite.queryCompatibleSoftware({ query: "오라클" });
+      const anyTerm = sqlite.queryCompatibleSoftware({ query: "오라클 없는말" });
       expect(allTerms.matchMode).toBe("all-terms");
       expect(anyTerm.matchMode).toBe("any-term");
 
@@ -623,16 +741,22 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
   });
 
   describe("fullTextSearchCompatibility (배열을 돌려주는 기존 메서드)", () => {
-    it("모든 검색어가 접두 일치하는 행을 배열로 돌려준다", () => {
-      expect(versionsOf(sqlite.fullTextSearchCompatibility("JEUS")).sort()).toEqual(["JEUS 21", "JEUS 8.5"]);
+    it("모든 검색어가 일치하는 행을 배열로 돌려준다", () => {
+      expect(versionsOf(sqlite.fullTextSearchCompatibility("JEUS"))).toEqual(["JEUS 21", "JEUS 8.5"]);
       expect(versionsOf(sqlite.fullTextSearchCompatibility("티맥스 Tibero"))).toEqual(["Tibero 7"]);
       expect(sqlite.fullTextSearchCompatibility("표준프레임워크", 2)).toHaveLength(2);
     });
 
-    it("접두 일치 결과가 없으면 부분 일치 대체 검색 결과를 돌려주지 않는다", () => {
+    it("조회와 같은 규칙으로 찾는다 (낱말의 가운데, 제품 버전 표기, 한 글자 검색어)", () => {
+      expect(versionsOf(sqlite.fullTextSearchCompatibility("오라클"))).toEqual(["WebLogic 12c"]);
+      expect(versionsOf(sqlite.fullTextSearchCompatibility("JEUS 21"))).toEqual(["JEUS 21"]);
+      expect(versionsOf(sqlite.fullTextSearchCompatibility("JEUS 8"))).toEqual(["JEUS 21", "JEUS 8.5"]);
+    });
+
+    it("모든 검색어가 일치하는 행이 없으면 대체 검색 결과를 돌려주지 않는다", () => {
       // 이 메서드는 결과를 찾은 방식(matchMode)을 알릴 수 없다. 대체 검색 결과를 섞어 돌려주면
-      // 통합 검색의 호출부가 관련성이 낮은 제품을 아무 표시 없이 싣게 된다.
-      for (const query of ["오라클", "맥스 JEUS", "JEUS 호환 여부"]) {
+      // 통합 검색의 호출부가 일부 검색어만 일치한 제품을 아무 표시 없이 싣게 된다.
+      for (const query of ["JEUS Tibero", "JEUS 호환 여부", "오라클 제품 문의"]) {
         const fallback = sqlite.queryCompatibleSoftware({ query });
         expect(fallback.matchMode, `query=${query}`).toBe("any-term");
         expect(fallback.rows.length, `query=${query}`).toBeGreaterThan(0);
@@ -641,22 +765,9 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       }
     });
 
-    it("FTS5 가 MATCH 식을 해석하지 못하면 빈 배열을 돌려준다", () => {
-      const db = (sqlite as any).db;
-      const prepare = db.prepare.bind(db);
-      vi.spyOn(db, "prepare").mockImplementation((sql: unknown) => {
-        if (String(sql).includes("MATCH")) {
-          throw new Database.SqliteError('fts5: syntax error near "?"', "SQLITE_ERROR");
-        }
-        return prepare(sql);
-      });
-
-      expect(sqlite.fullTextSearchCompatibility("JEUS")).toEqual([]);
-    });
-
-    it("FTS5 질의 오류가 아닌 오류는 그대로 던진다", () => {
-      (sqlite as any).db.exec("DROP TABLE compatibility_fts");
-      expect(() => sqlite.fullTextSearchCompatibility("JEUS")).toThrow(/compatibility_fts/);
+    it("조회 중 오류는 빈 배열로 가리지 않고 그대로 던진다", () => {
+      connectionOf(sqlite).exec("DROP TABLE compatibility_software");
+      expect(() => sqlite.fullTextSearchCompatibility("JEUS")).toThrow(/compatibility_software/);
     });
 
     it("검색어가 하나도 추출되지 않으면 빈 배열을 돌려준다", () => {
