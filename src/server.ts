@@ -185,7 +185,11 @@ const filtersSchema = z.strictObject({
     .describe(
       'compatibility: eGovFrame version as a string in major.minor form, e.g. "4.3" or "3.10" ("v4.3" and "4.3.0" are normalized; a JSON number is rejected because 3.10 would become 3.1). When no row matches, the response lists the available versions.',
     ),
-  vendor: filterString().optional().describe("compatibility: substring of the vendor name."),
+  vendor: filterString()
+    .optional()
+    .describe(
+      "compatibility: substring of the vendor name. Corporate markers (㈜, (주), 주식회사) and spaces are ignored on both sides, so every spelling of one vendor matches.",
+    ),
   productName: filterString()
     .optional()
     .describe('compatibility: substring of the product name or of the product version label, e.g. "JEUS" or "JEUS 8.5".'),
@@ -195,7 +199,16 @@ const filtersSchema = z.strictObject({
     .min(1)
     .max(2)
     .optional()
-    .describe("compatibility: minimum compatibility level (1 or 2)."),
+    .describe(
+      "compatibility: minimum compatibility level (1 or 2). It is a lower bound, so 1 matches every row; for an exact level use filters.level.",
+    ),
+  level: z
+    .number()
+    .int()
+    .min(1)
+    .max(2)
+    .optional()
+    .describe("compatibility: exact compatibility level (1 or 2). When level and minLevel are both given, both apply."),
   includeKnowledge: z
     .boolean()
     .optional()
@@ -240,7 +253,7 @@ server.registerTool(
         ),
       scope: absentIfEmpty(z.enum(SEARCH_SCOPES).optional())
         .describe(
-          "Search source. guide: official Developer Guide (the index holds little of the per-component common-component manuals, so look components up with scope components). knowledge: portal Q&A / FAQ / application guide. components: common components. compatibility: compatible software catalog. all: every source at once. auto (default) infers the source: an action or a component filter (componentId, componentIds, filePath, dbType, table, categoryId, hasWeb) → components; a compatibility filter (frameworkVersion, vendor, productName, minLevel, includeKnowledge, or a category that names a software category) → compatibility; layer, chunkId, or a category that names a guide category → guide; a knowledge filter (type, tags, minImportance, verifiedOnly, sort) → knowledge; otherwise a query searches all sources and a call without query returns the component category overview (or, when only a category is given, the compatibility list, which names the valid categories). Filter values equal to the default (includeKnowledge false, verifiedOnly false, sort relevance, minImportance 1) do not select a source. An explicit scope is always used as given. With all, each filter is applied only to the source it belongs to and the knowledge section carries excerpts.",
+          "Search source. guide: official Developer Guide (the index holds little of the per-component common-component manuals, so look components up with scope components). knowledge: portal Q&A / FAQ / application guide. components: common components. compatibility: compatible software catalog. all: every source at once. auto (default) infers the source: an action or a component filter (componentId, componentIds, filePath, dbType, table, categoryId, hasWeb) → components; a compatibility filter (frameworkVersion, vendor, productName, minLevel, level, includeKnowledge, or a category that names a software category) → compatibility; layer, chunkId, or a category that names a guide category → guide; a knowledge filter (type, tags, minImportance, verifiedOnly, sort) → knowledge; otherwise a query searches all sources and a call without query returns the component category overview (or, when only a category is given, the compatibility list, which names the valid categories). Filter values equal to the default (includeKnowledge false, verifiedOnly false, sort relevance, minImportance 1) do not select a source. An explicit scope is always used as given. With all, each filter is applied only to the source it belongs to and the knowledge section carries excerpts.",
         ),
       action: absentIfEmpty(z.enum(COMPONENT_ACTIONS).optional())
         .describe(

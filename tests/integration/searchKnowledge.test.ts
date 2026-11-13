@@ -774,6 +774,15 @@ describe("integration — egov_search_knowledge 공통컴포넌트 조회", () =
     expect(ignored).not.toContain("게시판");
   });
 
+  it("대체 검색 안내는 쓴 검색어와 실제로 적용한 일치 기준을 밝힌다", async () => {
+    // 세 낱말이 함께 든 컴포넌트도, 둘이 함께 든 컴포넌트도 없어 기준이 1 까지 내려간다
+    const res = await search({ scope: "components", query: "증서 통계 권한관리" });
+    expect(res.isError).toBe(false);
+    const note = res.text.split("\n").find((line) => line.includes("모든 검색어가 들어 있는 항목이 없어")) ?? "";
+    expect(note).toContain("검색어 3개 가운데 1개 이상");
+    expect(note).toContain("(검색어: 증서, 통계, 권한관리)");
+  });
+
   it("검색어를 추출할 수 없는 query 는 없는 것으로 보고 필터 목록을 돌려준다", async () => {
     const res = await search({ scope: "components", query: "*", filters: { categoryId: "로그인" } });
     expect(res.isError).toBe(false);
@@ -875,6 +884,49 @@ describe("integration — egov_search_knowledge 호환 소프트웨어 조회", 
     const firstNames = first.software.map((s: any) => `${s.product_name}|${s.product_version}|${s.framework_version}`);
     const secondNames = second.software.map((s: any) => `${s.product_name}|${s.product_version}|${s.framework_version}`);
     expect(secondNames.filter((name: string) => firstNames.includes(name))).toEqual([]);
+  });
+
+  it("filters.level 은 그 호환성 레벨의 제품만 돌려준다 (scope 를 생략해도 compatibility 로 처리한다)", async () => {
+    const res = await search({ filters: { level: 1 }, limit: 100 });
+    expect(res.isError).toBe(false);
+    const body = parseJsonBlock(res.text);
+    expect(body.filters.level).toBe(1);
+    expect(body.total).toBeGreaterThan(0);
+    expect(new Set(body.software.map((s: any) => s.compatibility_level))).toEqual(new Set([1]));
+    expect(res.text).not.toContain("적용되지 않아 무시한 필터");
+
+    // minLevel 1 은 '1 이상' 이라 전체가 나온다. level 1 은 그보다 적다
+    const atLeast = parseJsonBlock((await search({ scope: "compatibility", filters: { minLevel: 1 }, limit: 1 })).text);
+    expect(body.total).toBeLessThan(atLeast.total);
+  });
+
+  it("level 에 1, 2 가 아닌 값을 주면 입력 검증 오류다", async () => {
+    const res = await search({ scope: "compatibility", filters: { level: 3 } });
+    expect(res.isError).toBe(true);
+    expect(res.text).toContain("level");
+  });
+
+  it("제품명을 나열해 모든 검색어가 든 행이 없으면, 쓴 검색어와 낮춘 일치 기준을 함께 돌려준다", async () => {
+    const res = await search({ scope: "compatibility", query: "JEUS Tibero WebLogic", limit: 50 });
+    expect(res.isError).toBe(false);
+    const body = parseJsonBlock(res.text);
+    expect(body.matchMode).toBe("any-term");
+    expect(body.usedTerms).toEqual(["JEUS", "Tibero", "WebLogic"]);
+    expect(body.requiredMatches).toBe(1);
+    const names = new Set(body.software.map((s: any) => s.product_name));
+    expect(names.has("JEUS")).toBe(true);
+    expect(names.has("Tibero")).toBe(true);
+  });
+
+  it("vendor 필터는 법인 표기가 달라도 같은 업체의 제품을 모두 돌려준다", async () => {
+    const totals = [];
+    for (const vendor of ["(주)아이액츠", "㈜아이액츠", "주식회사 아이액츠", "아이액츠"]) {
+      const body = parseJsonBlock((await search({ scope: "compatibility", filters: { vendor } })).text);
+      expect(body.filters.vendor, vendor).toBe(vendor);
+      totals.push(body.total);
+    }
+    expect(totals[0]).toBeGreaterThan(1);
+    expect(new Set(totals).size).toBe(1);
   });
 });
 
@@ -1169,6 +1221,20 @@ describe("integration — egov_search_knowledge 개발자 지식·통합 검색"
     expect(res.text).not.toContain("filters.type");
   });
 
+  it.skipIf(!hasEmbeddingModel())(
+    "knowledgeScope all 의 호환 소프트웨어가 limit 에서 잘리면 전체 건수와 나머지를 보는 방법을 알린다",
+    async () => {
+      const res = await search({ scope: "knowledge", query: "CMS", filters: { knowledgeScope: "all" }, limit: 2 });
+      expect(res.isError).toBe(false);
+      const body = parseJsonBlock(res.text);
+      expect(body.compatibility).toHaveLength(2);
+      expect(body.compatibilityTotal).toBeGreaterThan(2);
+      const note = res.text.split("\n").find((line) => line.includes("호환 소프트웨어는 전체")) ?? "";
+      expect(note).toContain(`전체 ${body.compatibilityTotal}건 중 2건`);
+      expect(note).toContain('scope: "compatibility"');
+    },
+  );
+
   it.skipIf(!hasEmbeddingModel())("통합 검색의 개발자 지식 섹션은 id 와 본문 발췌를 싣는다", async () => {
     const res = await search({ scope: "all", query: "로그인이 안됩니다" });
     expect(res.isError).toBe(false);
@@ -1272,6 +1338,7 @@ describe("integration — egov_search_knowledge 공개 스키마", () => {
       "dbType",
       "frameworkVersion",
       "minLevel",
+      "level",
       "includeKnowledge",
       "table",
       "chunkId",

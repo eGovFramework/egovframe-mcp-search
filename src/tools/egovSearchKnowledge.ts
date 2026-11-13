@@ -140,6 +140,7 @@ const COMPATIBILITY_USED_FILTER_KEYS = [
   "frameworkVersion",
   "category",
   "minLevel",
+  "level",
   "vendor",
   "productName",
   "includeKnowledge",
@@ -160,7 +161,14 @@ const COMPONENT_FILTER_KEYS = [
   "categoryId",
   "hasWeb",
 ] as const;
-const COMPATIBILITY_FILTER_KEYS = ["frameworkVersion", "vendor", "productName", "minLevel", "includeKnowledge"] as const;
+const COMPATIBILITY_FILTER_KEYS = [
+  "frameworkVersion",
+  "vendor",
+  "productName",
+  "minLevel",
+  "level",
+  "includeKnowledge",
+] as const;
 const GUIDE_FILTER_KEYS = ["layer", "chunkId"] as const;
 const KNOWLEDGE_FILTER_KEYS = ["type", "tags", "minImportance", "verifiedOnly", "sort"] as const;
 
@@ -656,12 +664,28 @@ async function searchDeveloperKnowledge(args: EgovSearchKnowledgeArgs, options: 
     formatJson("개발자 지식 검색 결과", result),
     limit.note,
     excerptNote,
+    compatibilityCutNote(result),
     ...(countKnowledgeResults(result) === 0 ? unknownKnowledgeFilterNotes(type, tags) : []),
     ignoredFiltersNote(filters, usedKeys, options, {
       knowledgeScope: 'knowledgeScope 은(는) sort 가 "recent" 이면 쓰이지 않습니다.',
     }),
     unusedParamsNote(args, { query: !sortRecent, limit: true }, options),
   );
+}
+
+/**
+ * knowledgeScope "all" 의 결과에 호환 소프트웨어가 일부만 실렸으면 전체 건수와 나머지를 보는 방법을 알린다.
+ * (그 목록은 지식 검색의 limit 까지만 실린다.)
+ */
+function compatibilityCutNote(result: unknown): string | undefined {
+  const { compatibility, compatibilityTotal } = result as { compatibility?: unknown; compatibilityTotal?: unknown };
+  if (!Array.isArray(compatibility) || typeof compatibilityTotal !== "number") {
+    return undefined;
+  }
+  return compatibilityTotal > compatibility.length
+    ? `> 호환 소프트웨어는 전체 ${compatibilityTotal}건 중 ${compatibility.length}건을 실었습니다. ` +
+        '나머지는 `scope: "compatibility"` 로 같은 query 를 조회합니다.'
+    : undefined;
 }
 
 /** 개발자 지식 조회 결과에 든 지식 항목의 수. 결과의 꼴을 알 수 없으면 undefined. */
@@ -879,9 +903,13 @@ function formatComponentListLookup(
 
   if (query) {
     const limit = resolveLimit(args, "components", options);
-    const { results, total, matchMode, ignoredTerms } = searchComponents(query, limit.value, listFilters);
+    const { results, total, matchMode, usedTerms, requiredMatches, ignoredTerms } = searchComponents(
+      query,
+      limit.value,
+      listFilters,
+    );
     return withNotes(
-      formatComponentList(results, false, { total, matchMode, ignoredTerms }),
+      formatComponentList(results, false, { total, matchMode, usedTerms, requiredMatches, ignoredTerms }),
       limit.note,
       ...(total === 0 ? unknownComponentFilterNotes(listFilters) : []),
       ignoredFiltersNote(filters, COMPONENT_LIST_FILTER_KEYS, options),
@@ -1044,6 +1072,7 @@ async function searchCompatibility(args: EgovSearchKnowledgeArgs, options: Secti
     frameworkVersion: asString(filters.frameworkVersion),
     category: asString(filters.category),
     minLevel: asNumber(filters.minLevel) as 1 | 2 | undefined,
+    level: asNumber(filters.level) as 1 | 2 | undefined,
     vendor: asString(filters.vendor),
     productName: asString(filters.productName),
     limit: limit.value,
