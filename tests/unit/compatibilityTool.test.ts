@@ -254,6 +254,38 @@ describe("searchCompatibleSoftware (호환 소프트웨어 검색 도구)", () =
     });
   });
 
+  describe("지식 쪽(LanceDB·임베딩 모델) 초기화", () => {
+    useCatalogue(CATALOGUE);
+
+    it("includeKnowledge 가 아니면 초기화하지 않는다 (SQLite 만으로 조회한다)", async () => {
+      const filtered = await searchCompatibleSoftware({ frameworkVersion: "4.3" });
+      const searched = await searchCompatibleSoftware({ query: "JEUS", includeKnowledge: false });
+      expect(filtered.count).toBe(2);
+      expect(searched.count).toBe(2);
+
+      expect(hybrid.initialize).not.toHaveBeenCalled();
+      expect(hybrid.findKnowledgeForSoftware).not.toHaveBeenCalled();
+    });
+
+    it("includeKnowledge 가 true 이면 초기화한 뒤 관련 지식을 조회한다", async () => {
+      const response = await searchCompatibleSoftware({ query: "JEUS", includeKnowledge: true });
+      expect(response.count).toBe(2);
+
+      expect(hybrid.initialize).toHaveBeenCalledTimes(1);
+      expect(hybrid.findKnowledgeForSoftware).toHaveBeenCalledWith("JEUS");
+      // 초기화가 조회보다 먼저다
+      expect(hybrid.initialize.mock.invocationCallOrder[0]).toBeLessThan(
+        hybrid.findKnowledgeForSoftware.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("includeKnowledge 가 true 여도 조회된 소프트웨어가 없으면 초기화하지 않는다", async () => {
+      const response = await searchCompatibleSoftware({ frameworkVersion: "5.0", includeKnowledge: true });
+      expect(response.count).toBe(0);
+      expect(hybrid.initialize).not.toHaveBeenCalled();
+    });
+  });
+
   describe("응답의 software 항목", () => {
     useCatalogue(CATALOGUE);
 

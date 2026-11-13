@@ -3,7 +3,7 @@
  * 호환성 소프트웨어 관리 도구
  */
 
-import { getInitializedHybridManager } from '../database/hybridManager.js';
+import { getHybridManager } from '../database/hybridManager.js';
 import type { SQLiteManager } from '../database/sqliteManager.js';
 import { CompatibilitySearchFilter, CompatibilitySoftwareInfo, KeywordMatchMode } from '../types/database.js';
 
@@ -158,7 +158,8 @@ export async function searchCompatibleSoftware(args: {
   offset?: number;
   includeKnowledge?: boolean;
 }): Promise<CompatibilitySearchResponse> {
-  const manager = await getInitializedHybridManager();
+  // 호환성 조회는 SQLite 만 쓴다. 지식 쪽(LanceDB + 임베딩 모델)은 includeKnowledge 일 때만 초기화한다.
+  const manager = getHybridManager();
   const sqlite = manager.getSQLite();
   const limit = normalizeLimit(args.limit);
   const offset = normalizeOffset(args.offset);
@@ -192,6 +193,8 @@ export async function searchCompatibleSoftware(args: {
 
   // includeKnowledge=true: 검색된 소프트웨어에 대한 개발자 경험 포함
   if (args.includeKnowledge && results.length > 0) {
+    await manager.initialize();
+
     const productNames = [...new Set(results.map((software) => software.product_name))].slice(0, 5);
     const knowledgeResults: Array<{ product: string; knowledge: RelatedKnowledgeItem[] }> = [];
 
