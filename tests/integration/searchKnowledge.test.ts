@@ -532,6 +532,24 @@ describe("integration — egov_search_knowledge 공통컴포넌트 조회", () =
     },
   );
 
+  it.skipIf(!hasComponentSources())("UTF-8 이 아닌 인코딩으로 읽은 파일은 머리말에 인코딩을 적는다", async () => {
+    const eucKr = await search({
+      scope: "components",
+      action: "readSource",
+      filters: { filePath: "src/main/webapp/WEB-INF/jsp/egovframework/com/utl/sys/prm/EgovProcessMon.jsp" },
+    });
+    expect(eucKr.isError).toBe(false);
+    expect(eucKr.text.split("\n")[0]).toMatch(/\(751 bytes, jsp, EUC-KR\)$/);
+    expect(eucKr.text).toContain("```jsp");
+
+    const utf8 = await search({
+      scope: "components",
+      action: "readSource",
+      filters: { filePath: "src/main/java/egovframework/com/cop/bbs/service/Blog.java" },
+    });
+    expect(utf8.text.split("\n")[0]).toMatch(/bytes, java\)$/);
+  });
+
   it.skipIf(!hasComponentSources())("끝까지 읽은 파일에는 이어 읽기 안내를 붙이지 않는다", async () => {
     const res = await search({
       scope: "components",

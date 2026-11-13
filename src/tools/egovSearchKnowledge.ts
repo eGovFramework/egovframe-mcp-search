@@ -466,7 +466,9 @@ function formatComponentSourceRead(filters: Record<string, unknown>): string {
     return `파일을 찾을 수 없거나 접근할 수 없습니다: ${filePath}`;
   }
 
-  const header = `**파일**: \`${result.filePath}\` (${formatCount(result.size)} bytes, ${result.language})`;
+  // UTF-8 이 아닌 인코딩으로 읽은 파일은 인코딩을 함께 적는다 (바이트 수와 문자 수가 다른 이유를 알 수 있다).
+  const encodingLabel = result.encoding && result.encoding !== "utf-8" ? `, ${result.encoding.toUpperCase()}` : "";
+  const header = `**파일**: \`${result.filePath}\` (${formatCount(result.size)} bytes, ${result.language}${encodingLabel})`;
   if (result.language === "binary") {
     // 바이너리 파일의 content 는 파일 내용이 아니라 안내 문구다.
     return `${header}\n\n${result.content}`;
