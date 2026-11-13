@@ -78,49 +78,44 @@ export function listCommonComponents(filters: ComponentSearchFilter = {}, limit?
   };
 }
 
+/** 컴포넌트를 찾지 못했을 때 함께 돌려주는 후보의 최대 건수 */
+const MAX_COMPONENT_SUGGESTIONS = 5;
+
 /**
  * 컴포넌트 상세 정보 조회
+ *
+ * componentId 에는 컴포넌트 ID 나 패키지명을 넣는다 (앞뒤 공백과 대소문자는 가리지 않는다).
+ * 둘 다 아니면 이름이나 영문명이 정확히 같은 컴포넌트가 하나뿐일 때 그것을 돌려준다.
+ * 찾지 못하면 component 는 null 이고, 같은 입력으로 키워드 검색한 상위 5건을 suggestions 로 돌려준다.
  */
 export function getComponentInfo(componentId: string): {
   component: CommonComponent | null;
   dependencies: string[];
   dependencyComponents: CommonComponent[];
+  suggestions: CommonComponent[];
 } {
   const db = getDB();
-  const component = db.getComponentById(componentId);
-  
+  const component = db.findComponent(componentId);
+
   if (!component) {
-    // 패키지명으로도 시도
-    const byPackage = db.getComponentByPackage(componentId);
-    if (!byPackage) {
-      return {
-        component: null,
-        dependencies: [],
-        dependencyComponents: [],
-      };
-    }
-    
-    const dependencies = db.getComponentDependencies(byPackage.component_id);
-    const dependencyComponents = dependencies
-      .map(pkg => db.getComponentByPackage(pkg))
-      .filter((c): c is CommonComponent => c !== undefined);
-    
     return {
-      component: byPackage,
-      dependencies,
-      dependencyComponents,
+      component: null,
+      dependencies: [],
+      dependencyComponents: [],
+      suggestions: db.searchComponents(componentId, MAX_COMPONENT_SUGGESTIONS),
     };
   }
-  
-  const dependencies = db.getComponentDependencies(componentId);
+
+  const dependencies = db.getComponentDependencies(component.component_id);
   const dependencyComponents = dependencies
     .map(pkg => db.getComponentByPackage(pkg))
     .filter((c): c is CommonComponent => c !== undefined);
-  
+
   return {
     component,
     dependencies,
     dependencyComponents,
+    suggestions: [],
   };
 }
 
@@ -208,6 +203,7 @@ export function formatCategoryList(
 /**
  * 결과 포맷팅 - 컴포넌트 목록
  *
+ * 두 표 형식 모두 첫 열에 컴포넌트 ID 를 싣는다. 상세 조회·의존성·소스·DDL/DML 조회에 넣는 값이다.
  * - options.total: 조건에 맞는 전체 건수. 표시하는 건수보다 크면 제목에 'N개 중 M개 표시' 를 적는다.
  * - options.matchMode: 'any-term' 이면 일부 검색어만 일치한 결과임을 제목 아래에 적는다.
  */
@@ -242,21 +238,21 @@ export function formatComponentList(
     
     for (const [catName, comps] of byCategory) {
       output += `### ${catName} (${comps.length}개)\n\n`;
-      output += '| 컴포넌트 | 패키지명 | 설명 |\n';
-      output += '|----------|----------|------|\n';
+      output += '| 컴포넌트 ID | 컴포넌트 | 패키지명 | 설명 |\n';
+      output += '|-------------|----------|----------|------|\n';
       
       for (const comp of comps) {
         const desc = comp.description ? comp.description.slice(0, 50) + (comp.description.length > 50 ? '...' : '') : '-';
-        output += `| ${comp.name} | \`${comp.package_name}\` | ${desc} |\n`;
+        output += `| \`${comp.component_id}\` | ${comp.name} | \`${comp.package_name}\` | ${desc} |\n`;
       }
       output += '\n';
     }
   } else {
-    output += '| 컴포넌트 | 카테고리 | 패키지명 | 버전 |\n';
-    output += '|----------|----------|----------|------|\n';
+    output += '| 컴포넌트 ID | 컴포넌트 | 카테고리 | 패키지명 | 버전 |\n';
+    output += '|-------------|----------|----------|----------|------|\n';
     
     for (const comp of components) {
-      output += `| ${comp.name} | ${comp.category_name || comp.category_id} | \`${comp.package_name}\` | ${comp.version} |\n`;
+      output += `| \`${comp.component_id}\` | ${comp.name} | ${comp.category_name || comp.category_id} | \`${comp.package_name}\` | ${comp.version} |\n`;
     }
   }
   

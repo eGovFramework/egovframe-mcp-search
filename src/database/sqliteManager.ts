@@ -773,27 +773,64 @@ export class SQLiteManager {
   }
 
   /**
-   * 컴포넌트 ID로 조회
+   * 컴포넌트 ID로 조회.
+   * 앞뒤 공백을 떼고 대소문자를 구분하지 않는다 ('BBS', ' bbs ' → bbs).
    */
   getComponentById(componentId: string): CommonComponent | undefined {
-    return this.db.prepare(`
-      SELECT c.*, cat.name as category_name
-      FROM common_components c
-      LEFT JOIN component_categories cat ON c.category_id = cat.category_id
-      WHERE c.component_id = ?
-    `).get(componentId) as CommonComponent | undefined;
+    return this.getComponentByKey('c.component_id', componentId);
   }
 
   /**
-   * 패키지명으로 컴포넌트 조회
+   * 패키지명으로 컴포넌트 조회.
+   * 앞뒤 공백을 떼고 대소문자를 구분하지 않는다.
    */
   getComponentByPackage(packageName: string): CommonComponent | undefined {
+    return this.getComponentByKey('c.package_name', packageName);
+  }
+
+  /**
+   * 식별자 컬럼(component_id 또는 package_name)으로 컴포넌트 하나를 찾는다.
+   * 대소문자만 다른 값이 함께 있으면 글자가 그대로 같은 행을 고른다.
+   */
+  private getComponentByKey(column: 'c.component_id' | 'c.package_name', value: string): CommonComponent | undefined {
+    const key = trimFilter(value);
+    if (!key) {
+      return undefined;
+    }
     return this.db.prepare(`
-      SELECT c.*, cat.name as category_name
-      FROM common_components c
-      LEFT JOIN component_categories cat ON c.category_id = cat.category_id
-      WHERE c.package_name = ?
-    `).get(packageName) as CommonComponent | undefined;
+      SELECT ${COMPONENT_SEARCH.columns}
+      FROM ${COMPONENT_SEARCH.table}
+      ${COMPONENT_SEARCH.joins}
+      WHERE ${column} = ? COLLATE NOCASE
+      ORDER BY (${column} = ?) DESC
+      LIMIT 1
+    `).get(key, key) as CommonComponent | undefined;
+  }
+
+  /**
+   * 컴포넌트 하나를 찾는다 — 호출자가 ID, 패키지명, 이름 가운데 무엇을 넘겼는지 모를 때 쓴다.
+   *
+   * ID, 패키지명 순으로 찾고, 둘 다 아니면 이름(name) 또는 영문명(name_en)이 정확히 같은
+   * 컴포넌트가 하나뿐일 때 그것을 돌려준다. 같은 이름을 쓰는 컴포넌트가 여럿이면 고르지 않는다.
+   */
+  findComponent(idOrPackageOrName: string): CommonComponent | undefined {
+    const byIdentifier = this.getComponentById(idOrPackageOrName) ?? this.getComponentByPackage(idOrPackageOrName);
+    if (byIdentifier) {
+      return byIdentifier;
+    }
+
+    const name = trimFilter(idOrPackageOrName);
+    if (!name) {
+      return undefined;
+    }
+    const sameName = this.db.prepare(`
+      SELECT ${COMPONENT_SEARCH.columns}
+      FROM ${COMPONENT_SEARCH.table}
+      ${COMPONENT_SEARCH.joins}
+      WHERE c.name = ? COLLATE NOCASE OR c.name_en = ? COLLATE NOCASE
+      LIMIT 2
+    `).all(name, name) as CommonComponent[];
+    return sameName.length === 1 ? sameName[0] : undefined;
   }
 
   /**

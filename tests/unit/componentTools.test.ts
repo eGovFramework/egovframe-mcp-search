@@ -31,6 +31,7 @@ vi.mock("../../src/utils/dataPaths.js", async (importOriginal) => {
 import {
   formatCategoryList,
   formatComponentList,
+  getComponentInfo,
   listCommonComponents,
   searchComponents,
 } from "../../src/tools/commonComponents.js";
@@ -52,6 +53,53 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  describe("getComponentInfo", () => {
+    it("ID 의 대소문자와 앞뒤 공백이 달라도 상세 정보를 돌려준다", () => {
+      for (const id of ["bbs", "BBS", " bbs "]) {
+        const info = getComponentInfo(id);
+        expect(info.component?.component_id, `id=${JSON.stringify(id)}`).toBe("bbs");
+        expect(info.dependencies).toEqual([
+          "egovframework.com.cmm",
+          "egovframework.com.cop.tpl",
+          "egovframework.com.missing.pkg",
+        ]);
+        expect(idsOf(info.dependencyComponents)).toEqual(["cmm", "tpl"]);
+        expect(info.suggestions).toEqual([]);
+      }
+    });
+
+    it("패키지명이나 하나뿐인 이름으로도 찾는다", () => {
+      expect(getComponentInfo("EGOVFRAMEWORK.COM.UAT.UIA").component?.component_id).toBe("uia");
+      expect(getComponentInfo("게시판").component?.component_id).toBe("bbs");
+      expect(getComponentInfo("General Login").component?.component_id).toBe("uia");
+      // 이름으로 찾았을 때도 의존성은 찾은 컴포넌트의 ID 로 조회한다
+      expect(getComponentInfo("General Login").dependencies).toEqual([
+        "egovframework.com.cmm",
+        "egovframework.com.sec.ram",
+      ]);
+    });
+
+    it("찾지 못하면 키워드 검색으로 후보(suggestions)를 함께 돌려준다", () => {
+      // 영문명이 같은 컴포넌트가 둘이라 하나로 정할 수 없다
+      const ambiguous = getComponentInfo("Authority Management");
+      expect(ambiguous.component).toBeNull();
+      expect(ambiguous.dependencies).toEqual([]);
+      expect(idsOf(ambiguous.suggestions).sort()).toEqual(["drm", "ram"]);
+
+      const partial = getComponentInfo("게시판 관련");
+      expect(partial.component).toBeNull();
+      expect(idsOf(partial.suggestions)).toEqual(["bbs", "tpl"]);
+    });
+
+    it("후보는 5건까지만 돌려주고, 없으면 빈 배열이다", () => {
+      // 모든 컴포넌트의 패키지명이 egovframework 로 시작한다
+      expect(getComponentInfo("egovframework").suggestions).toHaveLength(5);
+      const none = getComponentInfo("zzz-없는-컴포넌트");
+      expect(none.component).toBeNull();
+      expect(none.suggestions).toEqual([]);
+    });
   });
 
   describe("listCommonComponents", () => {
@@ -157,6 +205,22 @@ describe("공통컴포넌트 도구 — 결과 포맷", () => {
   });
 
   describe("formatComponentList", () => {
+    it("카테고리별 표와 한 줄 표 모두에 컴포넌트 ID 열을 넣는다", () => {
+      for (const groupByCategory of [true, false]) {
+        const lines = formatComponentList([uia, sec], groupByCategory).split("\n");
+        const header = lines.find((line) => line.startsWith("|") && line.includes("컴포넌트 ID"));
+        expect(header, `groupByCategory=${groupByCategory}`).toBeDefined();
+
+        // 상세 조회(filters.componentId)에 넣을 ID 가 이름·패키지명과 같은 행에 있다
+        const row = lines.find((line) => line.includes("일반로그인"));
+        expect(row).toMatch(/\|\s*`?uia`?\s*\|/);
+        expect(row).toContain("egovframework.com.uat.uia");
+
+        const columns = lines.filter((line) => line.startsWith("|")).map((line) => line.split("|").length);
+        expect(new Set(columns).size).toBe(1);
+      }
+    });
+
     it("일부만 표시할 때는 제목 줄에 'N개 중 M개 표시' 를 적는다", () => {
       expect(formatComponentList([uia, sec], true, { total: 6 })).toContain("## 공통컴포넌트 목록 (6개 중 2개 표시)");
       expect(formatComponentList([uia, sec], false, { total: 6 })).toContain(

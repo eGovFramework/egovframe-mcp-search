@@ -162,6 +162,59 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     });
   });
 
+  describe("컴포넌트 한 건 조회", () => {
+    it("컴포넌트 ID 는 앞뒤 공백을 떼고 대소문자를 구분하지 않고 찾는다", () => {
+      for (const id of ["bbs", "BBS", "Bbs", " bbs ", "\tbbs\n"]) {
+        expect(sqlite.getComponentById(id)?.component_id, `id=${JSON.stringify(id)}`).toBe("bbs");
+      }
+      expect(sqlite.getComponentById("bbs")?.category_name).toBe("게시판");
+      expect(sqlite.getComponentById("없는것")).toBeUndefined();
+      expect(sqlite.getComponentById("  ")).toBeUndefined();
+    });
+
+    it("패키지명도 앞뒤 공백을 떼고 대소문자를 구분하지 않고 찾는다", () => {
+      for (const packageName of ["egovframework.com.cop.bbs", "EGOVFRAMEWORK.COM.COP.BBS", " egovframework.com.cop.bbs\n"]) {
+        expect(sqlite.getComponentByPackage(packageName)?.component_id).toBe("bbs");
+      }
+      expect(sqlite.getComponentByPackage("egovframework.com.none")).toBeUndefined();
+    });
+
+    it("대소문자만 다른 ID 가 함께 있으면 글자가 그대로 같은 쪽을 고른다", () => {
+      sqlite.addCommonComponentsBatch([
+        { ...COMPONENTS[2], component_id: "BBS", name: "대문자 게시판", package_name: "egovframework.com.cop.bbs.upper" },
+      ]);
+      expect(sqlite.getComponentById("BBS")?.name).toBe("대문자 게시판");
+      expect(sqlite.getComponentById("bbs")?.name).toBe("게시판");
+    });
+
+    describe("findComponent", () => {
+      it("ID, 패키지명 순으로 찾는다", () => {
+        expect(sqlite.findComponent("UIA")?.component_id).toBe("uia");
+        expect(sqlite.findComponent("egovframework.com.uat.uia")?.component_id).toBe("uia");
+        expect(sqlite.findComponent(" Egovframework.Com.Sec.Ram ")?.component_id).toBe("ram");
+      });
+
+      it("둘 다 아니면 이름이나 영문명이 정확히 같은 컴포넌트가 하나뿐일 때 그것을 돌려준다", () => {
+        expect(sqlite.findComponent("게시판")?.component_id).toBe("bbs");
+        expect(sqlite.findComponent("일반로그인")?.component_id).toBe("uia");
+        expect(sqlite.findComponent("General Login")?.component_id).toBe("uia");
+        expect(sqlite.findComponent(" general login ")?.component_id).toBe("uia");
+      });
+
+      it("같은 이름을 쓰는 컴포넌트가 여럿이면 고르지 않는다", () => {
+        // 영문명 'Authority Management' 는 ram 과 drm 이 함께 쓴다
+        expect(sqlite.findComponent("Authority Management")).toBeUndefined();
+      });
+
+      it("이름의 일부만 같아서는 찾지 않는다", () => {
+        expect(sqlite.findComponent("로그인")).toBeUndefined();
+        expect(sqlite.findComponent("템플릿")).toBeUndefined();
+        expect(sqlite.findComponent("없는것")).toBeUndefined();
+        expect(sqlite.findComponent("   ")).toBeUndefined();
+      });
+    });
+  });
+
   describe("categoryId 필터", () => {
     const inCategory = (categoryId: string) => idsOf(sqlite.queryComponents({ filters: { categoryId } }).rows).sort();
 
