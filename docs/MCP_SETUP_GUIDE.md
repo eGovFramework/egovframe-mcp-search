@@ -135,7 +135,7 @@ Windows 의 설정 파일은 `%APPDATA%\Claude\claude_desktop_config.json` 이�
 eGovFrame에서 MyBatis 설정 방법을 공식 가이드와 개발자 지식까지 함께 찾아줘.
 ```
 
-`scope` 를 `all` 로 지정하거나 생략하면 네 출처를 함께 검색합니다.
+`scope` 를 `all` 로 지정하면 네 출처를 함께 검색합니다. `query` 만 주고 `scope` 를 생략해도 같습니다.
 
 ```json
 { "query": "MyBatis 설정 방법", "scope": "all" }
@@ -178,7 +178,9 @@ eGovFrame 4.3과 호환되는 WAS를 알려줘.
 | 클라이언트에 서버가 보이지 않거나 시작하자마자 종료됨 | `command` 와 `args` 가 절대 경로인지, `args` 의 `build/index.js` 가 실제로 있는지 확인합니다. 배포 tgz 는 장비의 운영체제와 CPU 에 맞는 타깃인지 확인합니다. 터미널에서 `<command 값> <args 값> --version` 을 실행하면 버전이 출력되어야 합니다. |
 | `네이티브 모듈(better-sqlite3)을 불러오지 못했습니다. 배포 패키지는 Node.js 22 와 패키지를 만든 플랫폼에서만 동작합니다 ...` | 대개 `command` 가 Node.js 22 가 아닌 실행 파일을 가리키는 경우입니다. 문구에 적힌 현재 Node.js 버전을 확인하고 `command` 를 Node.js 22 실행 파일의 절대 경로로 바꿉니다. 같은 문구가 서버 시작 시 로그(stderr)에도 한 번 남습니다. |
 | `임베딩 모델을 찾을 수 없습니다 (models/Xenova/multilingual-e5-small). ...` | 저장소 클론에서 `npm run fetch-model` 을 실행하지 않은 상태입니다. 이때 공식 가이드와 개발자 지식의 의미 검색은 실패하고, 공통컴포넌트와 호환 소프트웨어 조회는 동작합니다. |
+| `임베딩 모델 파일을 읽지 못했습니다 (models/Xenova/multilingual-e5-small). ...` | 모델 파일이 손상되었거나 읽을 권한이 없습니다. 저장소 클론은 `models` 디렉토리를 지우고 `npm run fetch-model` 을 다시 실행하고, 배포 tgz 는 다시 설치합니다. 그 뒤에 서버를 다시 시작합니다. 영향을 받는 조회는 모델이 없을 때와 같습니다. |
 | `공통컴포넌트 소스가 설치되어 있지 않습니다. ...` | 저장소 클론에서 서브모듈을 받지 않은 상태입니다. `git submodule update --init templates/common-components-src` 를 실행합니다. 소스 파일, DDL, DML 조회에만 영향이 있습니다. |
-| `지식베이스 DB(knowledge-base/egovframe.db)를 찾을 수 없습니다. ...`, `공식 가이드 인덱스(knowledge-base/egovframe_guide.lance)를 찾을 수 없습니다. ...`, `개발자 지식 인덱스(knowledge-base/developer_knowledge.lance)를 찾을 수 없습니다. ...` | 설치 위치에 `knowledge-base/` 가 없거나 일부가 빠져 있습니다. 서버는 빠진 파일을 새로 만들지 않습니다. 배포 tgz 는 다시 설치하고, 저장소 클론은 `git restore knowledge-base` 로 되돌립니다. |
+| `지식베이스 DB(knowledge-base/egovframe.db)를 찾을 수 없습니다. ...`, `공식 가이드 인덱스(knowledge-base/egovframe_guide.lance)를 찾을 수 없습니다. ...`, `개발자 지식 인덱스(knowledge-base/developer_knowledge.lance)를 찾을 수 없습니다. ...` | 설치 위치에 `knowledge-base/` 가 없거나 일부가 빠져 있습니다. 서버는 빠진 파일을 새로 만들지 않습니다. 배포 tgz 는 다시 설치하고, 저장소 클론은 `git restore knowledge-base` 로 되돌립니다. 빠진 부분을 쓰지 않는 조회는 그대로 동작합니다. |
+| `공식 가이드 인덱스를 읽지 못했습니다. ...`, `개발자 지식 인덱스를 읽지 못했습니다. ...` | 서버가 실행되는 동안 인덱스 파일이 바뀌었거나 일부가 없어진 경우입니다. 서버는 인덱스를 다시 열어 한 번 더 시도한 뒤에 이 문구를 돌려줍니다. 지식베이스를 갱신하거나 다시 구축한 직후라면 서버를 다시 시작하고, 계속되면 패키지를 다시 설치하거나 저장소 클론에서 `npm run build-index` 로 인덱스를 다시 구축합니다. |
 | `MCP error -32602: Tool <이름> not found` | 등록되지 않은 도구 이름을 호출했습니다. 옛 검색·조회 도구(`search_guide`, `list_common_components` 등)는 `egov_search_knowledge` 의 `scope` 와 `action` 으로 호출합니다. `egov_check_compliance` 는 `egovframe-mcp-check` 서버가, `egov_scaffold_project`, `egov_add_entity`, `egov_add_query_view` 는 `egovframe-mcp-codegen` 서버가 제공하므로 해당 서버를 따로 등록합니다. |
-| `update` 로 받은 갱신분이 검색에 반영되지 않음 | 실행 중인 서버는 이미 연 인덱스를 계속 읽습니다. 클라이언트에서 서버를 다시 시작합니다. `EGOV_MCP_DATA_DIR` 를 썼다면 등록의 `env` 에 같은 값이 있는지 확인합니다. |
+| `update` 로 받은 갱신분이 검색에 반영되지 않음 | 실행 중인 서버는 이미 연 인덱스를 계속 읽습니다. 클라이언트에서 서버를 다시 시작합니다. `EGOV_MCP_DATA_DIR` 를 썼다면 등록의 `env` 에 같은 값이 있는지 확인합니다. 서버 로그(stderr)에 `갱신분을 읽지 못해 동봉 인덱스를 사용합니다` 가 남아 있으면 갱신분을 읽을 수 없는 상태이므로, `update --rollback` 으로 직전 상태로 되돌린 뒤 다시 갱신합니다. |
