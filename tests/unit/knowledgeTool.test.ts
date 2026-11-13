@@ -354,9 +354,39 @@ describe("formatProductLabel", () => {
     expect(formatProductLabel("DevOnFrame", "DevOnFrame")).toBe("DevOnFrame");
   });
 
+  it("버전 표기가 괄호를 뺀 제품명으로 시작해도 버전 표기만 쓴다", () => {
+    // 제품명에 설명이 괄호로 붙어 있으면 버전 표기는 괄호 없는 이름으로 시작한다.
+    // 제품명 전체로만 견주던 때에는 "Morpheus CMS(모피어스 CMS) Morpheus CMS 2.0" 처럼 이름이 두 번 들어갔다
+    expect(formatProductLabel("Morpheus CMS(모피어스 CMS)", "Morpheus CMS 2.0")).toBe("Morpheus CMS 2.0");
+    expect(formatProductLabel("UCARE(콜센터상담시스템)", "UCARE v3.0")).toBe("UCARE v3.0");
+    expect(formatProductLabel("ALPAS v1.0 (도서관리 시스템)", "ALPAS v1.0")).toBe("ALPAS v1.0");
+    expect(formatProductLabel("아사프로(Asapro)", "아사프로 제이(Asapro J)")).toBe("아사프로 제이(Asapro J)");
+    expect(
+      formatProductLabel("WiseMeta(확인범위:스케줄러 외 전체 영역)", "WiseMeta v6.0(확인범위:스케줄러 외 전체 영역)"),
+    ).toBe("WiseMeta v6.0(확인범위:스케줄러 외 전체 영역)");
+  });
+
+  it("제품명으로 시작하는지는 대소문자와 공백을 무시하고 견준다", () => {
+    expect(formatProductLabel("PowerService5", "PowerService 5.0")).toBe("PowerService 5.0");
+    expect(formatProductLabel("JAMMY CMS", "JammyCMS v1.0")).toBe("JammyCMS v1.0");
+    expect(formatProductLabel("Haenacms", "HAENACMS 1.0")).toBe("HAENACMS 1.0");
+    expect(formatProductLabel("G-ProOne (Management Information System)", "g-proone 3.0")).toBe("g-proone 3.0");
+  });
+
+  it("괄호가 든 제품명 그대로 시작하는 버전 표기도 버전 표기만 쓴다", () => {
+    // 괄호를 뺀 이름('엔컴 CMS', 'AI+ CMS')으로는 시작하지 않지만, 제품명 전체로 시작한다
+    expect(formatProductLabel("엔컴(NCOM) CMS", "엔컴(NCOM) CMS v1.0")).toBe("엔컴(NCOM) CMS v1.0");
+    expect(formatProductLabel("AI+(플러스) CMS", "AI+(플러스) CMS 2.1")).toBe("AI+(플러스) CMS 2.1");
+  });
+
   it("버전 표기가 제품명으로 시작하지 않으면 제품명과 버전을 잇는다", () => {
     expect(formatProductLabel("BXM Framework", "v4.0")).toBe("BXM Framework v4.0");
     expect(formatProductLabel("JAMMY CMS", "v1.0")).toBe("JAMMY CMS v1.0");
+    // 버전 표기가 괄호 안의 이름으로 시작하거나 버전 번호뿐인 경우
+    expect(formatProductLabel("더블유빌더(wbuilder)", "wbuilder V1.0")).toBe("더블유빌더(wbuilder) wbuilder V1.0");
+    expect(formatProductLabel("케이큐브 R5.0(KCUBE R5)", "R5.0")).toBe("케이큐브 R5.0(KCUBE R5) R5.0");
+    // 제품명이 버전 표기의 가운데에 있을 뿐인 경우
+    expect(formatProductLabel("CMS", "Smart CMS 2.0")).toBe("CMS Smart CMS 2.0");
   });
 
   it("버전이 비어 있으면 제품명만 쓴다", () => {
@@ -383,9 +413,13 @@ describe("통합 검색의 호환 제품 표기", () => {
     hybrid.current = {
       getKnowledge: () => ({}),
       smartSearch: async () => ({
-        compatibility: [compatibilityRow("JEUS", "JEUS 21"), compatibilityRow("BXM Framework", "v4.0")],
+        compatibility: [
+          compatibilityRow("JEUS", "JEUS 21"),
+          compatibilityRow("BXM Framework", "v4.0"),
+          compatibilityRow("Morpheus CMS(모피어스 CMS)", "Morpheus CMS 2.0"),
+        ],
         knowledge: [],
-        totalResults: 2,
+        totalResults: 3,
       }),
     };
   });
@@ -394,13 +428,13 @@ describe("통합 검색의 호환 제품 표기", () => {
     const output = (await searchKnowledge({ query: "JEUS", scope: "all" })) as {
       compatibility: Array<{ product: string; framework: string }>;
     };
-    expect(output.compatibility.map((c) => c.product)).toEqual(["JEUS 21", "BXM Framework v4.0"]);
+    expect(output.compatibility.map((c) => c.product)).toEqual(["JEUS 21", "BXM Framework v4.0", "Morpheus CMS 2.0"]);
     expect(output.compatibility[0].framework).toBe("4.3");
   });
 
   it("smartSearch 도 같은 표기를 쓴다", async () => {
     const output = await smartSearch({ query: "JEUS" });
-    expect(output.compatibility.map((c) => c.product)).toEqual(["JEUS 21", "BXM Framework v4.0"]);
+    expect(output.compatibility.map((c) => c.product)).toEqual(["JEUS 21", "BXM Framework v4.0", "Morpheus CMS 2.0"]);
   });
 });
 

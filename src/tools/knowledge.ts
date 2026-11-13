@@ -11,6 +11,7 @@ import {
 import { UserFacingError } from '../utils/errors.js';
 import { excerptKnowledgeContent } from '../utils/knowledgeExcerpt.js';
 import { presentTitle } from '../utils/knowledgePresentation.js';
+import { nameWithoutParentheses } from '../utils/productMention.js';
 import { sliceHead } from '../utils/text.js';
 import { maskResidentNumbers } from '../utils/sensitiveText.js';
 
@@ -60,6 +61,11 @@ function echoQuery(query: string): string {
  * 호환성 목록의 product_version 은 대부분 제품명을 이미 담고 있다 (예: 제품명 "JEUS",
  * 버전 "JEUS 21"). 둘을 그대로 이으면 "JEUS JEUS 21" 이 되므로, 버전 표기가 제품명으로
  * 시작하면 버전 표기만 쓴다.
+ *
+ * 제품명에 설명이 괄호로 붙어 있으면 버전 표기는 괄호 없는 이름으로 시작한다 (제품명
+ * "Morpheus CMS(모피어스 CMS)", 버전 "Morpheus CMS 2.0"). 그래서 제품명 그대로와 괄호를 뺀 이름
+ * (nameWithoutParentheses, 관련 지식을 찾을 때와 같은 규칙) 두 가지로 견주고, 어느 쪽으로든 시작하면
+ * 버전 표기만 쓴다. 견줄 때는 대소문자와 공백을 무시한다 (제품명 "PowerService5", 버전 "PowerService 5.0").
  */
 export function formatProductLabel(productName: string, productVersion?: string | null): string {
   const name = (productName ?? '').trim();
@@ -67,7 +73,12 @@ export function formatProductLabel(productName: string, productVersion?: string 
   if (!version) {
     return name;
   }
-  return version.startsWith(name) ? version : `${name} ${version}`;
+  /** 대소문자와 공백의 차이를 없앤 값 */
+  const comparable = (value: string) => value.toLowerCase().replace(/\s+/g, '');
+  const startsWithName = [name, nameWithoutParentheses(name)].some((candidate) =>
+    comparable(version).startsWith(comparable(candidate)),
+  );
+  return startsWithName ? version : `${name} ${version}`;
 }
 
 /** 통합 검색(scope="all")의 지식 미리보기 길이 — excerptLength 를 주지 않았을 때 */
