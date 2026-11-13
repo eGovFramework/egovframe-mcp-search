@@ -4,10 +4,11 @@
  * readSource 는 호출자가 준 경로의 파일을 읽으므로, 소스 루트 밖의 파일이 읽히면 안 된다.
  * 또 글꼴·문서 같은 바이너리를 텍스트로 돌려주거나 큰 파일을 통째로 돌려주면 응답이
  * 수 MB 가 되므로, 내용으로 바이너리를 판정하고 텍스트는 구간으로 나눠 읽는다.
+ * 텍스트는 UTF-8 로 읽고, UTF-8 이 아니면 EUC-KR 로 읽는다 (오래된 JSP 가 EUC-KR 로 남아 있다).
  * 임시 디렉토리에 소스 루트와 그 바깥 파일을 만들어 실제 파일 시스템으로 검증한다
  * (저장소의 소스 트리는 읽기만 하고, 지식베이스 DB 는 열지 않는다).
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,6 +18,27 @@ const REPO_ROOT = path.resolve(__dirname, '../..');
 /** 저장소에 동봉된 공통컴포넌트 소스 트리 (읽기만 한다) */
 const SRC_ROOT = path.join(REPO_ROOT, 'templates', 'common-components-src');
 const hasComponentSources = fs.existsSync(path.join(SRC_ROOT, 'pom.xml'));
+
+/** 테스트용 EUC-KR 인코더가 아는 한글 (Node 에는 EUC-KR 인코더가 없어 바이트를 직접 적는다) */
+const EUC_KR_BYTES: Record<string, number[]> = {
+  한: [0xc7, 0xd1],
+  글: [0xb1, 0xdb],
+  주: [0xc1, 0xd6],
+  석: [0xbc, 0xae],
+};
+
+/** 문자열을 EUC-KR 바이트열로 바꾼다. ASCII 는 그대로, 한글은 위 표에 있는 글자만 쓸 수 있다 */
+function encodeEucKr(text: string): Buffer {
+  const bytes: number[] = [];
+  for (const char of text) {
+    const mapped = EUC_KR_BYTES[char];
+    const code = char.charCodeAt(0);
+    if (mapped) bytes.push(...mapped);
+    else if (code < 0x80) bytes.push(code);
+    else throw new Error(`EUC-KR 표에 없는 글자: ${char}`);
+  }
+  return Buffer.from(bytes);
+}
 
 describe('readSourceFileInRoot — 소스 루트 밖의 파일을 읽지 않는다', () => {
   let tmpDir: string;
@@ -165,8 +187,10 @@ describe('readSourceFileInRoot — 바이너리 판정과 큰 파일 나눠 읽�
     write('photo.png', Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]));
     // UTF-16LE 로 저장한 ASCII 텍스트: 글자마다 NUL 바이트가 끼어 있지만 UTF-8 로는 유효한 바이트열이다
     write('utf16.txt', Buffer.from('hello world\n', 'utf16le'));
-    // NUL 은 없지만 UTF-8 로 디코딩되지 않는 바이트열 (EUC-KR 로 쓴 "한글")
-    write('legacy.jsp', Buffer.from([0x3c, 0x25, 0x2d, 0x2d, 0x20, 0xc7, 0xd1, 0xb1, 0xdb, 0x20, 0x2d, 0x2d, 0x25, 0x3e, 0x0a]));
+    // NUL 은 없지만 UTF-8 로도 EUC-KR 로도 디코딩되지 않는 바이트열:
+    // EUC-KR "한글" 에서 둘째 글자의 뒤쪽 바이트가 빠진 것과, 어느 쪽에도 없는 0xFF 바이트
+    write('broken.jsp', Buffer.from([0x3c, 0x25, 0x2d, 0x2d, 0x20, 0xc7, 0xd1, 0xb1, 0x20, 0x2d, 0x2d, 0x25, 0x3e, 0x0a]));
+    write('garbage.dat', Buffer.from([0x01, 0x02, 0xff, 0xff, 0x03]));
     write('icon.svg', '<svg xmlns="http://www.w3.org/2000/svg"><!-- 아이콘 --></svg>\n');
     write('small.java', 'class Small {}\n');
     write('empty.txt', '');
@@ -199,6 +223,8 @@ describe('readSourceFileInRoot — 바이너리 판정과 큰 파일 나눠 읽�
     expect(result!.truncated).toBe(false);
     expect(result!.totalChars).toBe(0);
     expect(result!.nextOffset).toBeNull();
+    // 텍스트가 아니므로 인코딩이 없다
+    expect(result!.encoding).toBeNull();
   });
 
   it('UTF-8 로는 유효해도 NUL 바이트가 있으면 바이너리로 판정한다', () => {
@@ -214,13 +240,19 @@ describe('readSourceFileInRoot — 바이너리 판정과 큰 파일 나눠 읽�
     expect(result!.nextOffset).toBeNull();
   });
 
-  it('UTF-8 로 유효하게 디코딩되지 않는 파일도 바이너리로 판정한다', () => {
-    const result = readSourceFileInRoot(root, 'legacy.jsp');
+  it.each(['broken.jsp', 'garbage.dat'])(
+    'UTF-8 로도 EUC-KR 로도 디코딩되지 않는 %s 는 NUL 바이트가 없어도 바이너리로 판정한다',
+    (name) => {
+      const result = readSourceFileInRoot(root, name);
 
-    expect(result?.language).toBe('binary');
-    expect(result?.content).not.toContain('�');
-    expect(result?.totalChars).toBe(0);
-  });
+      expect(result?.language).toBe('binary');
+      expect(result?.encoding).toBeNull();
+      expect(result?.content).toContain('바이너리');
+      expect(result?.content).not.toContain('�');
+      expect(result?.totalChars).toBe(0);
+      expect(result?.nextOffset).toBeNull();
+    },
+  );
 
   it('확장자가 아니라 내용으로 판정하므로 텍스트인 svg 는 그대로 읽는다', () => {
     const result = readSourceFileInRoot(root, 'icon.svg');
@@ -235,6 +267,7 @@ describe('readSourceFileInRoot — 바이너리 판정과 큰 파일 나눠 읽�
     expect(result).toMatchObject({
       content: 'class Small {}\n',
       language: 'java',
+      encoding: 'utf-8',
       truncated: false,
       totalChars: 15,
       offset: 0,
@@ -245,6 +278,7 @@ describe('readSourceFileInRoot — 바이너리 판정과 큰 파일 나눠 읽�
   it('빈 파일은 빈 텍스트로 돌려준다', () => {
     expect(readSourceFileInRoot(root, 'empty.txt')).toMatchObject({
       content: '',
+      encoding: 'utf-8',
       size: 0,
       truncated: false,
       totalChars: 0,
@@ -256,6 +290,7 @@ describe('readSourceFileInRoot — 바이너리 판정과 큰 파일 나눠 읽�
     const result = readSourceFileInRoot(root, 'bom.xml');
 
     expect(result?.content).toBe('<beans/>\n');
+    expect(result?.encoding).toBe('utf-8');
     expect(result?.totalChars).toBe(9);
     expect(result?.size).toBe(12);
   });
@@ -319,12 +354,151 @@ describe('readSourceFileInRoot — 바이너리 판정과 큰 파일 나눠 읽�
   });
 });
 
+describe('readSourceFileInRoot — EUC-KR 텍스트', () => {
+  let root: string;
+  const legacyText = '<%-- 한글 주석 --%>\n<html lang="ko"></html>\n';
+  /** 128,000자짜리 텍스트 (16자 × 8,000줄). 한글은 EUC-KR 에서 글자당 2바이트라 160,000바이트다 */
+  const bigText = Array.from({ length: 8000 }, (_, i) => `// 한글 주석 ${String(i).padStart(6, '0')}\n`).join('');
+
+  beforeAll(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'egov-src-euckr-'));
+    const write = (name: string, data: string | Buffer) => fs.writeFileSync(path.join(root, name), data);
+
+    write('legacy.jsp', encodeEucKr(legacyText));
+    write('big.java', encodeEucKr(bigText));
+    write('utf8.jsp', legacyText);
+  });
+
+  afterAll(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('테스트용 인코더는 "한글" 을 C7 D1 B1 DB 로 바꾼다', () => {
+    expect([...encodeEucKr('한글')]).toEqual([0xc7, 0xd1, 0xb1, 0xdb]);
+    expect(bigText.length).toBe(128_000);
+    expect(encodeEucKr(bigText).length).toBe(160_000);
+  });
+
+  it('UTF-8 이 아닌 EUC-KR 텍스트를 디코딩해 돌려준다', () => {
+    const result = readSourceFileInRoot(root, 'legacy.jsp');
+
+    expect(result).not.toBeNull();
+    expect(result!.content).toContain('한글');
+    expect(result!.content).toBe(legacyText);
+    expect(result!.content).not.toContain('�');
+    // language 는 인코딩과 무관하게 확장자로 정한다
+    expect(result!.language).toBe('jsp');
+    expect(result!.encoding).toBe('euc-kr');
+    expect(result!.truncated).toBe(false);
+    expect(result!.nextOffset).toBeNull();
+  });
+
+  it('totalChars 는 디코딩한 문자 수, size 는 파일의 바이트 수다', () => {
+    const result = readSourceFileInRoot(root, 'legacy.jsp');
+
+    expect(result?.totalChars).toBe(legacyText.length);
+    // 한글 네 글자가 2바이트씩이라 문자 수보다 4 크다
+    expect(result?.size).toBe(legacyText.length + 4);
+  });
+
+  it('같은 내용의 UTF-8 파일은 encoding 이 utf-8 이다', () => {
+    expect(readSourceFileInRoot(root, 'utf8.jsp')).toMatchObject({
+      content: legacyText,
+      language: 'jsp',
+      encoding: 'utf-8',
+      totalChars: legacyText.length,
+    });
+  });
+
+  it('offset 은 바이트가 아니라 디코딩한 문자열의 위치다', () => {
+    // '<%-- ' 다음(5번째 문자)부터 읽는다. 바이트 위치였다면 뒤로 갈수록 한글 수만큼 어긋난다
+    expect(readSourceFileInRoot(root, 'legacy.jsp', { offset: 5 })?.content).toBe(legacyText.slice(5));
+    expect(readSourceFileInRoot(root, 'legacy.jsp', { offset: 11 })).toMatchObject({
+      content: legacyText.slice(11),
+      offset: 11,
+      encoding: 'euc-kr',
+    });
+  });
+
+  it('큰 EUC-KR 텍스트도 60,000자씩 나눠 읽어 전체를 빠짐없이 얻는다', () => {
+    const first = readSourceFileInRoot(root, 'big.java');
+
+    expect(first).toMatchObject({
+      language: 'java',
+      encoding: 'euc-kr',
+      truncated: true,
+      totalChars: 128_000,
+      size: 160_000,
+      offset: 0,
+      nextOffset: SOURCE_READ_MAX_CHARS,
+    });
+    expect(first!.content).toBe(bigText.slice(0, SOURCE_READ_MAX_CHARS));
+
+    const chunks: string[] = [];
+    let offset: number | null = 0;
+    let calls = 0;
+    while (offset !== null) {
+      const part = readSourceFileInRoot(root, 'big.java', { offset });
+      expect(part).not.toBeNull();
+      expect(part!.offset).toBe(offset);
+      expect(part!.encoding).toBe('euc-kr');
+      expect(part!.totalChars).toBe(128_000);
+      chunks.push(part!.content);
+      offset = part!.nextOffset;
+      calls += 1;
+      expect(calls).toBeLessThan(10);
+    }
+
+    expect(calls).toBe(3);
+    expect(chunks.join('')).toBe(bigText);
+  });
+
+  it("런타임에 'euc-kr' 디코더가 없으면 예외를 던지지 않고 바이너리로 처리한다", () => {
+    // ICU 를 빼고 빌드한 Node 는 new TextDecoder('euc-kr') 에서 RangeError 를 던진다
+    const RealTextDecoder = globalThis.TextDecoder;
+    const utf8Only = function (label?: string, options?: { fatal?: boolean; ignoreBOM?: boolean }) {
+      if (label !== undefined && label.toLowerCase() !== 'utf-8') {
+        throw new RangeError(`The "${label}" encoding is not supported`);
+      }
+      return new RealTextDecoder(label, options);
+    };
+    vi.stubGlobal('TextDecoder', utf8Only);
+
+    try {
+      const legacy = readSourceFileInRoot(root, 'legacy.jsp');
+
+      expect(legacy).not.toBeNull();
+      expect(legacy!.language).toBe('binary');
+      expect(legacy!.encoding).toBeNull();
+      expect(legacy!.totalChars).toBe(0);
+      expect(legacy!.content).toContain('바이너리');
+      // UTF-8 텍스트는 그대로 읽는다
+      expect(readSourceFileInRoot(root, 'utf8.jsp')).toMatchObject({ content: legacyText, encoding: 'utf-8' });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    // 디코더가 돌아오면 다시 텍스트로 읽는다 (판정 결과를 붙들고 있지 않는다)
+    expect(readSourceFileInRoot(root, 'legacy.jsp')?.encoding).toBe('euc-kr');
+  });
+});
+
 describe.skipIf(!hasComponentSources)('readSourceFileInRoot — 동봉 소스 트리', () => {
   /** 소스 버전이 바뀌어 예시 파일이 없어지면 그 테스트만 건너뛴다 */
   const missing = (relative: string) => !fs.existsSync(path.join(SRC_ROOT, relative));
+  /** 파일이 UTF-8 로 유효한지 (EUC-KR 예시 파일이 UTF-8 로 바뀌면 그 테스트만 건너뛴다) */
+  const isUtf8 = (relative: string) => {
+    try {
+      new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(path.join(SRC_ROOT, relative)));
+      return true;
+    } catch {
+      return false;
+    }
+  };
   const FONT_FILE = 'src/main/webapp/font/NanumGothic.ttf';
   const BIG_SCRIPT = 'script/dml/mysql/com_DML_mysql.sql';
   const JAVA_FILE = 'src/main/java/egovframework/com/cop/bbs/service/Board.java';
+  const EUC_KR_JSP = 'src/main/webapp/WEB-INF/jsp/egovframework/com/utl/sys/prm/EgovProcessMon.jsp';
 
   it.skipIf(missing(FONT_FILE))('글꼴 파일은 수 MB 의 내용 대신 메타데이터만 돌려준다', () => {
     const result = readSourceFileInRoot(SRC_ROOT, FONT_FILE);
@@ -352,5 +526,24 @@ describe.skipIf(!hasComponentSources)('readSourceFileInRoot — 동봉 소스 �
     expect(result?.nextOffset).toBeNull();
     expect(result?.size).toBe(fs.statSync(path.join(SRC_ROOT, relative)).size);
     expect(result?.content).toContain('class Board');
+    expect(result?.encoding).toBe('utf-8');
+  });
+
+  it.skipIf(missing(EUC_KR_JSP) || isUtf8(EUC_KR_JSP))('EUC-KR 로 저장된 JSP 를 텍스트로 읽는다', () => {
+    const result = readSourceFileInRoot(SRC_ROOT, EUC_KR_JSP);
+    const bytes = fs.statSync(path.join(SRC_ROOT, EUC_KR_JSP)).size;
+
+    expect(result).not.toBeNull();
+    expect(result!.language).toBe('jsp');
+    expect(result!.encoding).toBe('euc-kr');
+    expect(result!.content).toContain('<%@ page');
+    // 주석의 한글이 깨지지 않고 읽힌다
+    expect(result!.content).toMatch(/[가-힣]{2,}/);
+    expect(result!.content).not.toContain('�');
+    expect(result!.size).toBe(bytes);
+    // 한글은 글자당 2바이트라 문자 수가 바이트 수보다 적다
+    expect(result!.totalChars).toBe(result!.content.length);
+    expect(result!.totalChars).toBeLessThan(bytes);
+    expect(result!.truncated).toBe(false);
   });
 });

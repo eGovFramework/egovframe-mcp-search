@@ -166,6 +166,7 @@ describe('공통컴포넌트 파일 기능 공개 함수 (임시 DB + 임시 소
         filePath: path.normalize(javaFile),
         content: '// 게시판 서비스\npublic class BoardService {}\n',
         language: 'java',
+        encoding: 'utf-8',
         truncated: false,
         nextOffset: null,
       });

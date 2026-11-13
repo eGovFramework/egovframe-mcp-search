@@ -710,6 +710,9 @@ export interface ReadComponentSourceOptions {
   offset?: number;
 }
 
+/** readSource 가 텍스트로 읽는 인코딩 */
+export type SourceTextEncoding = 'utf-8' | 'euc-kr';
+
 /** readComponentSource 의 결과 */
 export interface ComponentSourceContent {
   /** 소스 루트 기준 상대 경로 */
@@ -718,6 +721,8 @@ export interface ComponentSourceContent {
   content: string;
   /** 코드 블록 언어. 바이너리 파일은 'binary' */
   language: string;
+  /** 파일을 텍스트로 읽은 인코딩. 바이너리 파일은 null */
+  encoding: SourceTextEncoding | null;
   /** 파일의 실제 바이트 수 */
   size: number;
   /** content 뒤에 아직 읽지 않은 내용이 남았는지 */
@@ -735,6 +740,7 @@ export interface ComponentSourceContent {
  * 보안: common-components-src 디렉토리 내부만 허용
  *
  * 텍스트는 한 번에 60,000자까지 돌려주고, options.offset 으로 이어 읽는다.
+ * UTF-8 로 읽고, UTF-8 이 아니면 EUC-KR 로 읽는다 (어느 쪽으로 읽었는지는 encoding).
  * 바이너리 파일은 내용 없이 메타데이터만 돌려준다.
  */
 export function readComponentSource(
@@ -785,20 +791,44 @@ function resolveSourcePath(srcRoot: string, filePath: string): ResolvedSourcePat
   return { realPath, relPath };
 }
 
+/** 텍스트로 읽어 볼 인코딩 (앞에서부터 시도한다) */
+const SOURCE_TEXT_ENCODINGS: readonly SourceTextEncoding[] = ['utf-8', 'euc-kr'];
+
+/** 디코딩한 텍스트와 그 인코딩 */
+interface DecodedSourceText {
+  text: string;
+  encoding: SourceTextEncoding;
+}
+
 /**
- * 버퍼를 UTF-8 텍스트로 디코딩한다. 텍스트가 아니면 null.
+ * 버퍼를 지정한 인코딩으로 디코딩한다. 그 인코딩으로 유효한 바이트열이 아니면 null.
  *
- * 확장자가 아니라 내용으로 판정한다: NUL 바이트가 있거나 UTF-8 로 유효하게 디코딩되지
- * 않으면 바이너리다. 확장자 목록에 없는 글꼴(.ttf, .woff)·문서(.hwp, .xls)도 걸러지고,
- * 텍스트인 .svg 는 읽을 수 있다. 맨 앞의 BOM 은 디코더가 떼어 낸다.
+ * ICU 를 빼고 빌드한 Node 처럼 런타임에 그 인코딩의 디코더가 없으면 TextDecoder 생성이
+ * RangeError 를 던진다. 그때도 예외를 전파하지 않고 null 을 돌려준다.
  */
-function decodeUtf8Text(buffer: Buffer): string | null {
-  if (buffer.includes(0)) return null;
+function decodeStrict(buffer: Buffer, encoding: SourceTextEncoding): string | null {
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+    return new TextDecoder(encoding, { fatal: true }).decode(buffer);
   } catch {
     return null;
   }
+}
+
+/**
+ * 버퍼를 텍스트로 디코딩한다. 텍스트가 아니면 null.
+ *
+ * 확장자가 아니라 내용으로 판정한다: NUL 바이트가 있으면 바이너리다. 없으면 UTF-8 로,
+ * UTF-8 로 유효하지 않으면 EUC-KR 로 디코딩해 보고(EUC-KR 로 남아 있는 오래된 JSP 가
+ * 있다) 둘 다 실패하면 바이너리다. 확장자 목록에 없는 글꼴(.ttf, .woff)·문서(.hwp, .xls)도
+ * 걸러지고, 텍스트인 .svg 는 읽을 수 있다. 맨 앞의 UTF-8 BOM 은 디코더가 떼어 낸다.
+ */
+function decodeSourceText(buffer: Buffer): DecodedSourceText | null {
+  if (buffer.includes(0)) return null;
+  for (const encoding of SOURCE_TEXT_ENCODINGS) {
+    const text = decodeStrict(buffer, encoding);
+    if (text !== null) return { text, encoding };
+  }
+  return null;
 }
 
 /** offset 을 0 이상 totalChars 이하의 정수로 맞춘다 (유한한 숫자가 아니면 0) */
@@ -833,14 +863,16 @@ export function readSourceFileInRoot(
   });
   if (!file) return null;
 
-  const text = decodeUtf8Text(file.buffer);
+  const decoded = decodeSourceText(file.buffer);
 
-  // 바이너리 파일은 내용 없이 메타데이터만 돌려준다
-  if (text === null) {
+  // 바이너리 파일은 내용 없이 메타데이터만 돌려준다.
+  // 안내 문구는 UTF-8 만 말한다: EUC-KR 디코더가 없는 런타임에서는 EUC-KR 텍스트도 여기로 온다
+  if (decoded === null) {
     return {
       filePath: relPath,
       content: '[바이너리 파일 - UTF-8 텍스트가 아니어서 내용을 표시하지 않습니다]',
       language: 'binary',
+      encoding: null,
       size: file.size,
       truncated: false,
       totalChars: 0,
@@ -849,7 +881,8 @@ export function readSourceFileInRoot(
     };
   }
 
-  // 텍스트는 offset 부터 상한까지만 돌려준다
+  // 텍스트는 offset 부터 상한까지만 돌려준다 (위치와 길이는 디코딩한 문자열 기준)
+  const { text, encoding } = decoded;
   const totalChars = text.length;
   const offset = normalizeCharOffset(options.offset, totalChars);
   let end = Math.min(totalChars, offset + SOURCE_READ_MAX_CHARS);
@@ -863,6 +896,7 @@ export function readSourceFileInRoot(
     filePath: relPath,
     content: text.slice(offset, end),
     language: getLanguageFromExtension(path.extname(realPath).toLowerCase()),
+    encoding,
     // 디코딩한 문자 수가 아니라 파일의 실제 바이트 수
     size: file.size,
     truncated,
