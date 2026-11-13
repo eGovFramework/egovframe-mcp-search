@@ -10,6 +10,9 @@ import { getInitializedGuideManager } from "../rag/guideManager.js";
 import { getHybridManager } from "../database/hybridManager.js";
 import { GUIDE_SITE_BASE_URL } from "../kb/sources.js";
 import { UserFacingError, toUserMessage } from "../utils/errors.js";
+import { extractSearchTerms } from "../utils/fts5Query.js";
+import { KNOWLEDGE_TYPES, type KnowledgeType } from "../types/knowledge.js";
+import type { CommonComponent } from "../types/database.js";
 import { searchKnowledge } from "./knowledge.js";
 import { searchCompatibleSoftware } from "./compatibility.js";
 import {
@@ -41,8 +44,8 @@ export type SearchScope = (typeof SEARCH_SCOPES)[number];
 /** auto 를 실제 출처로 해석한 뒤의 scope */
 type ResolvedScope = Exclude<SearchScope, "auto">;
 
-/** 개발자 지식의 type 필터가 받는 값 (src/types/knowledge.ts 의 KnowledgeType 과 같다). */
-export const KNOWLEDGE_TYPES = ["solution", "tip", "pattern", "error-fix", "best-practice", "gotcha"] as const;
+/** 개발자 지식의 type 필터가 받는 값. server.ts 의 inputSchema enum 이 이 배열을 쓴다. */
+export { KNOWLEDGE_TYPES };
 
 /**
  * components scope 가 지원하는 action 목록.
@@ -90,22 +93,29 @@ type LimitScope = keyof typeof LIMIT_RULES;
 /** 통합 검색(scope all)에서 limit 을 주지 않았을 때 출처별로 돌려주는 건수. */
 const ALL_SCOPE_SECTION_LIMIT = 5;
 
-/** 출처 하나를 검색할 때의 부가 조건. 통합 검색이 출처별 기본 건수를 줄이는 데 쓴다. */
+/** 통합 검색(scope all)의 개발자 지식 섹션에 싣는 본문 발췌의 최대 길이(문자 수). */
+const ALL_SCOPE_KNOWLEDGE_EXCERPT_LENGTH = 600;
+
+/** 출처 하나를 검색할 때의 부가 조건. 통합 검색이 출처별 응답 크기를 줄이는 데 쓴다. */
 interface SectionOptions {
   defaultLimit?: number;
+  /** 개발자 지식의 본문을 이 길이 이내의 발췌로 줄인다. */
+  knowledgeExcerptLength?: number;
 }
+
+/** componentId 와 그 별칭. 값이 먼저 지정된 키가 쓰인다. */
+const COMPONENT_ID_KEYS = ["componentId", "component", "id"] as const;
 
 /**
  * scope 를 지정하지 않았을 때 출처를 가리키는 필터 키.
  * 여러 출처가 함께 쓰거나 뜻이 넓은 키(category, keyword, version, limit, offset)는 넣지 않는다.
  */
 const COMPONENT_FILTER_KEYS = [
-  "componentId",
-  "component",
-  "id",
+  ...COMPONENT_ID_KEYS,
   "componentIds",
   "filePath",
   "dbType",
+  "table",
   "categoryId",
   "hasWeb",
 ] as const;
@@ -169,6 +179,11 @@ function formatJson(title: string, value: unknown): string {
   return `## ${title}\n\n\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``;
 }
 
+/** 숫자를 세 자리마다 쉼표로 끊어 적는다 (실행 환경의 로캘에 좌우되지 않게 고정한다). */
+function formatCount(value: number): string {
+  return value.toLocaleString("en-US");
+}
+
 function requireQuery(query: string | undefined, scope: string): string {
   if (!query) {
     throw new UserFacingError(`query is required for ${scope} search`);
@@ -186,10 +201,15 @@ interface ResolvedLimit {
   note?: string;
 }
 
+/** 호출자가 limit 을 직접 지정했는지 (최상위 limit 또는 filters.limit). */
+function requestedLimit(args: EgovSearchKnowledgeArgs): number | undefined {
+  return asPositiveInt(args.limit) ?? asPositiveInt(getFilters(args).limit);
+}
+
 /** 최상위 limit 이 filters.limit 보다 우선한다. 둘 다 없으면 범위 기본값을 쓴다. */
 function resolveLimit(args: EgovSearchKnowledgeArgs, scope: LimitScope, options: SectionOptions = {}): ResolvedLimit {
   const rule = LIMIT_RULES[scope];
-  const requested = asPositiveInt(args.limit) ?? asPositiveInt(getFilters(args).limit);
+  const requested = requestedLimit(args);
   if (requested === undefined) {
     return { value: options.defaultLimit ?? rule.fallback };
   }
@@ -202,8 +222,10 @@ function resolveLimit(args: EgovSearchKnowledgeArgs, scope: LimitScope, options:
   return { value: requested };
 }
 
-function withNote(text: string, note: string | undefined): string {
-  return note ? `${text}\n\n${note}` : text;
+/** 본문 뒤에 안내 줄을 덧붙인다. 값이 없는 안내는 건너뛴다. */
+function withNotes(text: string, ...notes: Array<string | undefined>): string {
+  const present = notes.filter((note): note is string => Boolean(note));
+  return present.length > 0 ? `${text.trimEnd()}\n\n${present.join("\n\n")}` : text;
 }
 
 let compatibilityCategories: Set<string> | undefined;
@@ -229,10 +251,32 @@ function isCompatibilityCategory(value: string): boolean {
   return compatibilityCategories.has(value.toLowerCase());
 }
 
-/** filters.category 가 호환 소프트웨어 분류를 가리키는지. */
-function hasCompatibilityCategory(filters: Record<string, unknown>): boolean {
+/**
+ * 값이 가이드 문서의 category 인지 확인한다 (대소문자 무시).
+ * 가이드 인덱스를 읽지 못하면 false 를 돌려주고, 실제 오류는 가이드를 검색할 때 드러난다.
+ */
+async function isGuideCategory(value: string): Promise<boolean> {
+  try {
+    const facets = await (await getInitializedGuideManager()).getFacets();
+    const wanted = value.toLowerCase();
+    return facets.categories.some((category) => category.value.toLowerCase() === wanted);
+  } catch {
+    return false;
+  }
+}
+
+/** filters.category 가 어느 출처의 분류 값인지. */
+interface CategoryOwner {
+  guide: boolean;
+  compatibility: boolean;
+}
+
+async function findCategoryOwner(filters: Record<string, unknown>): Promise<CategoryOwner> {
   const category = asString(filters.category);
-  return category !== undefined && isCompatibilityCategory(category);
+  if (category === undefined) {
+    return { guide: false, compatibility: false };
+  }
+  return { guide: await isGuideCategory(category), compatibility: isCompatibilityCategory(category) };
 }
 
 async function searchGuide(args: EgovSearchKnowledgeArgs, options: SectionOptions = {}): Promise<string> {
@@ -263,29 +307,37 @@ async function searchGuide(args: EgovSearchKnowledgeArgs, options: SectionOption
   if (formatted.length === 0) {
     const applied = [layer ? `layer=${layer}` : "", category ? `category=${category}` : ""].filter(Boolean);
     const hint = applied.length > 0 ? ` 적용한 필터: ${applied.join(", ")}.` : "";
-    return withNote(`${heading}\n\n검색 결과가 없습니다. 다른 키워드로 검색해 보세요.${hint}`, limit.note);
+    return withNotes(`${heading}\n\n검색 결과가 없습니다. 다른 키워드로 검색해 보세요.${hint}`, limit.note);
   }
-  return withNote(`${heading}\n\n${formatted.join("\n\n---\n\n")}`, limit.note);
+  return withNotes(`${heading}\n\n${formatted.join("\n\n---\n\n")}`, limit.note);
 }
 
 async function searchDeveloperKnowledge(args: EgovSearchKnowledgeArgs, options: SectionOptions = {}): Promise<string> {
   const filters = getFilters(args);
   const sortRecent = asString(filters.sort) === "recent";
   // 최근 순 조회는 query 를 쓰지 않으므로 요구하지 않는다.
-  const query = sortRecent ? (args.query ?? "") : requireQuery(args.query, "knowledge");
+  const query = sortRecent ? undefined : requireQuery(args.query, "knowledge");
   const limit = resolveLimit(args, "knowledge", options);
+  const excerptLength = options.knowledgeExcerptLength;
   const result = await searchKnowledge({
     query,
     scope: asString(filters.knowledgeScope) === "all" ? "all" : "knowledge",
     sort: sortRecent ? "recent" : "relevance",
     limit: limit.value,
-    type: asString(filters.type) as any,
+    // type 값이 유효한지는 지식 매니저가 검증한다 (허용되지 않은 값이면 쓸 수 있는 값을 알려 준다).
+    type: asString(filters.type) as KnowledgeType | undefined,
     tags: asStringArray(filters.tags),
-    minImportance: asNumber(filters.minImportance) as any,
+    minImportance: asNumber(filters.minImportance) as 1 | 2 | 3 | 4 | 5 | undefined,
     verifiedOnly: asBoolean(filters.verifiedOnly),
+    excerptLength,
   });
 
-  return withNote(formatJson("개발자 지식 검색 결과", result), limit.note);
+  const excerptNote =
+    excerptLength !== undefined && !sortRecent
+      ? `> 개발자 지식의 본문은 ${excerptLength}자를 넘으면 발췌해서 싣습니다. 전체 본문은 같은 query 에 \`scope: "knowledge"\` 를 지정해 검색하면 볼 수 있습니다.`
+      : undefined;
+
+  return withNotes(formatJson("개발자 지식 검색 결과", result), limit.note, excerptNote);
 }
 
 /** filters.componentId 와 그 별칭(component, id) 가운데 먼저 지정된 값. */
@@ -301,11 +353,33 @@ function requireComponentId(filters: Record<string, unknown>, purpose: string): 
   return componentId;
 }
 
+/** 컴포넌트를 찾지 못했을 때의 안내. 같은 입력으로 찾은 후보가 있으면 컴포넌트 ID 와 함께 나열한다. */
+function formatComponentNotFound(componentId: string, suggestions: CommonComponent[] = []): string {
+  const lines = [`컴포넌트를 찾을 수 없습니다: ${componentId}`];
+  if (suggestions.length > 0) {
+    lines.push("", "비슷한 컴포넌트 (`filters.componentId` 에는 아래의 컴포넌트 ID 를 넣습니다):");
+    for (const suggestion of suggestions) {
+      lines.push(`- \`${suggestion.component_id}\` ${suggestion.name} (${suggestion.package_name})`);
+    }
+  }
+  return lines.join("\n");
+}
+
 function formatComponentDetail(componentId: string): string {
-  const { component, dependencies, dependencyComponents } = getComponentInfo(componentId);
+  const { component, dependencies, dependencyComponents, suggestions } = getComponentInfo(componentId);
   return component
     ? formatComponentInfo(component, dependencies, dependencyComponents)
-    : `컴포넌트를 찾을 수 없습니다: ${componentId}`;
+    : formatComponentNotFound(componentId, suggestions);
+}
+
+/**
+ * 파일 기능(sourceFiles, ddl, dml)에 넘길 컴포넌트를 정한다.
+ * 호출자는 컴포넌트 ID, 패키지명, 정확한 컴포넌트 이름 가운데 하나를 줄 수 있고, 여기서 컴포넌트 ID 로 바꾼다.
+ * 찾지 못하면 후보를 담은 안내 문구를 돌려준다.
+ */
+function resolveComponent(input: string): { id: string } | { notFound: string } {
+  const { component, suggestions } = getComponentInfo(input);
+  return component ? { id: component.component_id } : { notFound: formatComponentNotFound(input, suggestions) };
 }
 
 function formatComponentDependencyLookup(filters: Record<string, unknown>): string {
@@ -323,9 +397,19 @@ function formatComponentDependencyLookup(filters: Record<string, unknown>): stri
 }
 
 function formatComponentSourceFileLookup(filters: Record<string, unknown>): string {
-  const componentId = requireComponentId(filters, "component source file listing");
-  const result = getComponentSourceFiles(componentId);
-  return result ? formatComponentSourceFiles(result) : `컴포넌트를 찾을 수 없습니다: ${componentId}`;
+  const input = requireComponentId(filters, "component source file listing");
+  const resolved = resolveComponent(input);
+  if ("notFound" in resolved) {
+    return resolved.notFound;
+  }
+  const result = getComponentSourceFiles(resolved.id);
+  return result ? formatComponentSourceFiles(result) : formatComponentNotFound(input);
+}
+
+/** 본문에 들어 있는 백틱 연속보다 긴 코드 펜스를 고른다 (본문의 ``` 가 블록을 닫지 않게 한다). */
+function codeFenceFor(content: string): string {
+  const longestRun = Math.max(0, ...(content.match(/`+/g) ?? []).map((run) => run.length));
+  return "`".repeat(Math.max(3, longestRun + 1));
 }
 
 function formatComponentSourceRead(filters: Record<string, unknown>): string {
@@ -333,29 +417,64 @@ function formatComponentSourceRead(filters: Record<string, unknown>): string {
   if (!filePath) {
     throw new UserFacingError("filters.filePath is required for component source reading");
   }
-  const result = readComponentSource(filePath);
+  const result = readComponentSource(filePath, { offset: asNumber(filters.offset) });
   if (!result) {
     return `파일을 찾을 수 없거나 접근할 수 없습니다: ${filePath}`;
   }
-  return [
-    `**파일**: \`${result.filePath}\` (${result.size.toLocaleString()} bytes, ${result.language})`,
-    "",
-    `\`\`\`${result.language}`,
-    result.content,
-    "```",
-  ].join("\n");
-}
 
-function formatComponentScriptLookup(filters: Record<string, unknown>, action: "ddl" | "dml"): string {
-  const componentId = requireComponentId(filters, `component ${action} lookup`);
-  const dbType = asString(filters.dbType) || "mysql";
-  if (action === "ddl") {
-    const result = getComponentDDL(componentId, dbType);
-    return result ? formatComponentDDL(result) : `컴포넌트 '${componentId}'를 찾을 수 없거나 지원하지 않는 DB 타입입니다.`;
+  const header = `**파일**: \`${result.filePath}\` (${formatCount(result.size)} bytes, ${result.language})`;
+  if (result.language === "binary") {
+    // 바이너리 파일의 content 는 파일 내용이 아니라 안내 문구다.
+    return `${header}\n\n${result.content}`;
   }
 
-  const result = getComponentDML(componentId, dbType);
-  return result ? formatComponentDML(result) : `컴포넌트 '${componentId}'를 찾을 수 없거나 지원하지 않는 DB 타입입니다.`;
+  const fence = codeFenceFor(result.content);
+  const body = [header, "", `${fence}${result.language}`, result.content, fence].join("\n");
+
+  // 한 번에 다 싣지 못한 파일은 표시한 범위와 이어 읽는 방법을 알린다.
+  const end = result.offset + result.content.length;
+  if (result.truncated && result.nextOffset !== null) {
+    return withNotes(
+      body,
+      `> 전체 ${formatCount(result.totalChars)}자 중 ${formatCount(result.offset + 1)}~${formatCount(end)}자를 표시했습니다. ` +
+        `이어서 읽으려면 같은 호출에 \`filters.offset: ${result.nextOffset}\` 을 주세요.`,
+    );
+  }
+  if (result.offset > 0) {
+    return withNotes(
+      body,
+      result.content.length > 0
+        ? `> 전체 ${formatCount(result.totalChars)}자 중 ${formatCount(result.offset + 1)}~${formatCount(end)}자를 표시했습니다 (파일의 끝).`
+        : `> filters.offset ${result.offset} 부터는 남은 내용이 없습니다 (전체 ${formatCount(result.totalChars)}자).`,
+    );
+  }
+  return body;
+}
+
+function formatComponentScriptLookup(
+  args: EgovSearchKnowledgeArgs,
+  filters: Record<string, unknown>,
+  action: "ddl" | "dml",
+): string {
+  const input = requireComponentId(filters, `component ${action} lookup`);
+  const dbType = asString(filters.dbType) || "mysql";
+  const resolved = resolveComponent(input);
+  if ("notFound" in resolved) {
+    return resolved.notFound;
+  }
+
+  if (action === "ddl") {
+    const result = getComponentDDL(resolved.id, dbType);
+    return result ? formatComponentDDL(result) : formatComponentNotFound(input);
+  }
+
+  // 기본 보기는 테이블마다 처음 몇 건만 보여 준다. filters.table 을 주면 그 테이블을 limit·offset 으로 나눠 조회한다.
+  const result = getComponentDML(resolved.id, dbType, {
+    table: asString(filters.table),
+    limit: requestedLimit(args),
+    offset: asNumber(filters.offset),
+  });
+  return result ? formatComponentDML(result) : formatComponentNotFound(input);
 }
 
 function formatComponentListLookup(
@@ -363,30 +482,57 @@ function formatComponentListLookup(
   filters: Record<string, unknown>,
   options: SectionOptions = {},
 ): string {
-  if (args.query) {
+  const listFilters = {
+    categoryId: asString(filters.categoryId),
+    keyword: asString(filters.keyword),
+    hasWeb: asBoolean(filters.hasWeb),
+    version: asString(filters.version),
+  };
+  const hasFilters = Object.values(listFilters).some((value) => value !== undefined);
+
+  // 검색어를 하나도 추출할 수 없는 query("*" 처럼 기호뿐인 값)는 지정하지 않은 것으로 본다.
+  const query = args.query && extractSearchTerms(args.query).length > 0 ? args.query : undefined;
+
+  if (query) {
     const limit = resolveLimit(args, "components", options);
-    const { results } = searchComponents(args.query, limit.value);
-    return withNote(formatComponentList(results, false), limit.note);
+    const { results, total, matchMode } = searchComponents(query, limit.value, listFilters);
+    return withNotes(formatComponentList(results, false, { total, matchMode }), limit.note);
   }
 
-  const hasFilters =
-    Boolean(asString(filters.categoryId)) ||
-    Boolean(asString(filters.keyword)) ||
-    asBoolean(filters.hasWeb) !== undefined ||
-    Boolean(asString(filters.version));
-
   if (hasFilters) {
-    const { components } = listCommonComponents({
-      categoryId: asString(filters.categoryId),
-      keyword: asString(filters.keyword),
-      hasWeb: asBoolean(filters.hasWeb),
-      version: asString(filters.version),
-    });
-    return formatComponentList(components);
+    // limit 을 주지 않으면 조건에 맞는 컴포넌트를 모두 보여 준다 (전체가 150개 안팎이라 한 번에 볼 수 있다).
+    // 통합 검색에서는 다른 출처와 같이 출처별 기본 건수를 따른다.
+    const limit =
+      requestedLimit(args) !== undefined || options.defaultLimit !== undefined
+        ? resolveLimit(args, "components", options)
+        : undefined;
+    const { components, total } = listCommonComponents(listFilters, limit?.value);
+    return withNotes(formatComponentList(components, true, { total }), limit?.note);
   }
 
   const { categories } = listComponentCategories();
   return `${formatCategoryList(categories)}\n---\n\n${formatComponentSummary(getComponentSummary())}`;
+}
+
+function runComponentAction(
+  args: EgovSearchKnowledgeArgs,
+  filters: Record<string, unknown>,
+  action: ComponentAction,
+): string {
+  switch (action) {
+    case "get":
+    case "info":
+      return formatComponentDetail(requireComponentId(filters, "component detail lookup"));
+    case "dependencies":
+      return formatComponentDependencyLookup(filters);
+    case "sourceFiles":
+      return formatComponentSourceFileLookup(filters);
+    case "readSource":
+      return formatComponentSourceRead(filters);
+    case "ddl":
+    case "dml":
+      return formatComponentScriptLookup(args, filters, action);
+  }
 }
 
 function searchComponentsGateway(args: EgovSearchKnowledgeArgs, options: SectionOptions = {}): string {
@@ -406,20 +552,7 @@ function searchComponentsGateway(args: EgovSearchKnowledgeArgs, options: Section
     );
   }
 
-  switch (action) {
-    case "get":
-    case "info":
-      return formatComponentDetail(requireComponentId(filters, "component detail lookup"));
-    case "dependencies":
-      return formatComponentDependencyLookup(filters);
-    case "sourceFiles":
-      return formatComponentSourceFileLookup(filters);
-    case "readSource":
-      return formatComponentSourceRead(filters);
-    case "ddl":
-    case "dml":
-      return formatComponentScriptLookup(filters, action);
-  }
+  return runComponentAction(args, filters, action);
 }
 
 async function searchCompatibility(args: EgovSearchKnowledgeArgs, options: SectionOptions = {}): Promise<string> {
@@ -429,52 +562,58 @@ async function searchCompatibility(args: EgovSearchKnowledgeArgs, options: Secti
     query: args.query,
     frameworkVersion: asString(filters.frameworkVersion),
     category: asString(filters.category),
-    minLevel: asNumber(filters.minLevel) as any,
+    minLevel: asNumber(filters.minLevel) as 1 | 2 | undefined,
     vendor: asString(filters.vendor),
     productName: asString(filters.productName),
     limit: limit.value,
+    offset: asNumber(filters.offset),
     includeKnowledge: asBoolean(filters.includeKnowledge),
   });
 
-  return withNote(formatJson("호환 소프트웨어 검색 결과", result), limit.note);
+  // 뒤에 남은 결과가 있으면 다음 구간을 조회하는 방법을 알린다.
+  const shownEnd = result.offset + result.count;
+  const shownRange = result.count === 1 ? `${shownEnd}번째` : `${result.offset + 1}~${shownEnd}번째`;
+  const pagingNote =
+    result.count > 0 && shownEnd < result.total
+      ? `> 전체 ${result.total}건 중 ${shownRange} 결과를 표시했습니다. 다음 구간은 같은 호출에 \`filters.offset: ${shownEnd}\` 을 주어 조회합니다.`
+      : undefined;
+
+  return withNotes(formatJson("호환 소프트웨어 검색 결과", result), limit.note, pagingNote);
 }
 
 async function searchAll(args: EgovSearchKnowledgeArgs): Promise<string> {
   requireQuery(args.query, "all");
 
-  // 필터는 그 필터를 쓰는 출처에만 넘긴다. 함께 쓰는 키인 category 는 값으로 출처를 가린다.
+  // 필터는 그 필터를 쓰는 출처에만 넘긴다. 함께 쓰는 키인 category 는 값으로 출처를 가린다:
+  // 한쪽 출처의 분류 값으로 확인되면 그 출처에만 넘기고, 어느 쪽 값도 아니면 양쪽에 넘겨
+  // 각 출처가 쓸 수 있는 값을 안내하게 한다.
   const filters = getFilters(args);
-  const categoryIsCompatibility = hasCompatibilityCategory(filters);
+  const owner = await findCategoryOwner(filters);
+  const categoryForGuide = owner.guide || !owner.compatibility ? ["category"] : [];
+  const categoryForCompatibility = owner.compatibility || !owner.guide ? ["category"] : [];
+
+  const guideKeys = [...GUIDE_FILTER_KEYS, ...categoryForGuide];
+  const knowledgeKeys = ["type", "tags", "minImportance", "verifiedOnly"];
+  const componentKeys = [...COMPONENT_FILTER_KEYS, "keyword", "version"];
+  const compatibilityKeys = [...COMPATIBILITY_FILTER_KEYS, ...categoryForCompatibility];
+
   const limitFilter = pickFilters(filters, ["limit"]);
   const forSource = (keys: readonly string[]): EgovSearchKnowledgeArgs => ({
     ...args,
     filters: { ...pickFilters(filters, keys), ...limitFilter },
   });
-  const options: SectionOptions = { defaultLimit: ALL_SCOPE_SECTION_LIMIT };
+  const options: SectionOptions = {
+    defaultLimit: ALL_SCOPE_SECTION_LIMIT,
+    knowledgeExcerptLength: ALL_SCOPE_KNOWLEDGE_EXCERPT_LENGTH,
+  };
 
   const sections = await Promise.all(
     (
       [
-        [
-          "공식 가이드",
-          () => searchGuide(forSource([...GUIDE_FILTER_KEYS, ...(categoryIsCompatibility ? [] : ["category"])]), options),
-        ],
-        [
-          "개발자 지식",
-          () => searchDeveloperKnowledge(forSource(["type", "tags", "minImportance", "verifiedOnly"]), options),
-        ],
-        [
-          "공통컴포넌트",
-          async () => searchComponentsGateway(forSource([...COMPONENT_FILTER_KEYS, "keyword", "version"]), options),
-        ],
-        [
-          "호환 소프트웨어",
-          () =>
-            searchCompatibility(
-              forSource([...COMPATIBILITY_FILTER_KEYS, ...(categoryIsCompatibility ? ["category"] : [])]),
-              options,
-            ),
-        ],
+        ["공식 가이드", () => searchGuide(forSource(guideKeys), options)],
+        ["개발자 지식", () => searchDeveloperKnowledge(forSource(knowledgeKeys), options)],
+        ["공통컴포넌트", async () => searchComponentsGateway(forSource(componentKeys), options)],
+        ["호환 소프트웨어", () => searchCompatibility(forSource(compatibilityKeys), options)],
       ] as Array<[string, () => Promise<string>]>
     ).map(async ([title, run]) => {
       try {
@@ -493,10 +632,11 @@ async function searchAll(args: EgovSearchKnowledgeArgs): Promise<string> {
  * scope 를 지정하지 않았을 때(auto) 검색할 출처를 정한다.
  *
  * 1. action 이 있으면 components (action 은 components 에서만 지원한다)
- * 2. 출처를 가리키는 필터가 있으면 그 출처 (components → compatibility → guide → knowledge 순으로 확인)
+ * 2. 출처를 가리키는 필터가 있으면 그 출처 (components → compatibility → guide → knowledge 순으로 확인).
+ *    함께 쓰는 키인 category 는 값이 어느 출처의 분류인지로 가린다.
  * 3. 그 밖에는 query 가 있으면 통합 검색, 없으면 공통컴포넌트 카테고리 개요
  */
-function inferScope(args: EgovSearchKnowledgeArgs): ResolvedScope {
+async function inferScope(args: EgovSearchKnowledgeArgs): Promise<ResolvedScope> {
   const filters = getFilters(args);
   if (args.action) {
     return "components";
@@ -504,7 +644,11 @@ function inferScope(args: EgovSearchKnowledgeArgs): ResolvedScope {
   if (hasAnyFilter(filters, COMPONENT_FILTER_KEYS)) {
     return "components";
   }
-  if (hasAnyFilter(filters, COMPATIBILITY_FILTER_KEYS) || hasCompatibilityCategory(filters)) {
+  if (hasAnyFilter(filters, COMPATIBILITY_FILTER_KEYS)) {
+    return "compatibility";
+  }
+  const category = asString(filters.category);
+  if (category !== undefined && isCompatibilityCategory(category)) {
     return "compatibility";
   }
   if (hasAnyFilter(filters, GUIDE_FILTER_KEYS)) {
@@ -523,7 +667,7 @@ export async function egovSearchKnowledge(rawArgs: EgovSearchKnowledgeArgs): Pro
     query: asString(rawArgs.query),
     action: rawArgs.action || undefined,
   };
-  const scope: ResolvedScope = args.scope && args.scope !== "auto" ? args.scope : inferScope(args);
+  const scope: ResolvedScope = args.scope && args.scope !== "auto" ? args.scope : await inferScope(args);
 
   if (args.action && scope !== "components") {
     throw new UserFacingError(

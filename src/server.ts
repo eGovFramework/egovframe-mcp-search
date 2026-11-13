@@ -26,6 +26,7 @@ import {
   SEARCH_SCOPES,
   runEgovSearchKnowledge,
 } from "./tools/egovSearchKnowledge.js";
+import { SUPPORTED_DB_TYPES } from "./tools/commonComponents.js";
 
 // 서버 버전은 package.json 한 곳에서만 관리한다 (build/server.js 기준 한 단계 위).
 const packageJson = createRequire(import.meta.url)("../package.json") as { version: string };
@@ -46,13 +47,13 @@ const filtersSchema = z.strictObject({
     .string()
     .optional()
     .describe(
-      "guide: top-level area of the Developer Guide, e.g. egovframe-runtime, egovframe-development, common-component.",
+      "guide: top-level area of the Developer Guide, e.g. egovframe-runtime, egovframe-development, common-component (case-insensitive). An unknown value is rejected with the list of valid values.",
     ),
   category: z
     .string()
     .optional()
     .describe(
-      "guide: sub-area under a layer, e.g. persistence-layer. compatibility: software category name, e.g. 'CMS Solution', 'WAS', 'DBMS'.",
+      "guide: sub-area under a layer, e.g. persistence-layer, security. compatibility: software category name, e.g. 'CMS Solution', 'WAS', 'DBMS'. Case-insensitive. With scope auto or all, the value decides which source the filter belongs to.",
     ),
 
   // ── knowledge ──
@@ -78,7 +79,7 @@ const filtersSchema = z.strictObject({
     .enum(["relevance", "recent"])
     .optional()
     .describe(
-      "knowledge: relevance (default, semantic search) or recent (latest indexed entries; query is not needed and not used).",
+      "knowledge: relevance (default, semantic search) or recent (most recently indexed entries without content; query is not needed and not used).",
     ),
   knowledgeScope: z
     .enum(["knowledge", "all"])
@@ -90,7 +91,7 @@ const filtersSchema = z.strictObject({
     .string()
     .optional()
     .describe(
-      "components: component ID (e.g. uia) or package name (e.g. egovframework.com.uat.uia). Target of get/info, sourceFiles, ddl, dml; also accepted by dependencies.",
+      "components: component ID (e.g. uia), package name (e.g. egovframework.com.uat.uia) or exact component name; case-insensitive. Target of get/info, sourceFiles, ddl, dml; also accepted by dependencies (ID or package name). When nothing matches, the response lists similar components with their IDs.",
     ),
   component: z.string().optional().describe("components: alias of componentId."),
   id: z.string().optional().describe("components: alias of componentId."),
@@ -102,34 +103,53 @@ const filtersSchema = z.strictObject({
     .string()
     .optional()
     .describe(
-      "components: path of one source file for action readSource, relative to the component source root, as printed by action sourceFiles.",
+      "components: path of one source file for action readSource, relative to the component source root, as printed by action sourceFiles. Absolute paths and paths outside the source root are not readable.",
     ),
   dbType: z
     .string()
     .optional()
     .describe(
-      "components: database for ddl/dml. One of mysql (default), maria, oracle, postgres, tibero, cubrid, altibase, goldilocks.",
+      `components: database for ddl/dml. One of ${SUPPORTED_DB_TYPES.join(", ")} (default mysql; aliases mariadb, postgresql, pgsql). Any other value is rejected.`,
+    ),
+  table: z
+    .string()
+    .optional()
+    .describe(
+      "components: with action dml, return only the INSERT statements of this table (one of the tables listed by the default dml view), paged by limit (max 100) and filters.offset.",
     ),
   categoryId: z
     .string()
     .optional()
-    .describe("components: list the components of one category (category ID)."),
+    .describe(
+      "components: keep only the components of one category. Accepts the category ID, Korean name or English name shown by the category overview (a components call without query and filters). Applies to the list and to the keyword search.",
+    ),
   keyword: z
     .string()
     .optional()
-    .describe("components: substring filter on component name, description and package name for the list."),
-  hasWeb: z.boolean().optional().describe("components: filter the list by whether the component ships web pages."),
-  version: z.string().optional().describe("components: filter the list by component metadata version."),
+    .describe(
+      "components: substring filter on component name, description and package name. Applies to the list and to the keyword search.",
+    ),
+  hasWeb: z
+    .boolean()
+    .optional()
+    .describe("components: filter the list or keyword search by whether the component ships web pages."),
+  version: z
+    .string()
+    .optional()
+    .describe("components: filter the list or keyword search by component metadata version."),
 
   // ── compatibility ──
   frameworkVersion: z
     .string()
     .optional()
     .describe(
-      'compatibility: eGovFrame version as a string in major.minor form, e.g. "4.3" or "3.10" (a JSON number is rejected because 3.10 would become 3.1).',
+      'compatibility: eGovFrame version as a string in major.minor form, e.g. "4.3" or "3.10" ("v4.3" and "4.3.0" are normalized; a JSON number is rejected because 3.10 would become 3.1). When no row matches, the response lists the available versions.',
     ),
   vendor: z.string().optional().describe("compatibility: substring of the vendor name."),
-  productName: z.string().optional().describe("compatibility: substring of the product name."),
+  productName: z
+    .string()
+    .optional()
+    .describe('compatibility: substring of the product name or of the product version label, e.g. "JEUS" or "JEUS 8.5".'),
   minLevel: z
     .number()
     .int()
@@ -140,7 +160,9 @@ const filtersSchema = z.strictObject({
   includeKnowledge: z
     .boolean()
     .optional()
-    .describe("compatibility: also attach developer-knowledge entries related to the returned products."),
+    .describe(
+      "compatibility: also attach developer-knowledge entries that mention the returned products (needs the local embedding model).",
+    ),
 
   // ── paging ──
   limit: z
@@ -150,6 +172,14 @@ const filtersSchema = z.strictObject({
     .max(200)
     .optional()
     .describe("Same as the top-level limit; the top-level value wins when both are given."),
+  offset: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "Where to continue a paged result. compatibility: number of rows to skip. components action dml with filters.table: number of INSERT statements to skip. components action readSource: character position to continue from (the nextOffset printed by the previous response). Not supported elsewhere.",
+    ),
 });
 
 server.registerTool(
@@ -169,19 +199,19 @@ server.registerTool(
         .string()
         .optional()
         .describe(
-          'Search question or keywords. Required for the guide, knowledge and all scopes (except knowledge with filters.sort "recent"). Optional for components and compatibility, where it runs a keyword search. A blank string counts as not given.',
+          'Search question or keywords. Required for the guide, knowledge and all scopes (except knowledge with filters.sort "recent"), where it runs a semantic search. Optional for components and compatibility, where it runs a keyword search: every word must match as a word prefix, and when nothing matches, rows that contain at least half of the words as substrings are returned and marked (matchMode any-term). Prefer a few keywords over a sentence there. A blank string counts as not given.',
         ),
       scope: z
         .enum(SEARCH_SCOPES)
         .optional()
         .describe(
-          "Search source. guide: official Developer Guide. knowledge: portal Q&A / FAQ / application guide. components: common components. compatibility: compatible software catalog. all: every source at once. auto (default) infers the source: an action or a component filter (componentId, componentIds, filePath, dbType, categoryId, hasWeb) → components; a compatibility filter (frameworkVersion, vendor, productName, minLevel, includeKnowledge, or a category that names a software category) → compatibility; layer → guide; a knowledge filter (type, tags, minImportance, verifiedOnly, sort) → knowledge; otherwise a query searches all sources and a call without query returns the component category overview. An explicit scope is always used as given.",
+          "Search source. guide: official Developer Guide. knowledge: portal Q&A / FAQ / application guide. components: common components. compatibility: compatible software catalog. all: every source at once. auto (default) infers the source: an action or a component filter (componentId, componentIds, filePath, dbType, table, categoryId, hasWeb) → components; a compatibility filter (frameworkVersion, vendor, productName, minLevel, includeKnowledge, or a category that names a software category) → compatibility; layer → guide; a knowledge filter (type, tags, minImportance, verifiedOnly, sort) → knowledge; otherwise a query searches all sources and a call without query returns the component category overview. An explicit scope is always used as given. With all, each filter is applied only to the source it belongs to and the knowledge section carries excerpts.",
         ),
       // 빈 문자열은 "지정하지 않음"으로 받는다 (쓰지 않는 선택 파라미터를 "" 로 채워 보내는 클라이언트 호환).
       action: z
         .preprocess((value) => (value === "" ? undefined : value), z.enum(COMPONENT_ACTIONS).optional())
         .describe(
-          "Optional sub-action, supported only for the components scope. get/info: component detail (filters.componentId). dependencies: transitive dependencies (filters.componentIds array, or a single filters.componentId). sourceFiles: source file list (filters.componentId). readSource: one source file (filters.filePath). ddl: pre-built CREATE TABLE statements (filters.componentId, optional filters.dbType). dml: initial INSERT statements (filters.componentId, optional filters.dbType). Without an action, filters.componentId returns the component detail and otherwise the component list/search runs.",
+          "Optional sub-action, supported only for the components scope. get/info: component detail (filters.componentId). dependencies: transitive dependencies (filters.componentIds array, or a single filters.componentId). sourceFiles: source file list (filters.componentId). readSource: one source file (filters.filePath), up to 60,000 characters per call; continue with filters.offset. ddl: pre-built CREATE TABLE / INDEX / VIEW statements (filters.componentId, optional filters.dbType). dml: initial INSERT statements (filters.componentId, optional filters.dbType), by default the first 20 per table; add filters.table to page through one table with limit and filters.offset. Without an action, filters.componentId returns the component detail and otherwise the component list/search runs.",
         ),
       filters: filtersSchema
         .optional()
@@ -195,7 +225,7 @@ server.registerTool(
         .max(200)
         .optional()
         .describe(
-          "Maximum number of results (integer). Defaults: guide 5, knowledge 5, components 20, compatibility 20; with scope all, 5 per source. Per-scope maximum: guide 20, knowledge 20, components 200, compatibility 100; a larger value is reduced to the maximum and the response says so.",
+          "Maximum number of results (integer). Defaults: guide 5, knowledge 5, components keyword search 20 (a filter-only component list returns every match), compatibility 20; with scope all, 5 per source. Per-scope maximum: guide 20, knowledge 20, components 200, compatibility 100; a larger value is reduced to the maximum and the response says so. With action dml and filters.table it is the number of INSERT statements per call (default and maximum 100).",
         ),
       strictScope: z
         .boolean()

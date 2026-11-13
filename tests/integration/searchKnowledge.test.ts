@@ -356,6 +356,257 @@ describe("integration — egov_search_knowledge 입력 검증", () => {
   });
 });
 
+/** 응답 본문에서 첫 번째 json 코드 블록을 꺼내 파싱한다. */
+function parseJsonBlock(text: string): any {
+  const match = text.match(/```json\n([\s\S]*?)\n```/);
+  if (!match) throw new Error("응답에 json 코드 블록이 없습니다");
+  return JSON.parse(match[1]);
+}
+
+/** 통합 검색 응답을 출처별 섹션으로 나눈다. */
+function splitSections(text: string): string[] {
+  return text.split("\n\n---\n\n");
+}
+
+describe("integration — egov_search_knowledge 공통컴포넌트 조회", () => {
+  let client: Client;
+
+  beforeAll(async () => {
+    client = await createMcpClient();
+  });
+
+  afterAll(async () => {
+    await client?.close();
+  });
+
+  const search = (args: Record<string, unknown>) => callSearchKnowledge(client, args);
+
+  it("컴포넌트를 찾지 못하면 비슷한 컴포넌트의 ID 를 함께 알려 준다", async () => {
+    // '로그인' 은 ID 도 패키지명도 아니고, 같은 이름의 컴포넌트도 없다
+    const res = await search({ scope: "components", filters: { componentId: "로그인" } });
+    expect(res.isError).toBe(false);
+    expect(res.text).toContain("컴포넌트를 찾을 수 없습니다: 로그인");
+    // 후보는 같은 입력으로 키워드 검색한 상위 5건이다
+    expect(res.text).toContain("비슷한 컴포넌트");
+    expect(res.text).toContain("- `uap` 로그인정책관리");
+    expect(res.text.match(/^- `/gm)?.length).toBe(5);
+  });
+
+  it("후보가 없는 입력에는 후보 목록을 붙이지 않는다", async () => {
+    const res = await search({ scope: "components", filters: { componentId: "zzz-없는-컴포넌트" } });
+    expect(res.isError).toBe(false);
+    expect(res.text).toContain("컴포넌트를 찾을 수 없습니다: zzz-없는-컴포넌트");
+    expect(res.text).not.toContain("비슷한 컴포넌트");
+  });
+
+  it.skipIf(!hasComponentSources())("컴포넌트 이름으로도 ddl 을 조회할 수 있다", async () => {
+    const byName = await search({ scope: "components", action: "ddl", filters: { componentId: "블로그관리" } });
+    expect(byName.isError).toBe(false);
+    expect(byName.text).toContain("DDL (mysql)");
+    expect(byName.text).toMatch(/CREATE TABLE/i);
+  });
+
+  it.skipIf(!hasComponentSources())("파일 기능에서 컴포넌트를 찾지 못해도 후보를 알려 준다", async () => {
+    const res = await search({ scope: "components", action: "sourceFiles", filters: { componentId: "로그인" } });
+    expect(res.isError).toBe(false);
+    expect(res.text).toContain("컴포넌트를 찾을 수 없습니다: 로그인");
+    expect(res.text).toContain("- `uap` 로그인정책관리");
+  });
+
+  it("query 와 목록 필터를 함께 주면 두 조건을 모두 적용한다", async () => {
+    const res = await search({ scope: "components", query: "login", filters: { categoryId: "로그인" }, limit: 10 });
+    expect(res.isError).toBe(false);
+    expect(res.text).toContain("`uia`");
+    // 'login' 으로는 찾히지만 다른 카테고리에 속한 컴포넌트는 빠져야 한다
+    expect(res.text).not.toContain("`rsc`");
+    expect(res.text).not.toContain("`oauth`");
+  });
+
+  it("필터 목록에 limit 을 주면 전체 건수와 함께 그만큼만 보여 준다", async () => {
+    const res = await search({ scope: "components", filters: { keyword: "로그인" }, limit: 3 });
+    expect(res.isError).toBe(false);
+    expect(res.text).toMatch(/공통컴포넌트 목록 \(\d+개 중 3개 표시\)/);
+  });
+
+  it("limit 을 주지 않은 필터 목록은 조건에 맞는 컴포넌트를 모두 보여 준다", async () => {
+    const res = await search({ scope: "components", filters: { hasWeb: true } });
+    expect(res.isError).toBe(false);
+    expect(res.text).not.toContain("개 중");
+    const count = Number(res.text.match(/공통컴포넌트 목록 \((\d+)개\)/)?.[1]);
+    expect(count).toBeGreaterThan(20);
+  });
+
+  it("키워드 검색 결과가 limit 보다 많으면 전체 건수를 알린다", async () => {
+    const res = await search({ scope: "components", query: "관리", limit: 2 });
+    expect(res.isError).toBe(false);
+    expect(res.text).toMatch(/공통컴포넌트 목록 \(\d+개 중 2개 표시\)/);
+  });
+
+  it("낱말 접두 일치로 찾지 못해 부분 일치로 찾은 결과는 그 사실을 알린다", async () => {
+    // '증서' 로 시작하는 낱말은 없고 '인증서로그인' 의 가운데에만 있다
+    const res = await search({ scope: "components", query: "증서" });
+    expect(res.isError).toBe(false);
+    expect(res.text).toContain("`sec`");
+    expect(res.text).toContain("일부 검색어만 일치");
+  });
+
+  it("검색어를 추출할 수 없는 query 는 없는 것으로 보고 필터 목록을 돌려준다", async () => {
+    const res = await search({ scope: "components", query: "*", filters: { categoryId: "로그인" } });
+    expect(res.isError).toBe(false);
+    expect(res.text).toContain("`uia`");
+  });
+
+  it.skipIf(!hasComponentSources())(
+    "action dml 에 filters.table 과 filters.offset 을 주면 그 테이블의 구간만 반환한다",
+    async () => {
+      const res = await search({
+        scope: "components",
+        action: "dml",
+        filters: { componentId: "uia", dbType: "mysql", table: "COMTCCMMNDETAILCODE", offset: 100 },
+        limit: 50,
+      });
+      expect(res.isError).toBe(false);
+      expect(res.text).toContain("- **테이블**: COMTCCMMNDETAILCODE");
+      expect(res.text).toMatch(/총 \d+건 중 101~150/);
+      expect(res.text.match(/INSERT INTO/gi)?.length).toBe(50);
+    },
+  );
+
+  it.skipIf(!hasComponentSources())(
+    "action readSource 는 큰 파일을 나눠 돌려주고 이어 읽을 offset 을 알려 준다",
+    async () => {
+      const filePath = "script/dml/mysql/com_DML_mysql.sql";
+      const first = await search({ scope: "components", action: "readSource", filters: { filePath } });
+      expect(first.isError).toBe(false);
+      expect(first.text).toMatch(/전체 [\d,]+자 중 1~60,000자/);
+      expect(first.text).toContain("filters.offset: 60000");
+
+      const second = await search({
+        scope: "components",
+        action: "readSource",
+        filters: { filePath, offset: 60000 },
+      });
+      expect(second.isError).toBe(false);
+      expect(second.text).toMatch(/전체 [\d,]+자 중 60,001~120,000자/);
+      expect(second.text).toContain("filters.offset: 120000");
+      // 두 구간의 본문은 서로 다르다
+      expect(second.text.slice(200, 600)).not.toBe(first.text.slice(200, 600));
+    },
+  );
+
+  it.skipIf(!hasComponentSources())("끝까지 읽은 파일에는 이어 읽기 안내를 붙이지 않는다", async () => {
+    const res = await search({
+      scope: "components",
+      action: "readSource",
+      filters: { filePath: "src/main/java/egovframework/com/cop/bbs/service/Blog.java" },
+    });
+    expect(res.isError).toBe(false);
+    expect(res.text).not.toContain("filters.offset");
+  });
+});
+
+describe("integration — egov_search_knowledge 호환 소프트웨어 조회", () => {
+  let client: Client;
+
+  beforeAll(async () => {
+    client = await createMcpClient();
+  });
+
+  afterAll(async () => {
+    await client?.close();
+  });
+
+  const search = (args: Record<string, unknown>) => callSearchKnowledge(client, args);
+
+  it("filters.offset 으로 다음 구간을 조회한다", async () => {
+    const filters = { category: "CMS Solution" };
+    const first = parseJsonBlock((await search({ scope: "compatibility", filters, limit: 10 })).text);
+    const second = parseJsonBlock(
+      (await search({ scope: "compatibility", filters: { ...filters, offset: 10 }, limit: 10 })).text,
+    );
+
+    expect(first.total).toBeGreaterThan(20);
+    expect(first.offset).toBe(0);
+    expect(second.offset).toBe(10);
+    expect(second.total).toBe(first.total);
+    expect(second.count).toBe(10);
+    const firstNames = first.software.map((s: any) => `${s.product_name}|${s.product_version}|${s.framework_version}`);
+    const secondNames = second.software.map((s: any) => `${s.product_name}|${s.product_version}|${s.framework_version}`);
+    expect(secondNames.filter((name: string) => firstNames.includes(name))).toEqual([]);
+  });
+});
+
+describe("integration — egov_search_knowledge 개발자 지식·통합 검색", () => {
+  let client: Client;
+
+  beforeAll(async () => {
+    client = await createMcpClient();
+  });
+
+  afterAll(async () => {
+    await client?.close();
+  });
+
+  const search = (args: Record<string, unknown>) => callSearchKnowledge(client, args);
+
+  it("sort recent 는 query 없이 최근 지식 목록을 돌려준다", async () => {
+    const res = await search({ scope: "knowledge", filters: { sort: "recent" }, limit: 2 });
+    expect(res.isError).toBe(false);
+    const body = parseJsonBlock(res.text);
+    expect(body.sort).toBe("recent");
+    expect(body.count).toBe(2);
+  });
+
+  it.skipIf(!hasEmbeddingModel())("통합 검색의 개발자 지식 섹션은 id 와 본문 발췌를 싣는다", async () => {
+    const res = await search({ scope: "all", query: "로그인이 안됩니다" });
+    expect(res.isError).toBe(false);
+    const section = splitSections(res.text).find((part) => part.includes("개발자 지식 검색 결과"));
+    expect(section).toBeDefined();
+    const body = parseJsonBlock(section!);
+    expect(body.results.length).toBeGreaterThan(0);
+    for (const result of body.results) {
+      expect(typeof result.id).toBe("string");
+      expect(typeof result.similarity).toBe("number");
+      expect(result.content.length).toBeLessThanOrEqual(600);
+    }
+    // 발췌만 실었다는 것과 전체 본문을 보는 방법을 알린다
+    expect(section).toContain('scope: "knowledge"');
+  });
+
+  it.skipIf(!hasEmbeddingModel())(
+    "통합 검색에서 호환 소프트웨어 분류를 category 로 주면 가이드에는 그 필터를 적용하지 않는다",
+    async () => {
+      const res = await search({ scope: "all", query: "JEUS", filters: { category: "WAS" }, limit: 2 });
+      expect(res.isError).toBe(false);
+      const sections = splitSections(res.text);
+      const guide = sections.find((part) => part.includes("가이드 검색 결과")) ?? "";
+      const compatibility = sections.find((part) => part.includes("호환 소프트웨어 검색 결과")) ?? "";
+      expect(res.text).not.toContain("알 수 없는 category");
+      expect(guide).toMatch(/가이드 검색 결과 \([12]건\)/);
+      expect(parseJsonBlock(compatibility).filters.category).toBe("WAS");
+    },
+  );
+
+  it.skipIf(!hasEmbeddingModel())(
+    "통합 검색에서 가이드 분류를 category 로 주면 호환 소프트웨어에는 그 필터를 적용하지 않는다",
+    async () => {
+      const res = await search({ scope: "all", query: "트랜잭션", filters: { category: "persistence-layer" }, limit: 2 });
+      expect(res.isError).toBe(false);
+      const sections = splitSections(res.text);
+      const guide = sections.find((part) => part.includes("가이드 검색 결과")) ?? "";
+      const compatibility = sections.find((part) => part.includes("호환 소프트웨어 검색 결과")) ?? "";
+      expect(guide).toContain("> persistence-layer");
+      expect(parseJsonBlock(compatibility).filters.category).toBeUndefined();
+    },
+  );
+
+  it.skipIf(!hasEmbeddingModel())("가이드 검색에 없는 layer 값을 주면 쓸 수 있는 값을 알려 준다", async () => {
+    const res = await search({ scope: "guide", query: "트랜잭션", filters: { layer: "runtime" } });
+    expect(res.isError).toBe(true);
+    expect(res.text).toContain("egovframe-runtime");
+  });
+});
+
 describe("integration — egov_search_knowledge 공개 스키마", () => {
   let client: Client;
 
@@ -400,6 +651,8 @@ describe("integration — egov_search_knowledge 공개 스키마", () => {
       "frameworkVersion",
       "minLevel",
       "includeKnowledge",
+      "table",
+      "offset",
       "limit",
     ]) {
       expect(filterProps, `filters.${key}`).toHaveProperty(key);
@@ -407,6 +660,7 @@ describe("integration — egov_search_knowledge 공개 스키마", () => {
     }
     expect(filterProps.frameworkVersion.type).toBe("string");
     expect(filterProps.tags.type).toBe("array");
+    expect(filterProps.offset).toMatchObject({ type: "integer", minimum: 0 });
   });
 
   it("읽기 전용 도구임을 annotations 로 알린다", async () => {
