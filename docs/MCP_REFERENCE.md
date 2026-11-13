@@ -73,7 +73,7 @@ eGovFrame 참조 자료를 조회하는 읽기 전용 도구입니다. 무언가
 | `ddl` | `componentId`, `dbType` | CREATE TABLE, 인덱스, 뷰 문. 외래 키가 참조하는 테이블의 문도 함께 싣습니다. |
 | `dml` | `componentId`, `dbType`, `table`, `limit`, `offset` | 초기 데이터 INSERT 문. `table` 을 주지 않으면 테이블마다 처음 20건을 싣습니다. |
 
-`action` 을 지정한 조회는 `query` 를 쓰지 않고, `limit` 은 `dml` 의 `table` 조회에서만 씁니다. `action` 을 `components` 가 아닌 scope 와 함께 주면 오류입니다. `action` 없이 `componentIds`, `filePath`, `dbType`, `table` 만 준 `components` 호출도 필요한 `action` 을 알리는 오류가 됩니다.
+`action` 을 지정한 조회는 `query` 를 쓰지 않고, `limit` 은 `dml` 의 `table` 조회에서만 씁니다. `action` 을 `components` 가 아닌 scope 와 함께 주면 오류입니다. `action` 과 `componentId` 가 모두 없는 `components` 호출에 `componentIds`, `filePath`, `dbType`, `table` 가운데 하나라도 주면, `query` 나 다른 필터가 함께 있어도 필요한 `action` 을 알리는 오류가 됩니다. `componentId` 를 함께 주었으면 컴포넌트 상세를 돌려주고 그 필터는 무시한 필터로 알립니다.
 
 #### `limit` 의 기본값과 최댓값
 

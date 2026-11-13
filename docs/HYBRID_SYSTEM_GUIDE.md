@@ -64,7 +64,7 @@ npm run build-index -- --yes    # 비대화형: 현재 체크아웃의 원본만
 | 인덱스 | 원본 |
 |--------|------|
 | 호환 소프트웨어 (SQLite) | `templates/compatibility/compatibility-software.json` |
-| 공통컴포넌트 메타데이터 (SQLite) | `templates/common-components.json`. 사용 테이블 목록은 `templates/common-components-src` 의 DDL 스크립트와 매퍼 XML 에서 도출하고, 소스 트리가 없을 때만 메타의 목록을 그대로 씁니다. |
+| 공통컴포넌트 메타데이터 (SQLite) | `templates/common-components.json`. 사용 테이블 목록은 `templates/common-components-src` 의 DDL 스크립트와 매퍼 XML 에서 도출합니다. 스크립트와 매퍼가 모두 없는 컴포넌트는 메타의 목록이나 모든 스크립트에 공통인 기본 테이블을 쓰고, 소스 트리가 없으면 모든 컴포넌트가 메타의 목록을 그대로 씁니다. |
 | 개발자 지식 (LanceDB) | 릴리스 스냅샷(`manifest.json`, `snapshot.jsonl.gz`) 또는 `templates/developer_knowledge/` 의 xlsx 파일, 그리고 같은 디렉토리의 적용가이드 PDF |
 | 공식 가이드 (LanceDB) | `templates/egovframe_guide/` (서브모듈) |
 

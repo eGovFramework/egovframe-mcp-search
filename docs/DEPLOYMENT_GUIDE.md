@@ -95,7 +95,7 @@ tgz 에는 다음이 들어갑니다.
 tar -tzf dist/egovframe-mcp-search-<버전>-<타깃>.tgz | grep -E "^package/(build/server\.js|knowledge-base/egovframe\.db|models/.*\.onnx|templates/common-components-src/pom\.xml|node_modules/better-sqlite3/build/Release/better_sqlite3\.node|node_modules/sharp/build/Release/.*\.node)$"
 ```
 
-네이티브 바이너리(`.node`) 두 줄이 빠져 있으면 그 tgz 는 쓸 수 없습니다. `sharp` 의 바이너리가 없으면 서버가 시작하지 못하고, `better-sqlite3` 의 바이너리가 없으면 공통컴포넌트와 호환 소프트웨어 조회가 `네이티브 모듈(better-sqlite3)을 불러오지 못했습니다` 로 시작하는 오류를 돌려줍니다. `node_modules` 가 `package-lock.json` 과 어긋난 상태에서 패킹하면 이런 tgz 가 만들어질 수 있으므로, `node_modules` 를 손으로 고치지 말고 스크립트가 다시 설치하게 둡니다.
+네이티브 바이너리(`.node`) 두 줄이 빠져 있으면 그 tgz 는 쓸 수 없습니다. `sharp` 의 바이너리가 없으면 서버가 시작하지 못하고, `better-sqlite3` 의 바이너리가 없으면 공통컴포넌트와 호환 소프트웨어 조회가 `네이티브 모듈(better-sqlite3)을 불러오지 못했습니다` 로 시작하는 오류를 돌려줍니다. npm 이 설치해 둔 `node_modules` 에서 패키지를 지웠거나 `node_modules` 를 다른 곳에서 복사해 온 상태로 패킹하면 이런 tgz 가 만들어집니다. 이때 `npm pack` 은 번들 의존 패키지를 디스크에 있는 그대로 담지 않고 각 패키지가 배포 파일로 지정한 것만 담으므로, 설치할 때 만들어진 바이너리가 빠집니다. 그래서 `node_modules` 를 손으로 고치거나 복사해 쓰지 말고 스크립트가 다시 설치하게 둡니다.
 
 ## 지식베이스 갱신 (update 명령)
 
