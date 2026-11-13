@@ -783,7 +783,7 @@ function normalizePdfText(text: string): string {
 }
 
 /**
- * 적용가이드 PDF 청크 하나의 최대 글자 수.
+ * 적용가이드 PDF 청크 하나의 최대 글자 수 (앞 청크와 겹치는 부분 포함).
  *
  * 임베딩 모델은 입력의 앞 512 토큰만 읽는다. 청크의 임베딩 입력(제목·표지·상황·태그를 붙이고 접두
  * "passage: " 를 단 문자열)이 512 토큰을 넘으면 넘은 부분은 벡터에 반영되지 않아 의미 검색으로 찾을 수 없다.
@@ -800,6 +800,21 @@ function normalizePdfText(text: string): string {
  */
 export const PDF_CHUNK_MAX_CHARS = 600;
 
+/**
+ * 이웃한 청크가 겹치는 최대 글자 수. 뒤 청크의 앞에 앞 청크의 끝부분을 이만큼까지 다시 싣는다 (청크의 상한에 포함된다).
+ *
+ * 겹침이 없으면 청크 경계에 걸친 내용은 두 청크로 갈려 어느 청크에도 온전히 들어 있지 않다.
+ * 동봉 적용가이드(v5.0)를 600자 청크로 나눠 잰 값:
+ * - 경계 양쪽에서 50자 이상씩 이어 붙인 구간(173개)을 질의로 쓰면, 겹침이 없을 때 구간 전체가 상위 3건에 드는
+ *   비율은 50% 다. 100자를 겹치면 구간 전체를 담은 청크가 61% 에서 1위에 오르고, 78% 에서 구간 전체가 상위 3건에 든다.
+ * - 본문 전체에서 고르게 뽑은 100~150자 구간(1,500개)이 상위 3건에 온전히 드는 비율은 겹침 0자 62%, 50자 73%,
+ *   100자 75%, 150자 77%, 200자 75% 다. 구간을 가장 많이 담은 청크가 1위인 비율은 겹침 0~200자에서 57~60% 로,
+ *   차이가 오차 범위 안이다.
+ * - 글머리나 번호로 시작하는 항목은 78% 가 100자 이하다 (50자 이하는 32%).
+ * - 150자로 늘리면 구간 전체를 담은 청크가 1위인 비율이 2~4%p 오르지만 청크가 12% 더 늘어난다.
+ */
+export const PDF_CHUNK_OVERLAP_CHARS = 100;
+
 /** 정리한 본문의 한 구간 [start, end). 청크를 본문의 구간으로 다루어, 나눈 뒤에도 본문의 글자가 그대로 남게 한다. */
 interface TextSpan {
   start: number;
@@ -809,11 +824,14 @@ interface TextSpan {
 /** 문단 경계: 빈 줄 */
 const PDF_PARAGRAPH_BREAK = /\n{2,}/g;
 
+/** 문장 경계: 끝 부호(와 닫는 따옴표·괄호) 뒤의 공백 */
+const PDF_SENTENCE_BREAK = /(?<=[.!?。！？]["'”’」』)\]]*)\s+/g;
+
 /**
- * 상한보다 긴 문단을 나눌 자리: 줄 → 문장(끝 부호와 닫는 따옴표·괄호 뒤의 공백) → 낱말.
+ * 상한보다 긴 문단을 나눌 자리: 줄 → 문장 → 낱말.
  * 앞의 자리부터 써 보고, 그래도 상한을 넘는 조각만 다음 자리에서 더 나눈다.
  */
-const PDF_SPLIT_BREAKS: readonly RegExp[] = [/\n/g, /(?<=[.!?。！？]["'”’」』)\]]*)\s+/g, /\s+/g];
+const PDF_SPLIT_BREAKS: readonly RegExp[] = [/\n/g, PDF_SENTENCE_BREAK, /\s+/g];
 
 /** 구간 양 끝의 공백을 뺀다. 남는 글자가 없으면 null. */
 function trimSpan(source: string, start: number, end: number): TextSpan | null {
@@ -879,11 +897,15 @@ function splitSpanToFit(source: string, span: TextSpan, level: number, maxChars:
   );
 }
 
-/** 이어진 조각을 순서대로 상한까지 채워 묶는다. 묶음은 첫 조각의 시작부터 마지막 조각의 끝까지의 구간이다. */
-function packSpans(parts: TextSpan[], maxChars: number): TextSpan[] {
+/**
+ * 이어진 조각을 순서대로 상한까지 채워 묶는다. 묶음은 첫 조각의 시작부터 마지막 조각의 끝까지의 구간이다.
+ * 첫 묶음은 firstMaxChars 까지, 그 뒤의 묶음은 restMaxChars 까지 채운다.
+ */
+function packSpans(parts: TextSpan[], firstMaxChars: number, restMaxChars: number): TextSpan[] {
   const packed: TextSpan[] = [];
   for (const part of parts) {
     const last = packed[packed.length - 1];
+    const maxChars = packed.length <= 1 ? firstMaxChars : restMaxChars;
     if (last && part.end - last.start <= maxChars) {
       last.end = part.end;
     } else {
@@ -894,31 +916,79 @@ function packSpans(parts: TextSpan[], maxChars: number): TextSpan[] {
 }
 
 /**
+ * 뒤 청크의 앞에 다시 실을 앞 청크 끝부분이 어디에서 시작하는지 고른다.
+ *
+ * 뒤 청크의 본문(next)이 시작하는 자리에서 overlapChars 글자 안쪽, 앞 청크의 본문(previous) 안에서 찾는다.
+ * 그 범위에서 가장 앞에 있는 줄의 처음을 고르고, 줄의 처음이 없으면 문장의 처음, 그것도 없으면 낱말의 처음을 고른다.
+ * 낱말의 처음도 없으면 겹치지 않는다 (next.start 를 돌려준다). 앞 청크의 본문 전체를 다시 싣지는 않는다.
+ */
+function findOverlapStart(source: string, previous: TextSpan, next: TextSpan, overlapChars: number): number {
+  const sentenceBreak = new RegExp(PDF_SENTENCE_BREAK.source, 'y');
+  const earliest = Math.max(previous.start + 1, next.start - overlapChars);
+  let sentenceStart: number | null = null;
+  let wordStart: number | null = null;
+
+  for (let position = earliest; position < previous.end; position += 1) {
+    if (/\s/.test(source[position]) || !/\s/.test(source[position - 1])) {
+      continue; // 공백 바로 뒤의 글자만 줄·문장·낱말의 처음이다
+    }
+    let gapStart = position - 1;
+    while (gapStart > previous.start && /\s/.test(source[gapStart - 1])) gapStart -= 1;
+
+    if (source.slice(gapStart, position).includes('\n')) {
+      return position;
+    }
+    sentenceBreak.lastIndex = gapStart;
+    if (sentenceStart === null && sentenceBreak.test(source)) {
+      sentenceStart = position;
+    }
+    wordStart ??= position;
+  }
+  return sentenceStart ?? wordStart ?? next.start;
+}
+
+/**
  * 적용가이드 PDF 본문을 maxChars 글자 이하의 청크로 나눈다.
  *
  * - 문단(빈 줄로 나뉜 덩어리)을 순서대로 담다가 다음 문단이 들어가지 않으면 문단 경계에서 청크를 나눈다.
- *   상한 안에 드는 문단은 쪼개지 않는다.
- * - 상한보다 긴 문단만 줄 경계에서 나눈다. 줄 하나가 상한보다 길면 문장 경계에서, 문장도 길면 낱말 사이에서
+ *   한 청크에 들어가는 문단은 쪼개지 않는다.
+ * - 한 청크에 들어가지 않는 긴 문단만 줄 경계에서 나눈다. 줄 하나가 길면 문장 경계에서, 문장도 길면 낱말 사이에서
  *   나누고, 공백이 없는 글자열만 글자 수로 자른다.
  * - 긴 문단의 조각도 문단과 같은 방법으로 담는다 (앞 청크에 자리가 남으면 거기부터 채운다). pdf-parse 가 뽑은
  *   본문은 쪽 하나가 문단 하나라서, 긴 문단을 새 청크에서 시작하면 쪽마다 몇 줄짜리 자투리 청크가 남는다.
+ * - 둘째 청크부터는 앞 청크의 끝부분을 overlapChars 글자까지 앞에 다시 싣는다 (findOverlapStart). 겹침을 넣을
+ *   자리를 남기려고 본문은 maxChars - overlapChars 글자까지만 담는다. 겹침은 maxChars 의 절반까지만 둔다.
  *
- * 청크는 공백을 정리한 본문(normalizePdfText)의 이어진 구간이다. 청크 사이에서 빠지는 것은 공백뿐이다.
+ * 청크는 공백을 정리한 본문(normalizePdfText)의 이어진 구간이다. 겹친 부분을 빼면 청크 사이에서 빠지는 것은 공백뿐이다.
  */
-export function chunkPdfText(text: string, maxChars: number = PDF_CHUNK_MAX_CHARS): string[] {
+export function chunkPdfText(
+  text: string,
+  maxChars: number = PDF_CHUNK_MAX_CHARS,
+  overlapChars: number = PDF_CHUNK_OVERLAP_CHARS,
+): string[] {
   if (!Number.isFinite(maxChars) || maxChars < 1) {
     throw new RangeError('maxChars 는 1 이상의 수여야 합니다.');
   }
+  if (!Number.isFinite(overlapChars) || overlapChars < 0) {
+    throw new RangeError('overlapChars 는 0 이상의 수여야 합니다.');
+  }
   const limit = Math.floor(maxChars);
+  const overlap = Math.min(Math.floor(overlapChars), Math.floor(limit / 2));
+  const bodyLimit = limit - overlap;
   const source = normalizePdfText(text);
   if (source === '') {
     return [];
   }
 
   const parts = splitSpan(source, { start: 0, end: source.length }, PDF_PARAGRAPH_BREAK).flatMap((paragraph) =>
-    splitSpanToFit(source, paragraph, 0, limit),
+    splitSpanToFit(source, paragraph, 0, bodyLimit),
   );
-  return packSpans(parts, limit).map((chunk) => source.slice(chunk.start, chunk.end));
+  // 첫 청크는 겹침을 싣지 않으므로 상한까지 본문으로 채운다
+  const bodies = packSpans(parts, limit, bodyLimit);
+  return bodies.map((body, index) => {
+    const start = index > 0 && overlap > 0 ? findOverlapStart(source, bodies[index - 1], body, overlap) : body.start;
+    return source.slice(start, body.end);
+  });
 }
 
 /**

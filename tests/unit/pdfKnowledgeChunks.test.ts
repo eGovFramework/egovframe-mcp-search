@@ -14,6 +14,7 @@ import path from "node:path";
 import { AutoTokenizer } from "@xenova/transformers";
 import {
   PDF_CHUNK_MAX_CHARS,
+  PDF_CHUNK_OVERLAP_CHARS,
   TEMPLATES_DIR,
   chunkPdfText,
   pdfTextToKnowledge,
@@ -25,9 +26,13 @@ import type { AddKnowledgeInput } from "../../src/types/knowledge.js";
 import { EMBEDDING_MODEL_ID } from "../../src/utils/dataPaths.js";
 import { hasEmbeddingModel } from "../integration/_helper.js";
 
-/** 한 줄이 lineLength 글자인 줄 count 개. 줄마다 내용이 다르다. */
+/**
+ * 한 줄이 lineLength 글자인 줄 count 개. 줄마다 번호가 달라 내용이 겹치지 않는다.
+ * 번호 뒤는 같은 글자가 이어지지 않는 글자열로 채운다 (같은 글자만 이어지면 그 안의 어느 자리에서 잘랐는지 구별할 수 없다).
+ */
 function linesOf(label: string, count: number, lineLength: number): string[] {
-  return Array.from({ length: count }, (_, i) => `${label}${i + 1} `.padEnd(lineLength, "가"));
+  const filler = "가나다라마바사아자차카타파하".repeat(Math.ceil(lineLength / 14));
+  return Array.from({ length: count }, (_, i) => `${label}${i + 1} ${filler}`.slice(0, lineLength));
 }
 
 /** 한 줄이 lineLength 글자인 줄 lineCount 개로 된 문단. */
@@ -36,18 +41,34 @@ function paragraphOfLines(label: string, lineCount: number, lineLength: number):
 }
 
 /**
- * 청크가 원문을 빠짐없이 순서대로 덮는지 확인한다.
- * 청크를 원문에서 차례로 찾았을 때 청크 사이와 원문의 양 끝에는 공백만 남아야 한다.
+ * 청크를 원문에서 차례로 찾아 구간 [start, end) 로 돌려준다.
+ * 겹친 청크는 앞 청크 안에서 시작하므로, 앞 청크의 시작 다음 글자부터 찾는다.
+ */
+function locateChunks(source: string, chunks: string[]): Array<{ start: number; end: number }> {
+  const spans: Array<{ start: number; end: number }> = [];
+  let searchFrom = 0;
+  for (const chunk of chunks) {
+    const start = source.indexOf(chunk, searchFrom);
+    expect(start, `원문에서 찾지 못한 청크: ${JSON.stringify(chunk.slice(0, 40))}`).toBeGreaterThanOrEqual(0);
+    spans.push({ start, end: start + chunk.length });
+    searchFrom = start + 1;
+  }
+  return spans;
+}
+
+/**
+ * 겹친 부분을 빼고 이으면 원문과 같은지 확인한다.
+ * 청크마다 앞 청크의 끝 뒤에 오는 부분만 남겼을 때, 그 사이와 원문의 양 끝에는 공백만 남아야 하고
+ * 청크마다 새로 싣는 내용이 있어야 한다.
  */
 function expectChunksCoverSource(source: string, chunks: string[]): void {
-  let cursor = 0;
-  for (const chunk of chunks) {
-    const start = source.indexOf(chunk, cursor);
-    expect(start, `원문에서 찾지 못한 청크: ${JSON.stringify(chunk.slice(0, 40))}`).toBeGreaterThanOrEqual(0);
-    expect(source.slice(cursor, start).trim()).toBe("");
-    cursor = start + chunk.length;
+  let covered = 0;
+  for (const span of locateChunks(source, chunks)) {
+    expect(source.slice(covered, Math.max(covered, span.start)).trim()).toBe("");
+    expect(span.end).toBeGreaterThan(covered);
+    covered = span.end;
   }
-  expect(source.slice(cursor).trim()).toBe("");
+  expect(source.slice(covered).trim()).toBe("");
 }
 
 /** 나누는 단위(문단, 줄, 문장, 낱말, 글자)가 서로 다른 본문 */
@@ -65,6 +86,17 @@ const SAMPLE_TEXTS: Record<string, string> = {
   "낱말만 이어진 긴 줄": Array.from({ length: 80 }, (_, i) => `낱말${i + 1}`).join(" "),
   "공백이 없는 글자열": Array.from({ length: 40 }, (_, i) => `[${i + 1}]가나다라마`).join(""),
 };
+
+/** 상한과 겹침의 조합 (겹침은 상한의 절반 이하) */
+const LIMITS: Array<{ maxChars: number; overlapChars: number }> = [
+  { maxChars: 20, overlapChars: 0 },
+  { maxChars: 20, overlapChars: 7 },
+  { maxChars: 50, overlapChars: 0 },
+  { maxChars: 50, overlapChars: 25 },
+  { maxChars: 137, overlapChars: 30 },
+  { maxChars: 600, overlapChars: 0 },
+  { maxChars: 600, overlapChars: 100 },
+];
 
 describe("chunkPdfText — 본문 정리", () => {
   it("꺾쇠로 감싼 글자를 지우지 않는다", () => {
@@ -98,20 +130,21 @@ describe("chunkPdfText — 본문 정리", () => {
 });
 
 describe("chunkPdfText — 청크 크기", () => {
-  it("상한을 주지 않으면 PDF_CHUNK_MAX_CHARS 로 나눈다", () => {
+  it("상한과 겹침을 주지 않으면 PDF_CHUNK_MAX_CHARS 와 PDF_CHUNK_OVERLAP_CHARS 로 나눈다", () => {
     const text = Array.from({ length: 8 }, (_, i) => paragraphOfLines(`문단${i + 1}줄`, 25, 39)).join("\n\n");
     const chunks = chunkPdfText(text);
 
     expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks).toEqual(chunkPdfText(text, PDF_CHUNK_MAX_CHARS));
+    expect(chunks).toEqual(chunkPdfText(text, PDF_CHUNK_MAX_CHARS, PDF_CHUNK_OVERLAP_CHARS));
+    expect(chunks).not.toEqual(chunkPdfText(text, PDF_CHUNK_MAX_CHARS, 0));
     expect(Math.max(...chunks.map((chunk) => chunk.length))).toBeLessThanOrEqual(PDF_CHUNK_MAX_CHARS);
   });
 
-  it.each(Object.entries(SAMPLE_TEXTS))("어느 청크도 상한을 넘지 않는다 — %s", (_name, text) => {
-    for (const maxChars of [20, 50, 137, 600]) {
-      const lengths = chunkPdfText(text, maxChars).map((chunk) => chunk.length);
-      expect(Math.max(...lengths), `상한 ${maxChars}`).toBeLessThanOrEqual(maxChars);
-      expect(Math.min(...lengths), `상한 ${maxChars}`).toBeGreaterThan(0);
+  it.each(Object.entries(SAMPLE_TEXTS))("겹침을 포함해 어느 청크도 상한을 넘지 않는다 — %s", (_name, text) => {
+    for (const { maxChars, overlapChars } of LIMITS) {
+      const lengths = chunkPdfText(text, maxChars, overlapChars).map((chunk) => chunk.length);
+      expect(Math.max(...lengths), `상한 ${maxChars}, 겹침 ${overlapChars}`).toBeLessThanOrEqual(maxChars);
+      expect(Math.min(...lengths), `상한 ${maxChars}, 겹침 ${overlapChars}`).toBeGreaterThan(0);
     }
   });
 
@@ -119,19 +152,35 @@ describe("chunkPdfText — 청크 크기", () => {
     const text = `${paragraphOfLines("첫 문단 줄", 2, 20)}\n\n${paragraphOfLines("둘째 문단 줄", 2, 20)}`;
 
     expect(chunkPdfText(text, text.length)).toEqual([text]);
+    expect(chunkPdfText(text, text.length, 0)).toEqual([text]);
   });
 
   it("빈 본문과 공백뿐인 본문은 청크를 만들지 않는다", () => {
     expect(chunkPdfText("")).toEqual([]);
     expect(chunkPdfText(" \n\n\t \r\n ")).toEqual([]);
   });
+
+  it("상한이나 겹침으로 쓸 수 없는 값은 거부한다", () => {
+    for (const maxChars of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => chunkPdfText("본문", maxChars)).toThrow(RangeError);
+    }
+    for (const overlapChars of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => chunkPdfText("본문", 100, overlapChars)).toThrow(RangeError);
+    }
+  });
 });
 
 describe("chunkPdfText — 내용 보존", () => {
-  it.each(Object.entries(SAMPLE_TEXTS))("청크를 이으면 원문과 같다 (청크 사이에서는 공백만 빠진다) — %s", (_name, text) => {
-    for (const maxChars of [20, 50, 137, 600]) {
-      expectChunksCoverSource(text, chunkPdfText(text, maxChars));
+  it.each(Object.entries(SAMPLE_TEXTS))("겹친 부분을 빼고 이으면 원문과 같다 (청크 사이에서는 공백만 빠진다) — %s", (_name, text) => {
+    for (const { maxChars, overlapChars } of LIMITS) {
+      expectChunksCoverSource(text, chunkPdfText(text, maxChars, overlapChars));
     }
+  });
+
+  it("겹침이 없으면 청크를 이은 것이 원문과 같다", () => {
+    const lines = linesOf("줄", 12, 20);
+
+    expect(chunkPdfText(lines.join("\n"), 90, 0).join("\n")).toBe(lines.join("\n"));
   });
 });
 
@@ -140,7 +189,7 @@ describe("chunkPdfText — 나누는 자리", () => {
     // 문단 하나가 41자: 두 문단(84자)까지 한 청크에 들어가고 세 문단(127자)은 들어가지 않는다
     const paragraphs = Array.from({ length: 5 }, (_, i) => paragraphOfLines(`문단${i + 1}줄`, 2, 20));
 
-    expect(chunkPdfText(paragraphs.join("\n\n"), 100)).toEqual([
+    expect(chunkPdfText(paragraphs.join("\n\n"), 100, 0)).toEqual([
       `${paragraphs[0]}\n\n${paragraphs[1]}`,
       `${paragraphs[2]}\n\n${paragraphs[3]}`,
       paragraphs[4],
@@ -152,13 +201,13 @@ describe("chunkPdfText — 나누는 자리", () => {
     const second = paragraphOfLines("둘째 문단 줄", 3, 20); // 62자
 
     // 첫 청크에는 둘째 문단의 두 줄이 더 들어갈 자리(49자)가 남지만, 둘째 문단을 통째로 다음 청크에 담는다
-    expect(chunkPdfText(`${first}\n\n${second}`, 90)).toEqual([first, second]);
+    expect(chunkPdfText(`${first}\n\n${second}`, 90, 0)).toEqual([first, second]);
   });
 
   it("상한보다 긴 문단은 줄 경계에서 나눈다", () => {
     const lines = linesOf("줄", 10, 20); // 네 줄이 83자, 다섯 줄이 104자
 
-    expect(chunkPdfText(lines.join("\n"), 90)).toEqual([
+    expect(chunkPdfText(lines.join("\n"), 90, 0)).toEqual([
       lines.slice(0, 4).join("\n"),
       lines.slice(4, 8).join("\n"),
       lines.slice(8).join("\n"),
@@ -170,7 +219,7 @@ describe("chunkPdfText — 나누는 자리", () => {
     const lines = linesOf("줄", 9, 20);
 
     // 긴 문단마다 새 청크에서 시작하면 쪽마다 몇 줄짜리 자투리 청크가 남는다
-    expect(chunkPdfText(`${heading}\n\n${lines.join("\n")}`, 90)).toEqual([
+    expect(chunkPdfText(`${heading}\n\n${lines.join("\n")}`, 90, 0)).toEqual([
       `${heading}\n\n${lines.slice(0, 3).join("\n")}`, // 6 + 2 + 62 = 70자, 한 줄을 더하면 91자
       lines.slice(3, 7).join("\n"),
       lines.slice(7).join("\n"),
@@ -181,7 +230,7 @@ describe("chunkPdfText — 나누는 자리", () => {
     const sentences = Array.from({ length: 8 }, (_, i) => `${i + 1}번 문장은 여기에서 끝난다.`); // 문장 하나가 16자
 
     // 세 문장이 50자
-    expect(chunkPdfText(sentences.join(" "), 50)).toEqual([
+    expect(chunkPdfText(sentences.join(" "), 50, 0)).toEqual([
       sentences.slice(0, 3).join(" "),
       sentences.slice(3, 6).join(" "),
       sentences.slice(6).join(" "),
@@ -199,12 +248,12 @@ describe("chunkPdfText — 나누는 자리", () => {
     ];
 
     // 어느 두 문장도 12자 안에 함께 들어가지 않는다
-    expect(chunkPdfText(sentences.join(" "), 12)).toEqual(sentences);
+    expect(chunkPdfText(sentences.join(" "), 12, 0)).toEqual(sentences);
   });
 
   it("문장 부호가 없는 긴 줄은 낱말 사이에서 나눈다", () => {
     const words = Array.from({ length: 30 }, (_, i) => `낱말${i + 1}`);
-    const chunks = chunkPdfText(words.join(" "), 20);
+    const chunks = chunkPdfText(words.join(" "), 20, 0);
 
     expect(chunks.length).toBeGreaterThan(1);
     expect(chunks.join(" ")).toBe(words.join(" "));
@@ -216,7 +265,7 @@ describe("chunkPdfText — 나누는 자리", () => {
   it("공백이 없는 긴 글자열만 글자 수로 나누고, 비슷한 길이로 나눈다", () => {
     const text = Array.from({ length: 13 }, (_, i) => `${String(i).padStart(2, "0")}가나다라마바사아`).join(""); // 130자
 
-    const chunks = chunkPdfText(text, 50);
+    const chunks = chunkPdfText(text, 50, 0);
 
     // 50, 50, 30자가 아니라 세 조각을 고르게 나눈다 (끝에 몇 글자짜리 조각이 남지 않게)
     expect(chunks.map((chunk) => chunk.length)).toEqual([44, 43, 43]);
@@ -226,13 +275,96 @@ describe("chunkPdfText — 나누는 자리", () => {
   it("글자 수로 나눌 때 서로게이트 쌍의 가운데에서 자르지 않는다", () => {
     const text = "😀".repeat(33); // UTF-16 코드 단위로 66
 
-    const chunks = chunkPdfText(text, 13);
+    const chunks = chunkPdfText(text, 13, 0);
 
     expect(chunks.join("")).toBe(text);
     for (const chunk of chunks) {
       expect(chunk.length).toBeLessThanOrEqual(13);
       expect(Array.from(chunk).every((character) => character === "😀")).toBe(true);
     }
+  });
+});
+
+describe("chunkPdfText — 이웃한 청크의 겹침", () => {
+  it("뒤 청크는 앞 청크의 마지막 줄로 시작한다", () => {
+    const lines = linesOf("줄", 12, 20);
+
+    // 첫 청크는 겹침을 싣지 않으므로 상한(90자)까지 네 줄을 담는다. 그 뒤로는 겹침 25자를 뺀 65자에 세 줄씩 담고,
+    // 앞 청크의 마지막 한 줄(20자)을 앞에 다시 싣는다
+    expect(chunkPdfText(lines.join("\n"), 90, 25)).toEqual([
+      lines.slice(0, 4).join("\n"),
+      lines.slice(3, 7).join("\n"),
+      lines.slice(6, 10).join("\n"),
+      lines.slice(9).join("\n"),
+    ]);
+  });
+
+  it("겹침은 줄 경계에서 시작하고 겹침 길이를 넘지 않는다", () => {
+    const lines = linesOf("줄", 12, 20);
+
+    // 겹침 50자에는 두 줄(41자)이 들어간다. 세 번째 줄을 중간부터 싣지 않는다
+    expect(chunkPdfText(lines.join("\n"), 150, 50)).toEqual([
+      lines.slice(0, 7).join("\n"),
+      lines.slice(5, 11).join("\n"),
+      lines.slice(9).join("\n"),
+    ]);
+  });
+
+  it.each(Object.entries(SAMPLE_TEXTS))("겹친 길이는 겹침 상한을 넘지 않는다 — %s", (_name, text) => {
+    for (const { maxChars, overlapChars } of LIMITS) {
+      const spans = locateChunks(text, chunkPdfText(text, maxChars, overlapChars));
+      for (let i = 1; i < spans.length; i++) {
+        expect(spans[i].start).toBeGreaterThan(spans[i - 1].start);
+        expect(spans[i - 1].end - spans[i].start, `상한 ${maxChars}, 겹침 ${overlapChars}`).toBeLessThanOrEqual(overlapChars);
+      }
+    }
+  });
+
+  it("줄이 겹침 길이보다 길면 문장 경계에서 겹침을 시작한다", () => {
+    const sentences = Array.from({ length: 8 }, (_, i) => `${i + 1}번 문장은 여기에서 끝난다.`); // 문장 하나가 16자
+
+    expect(chunkPdfText(sentences.join(" "), 70, 20)).toEqual([
+      sentences.slice(0, 4).join(" "),
+      sentences.slice(3, 7).join(" "),
+      sentences.slice(6).join(" "),
+    ]);
+  });
+
+  it("문장도 겹침 길이보다 길면 낱말 경계에서 겹침을 시작한다", () => {
+    const words = Array.from({ length: 30 }, (_, i) => `낱말${i + 1}`);
+    const chunks = chunkPdfText(words.join(" "), 30, 10);
+
+    expect(chunks[0]).toBe(words.slice(0, 7).join(" "));
+    // 앞 청크의 끝 10자 안에서 시작하는 낱말은 "낱말6" 과 "낱말7" 이다
+    expect(chunks[1]).toBe(words.slice(5, 11).join(" "));
+    for (const chunk of chunks) {
+      expect(chunk).toMatch(/^낱말\d+( 낱말\d+)*$/);
+    }
+  });
+
+  it("나눌 자리가 없는 글자열은 겹치지 않는다", () => {
+    const text = Array.from({ length: 13 }, (_, i) => `${String(i).padStart(2, "0")}가나다라마바사아`).join(""); // 130자
+
+    expect(chunkPdfText(text, 50, 10).join("")).toBe(text);
+  });
+
+  it("겹침은 앞 청크의 본문 전체를 다시 싣지 않는다", () => {
+    const longParagraph = linesOf("본문 줄", 6, 20); // 125자
+    const shortParagraph = "표지 첫 줄\n표지 둘째 줄"; // 14자
+    const lastParagraph = paragraphOfLines("끝 문단 줄", 4, 21); // 87자
+
+    // 겹침 40자 안에 짧은 문단(14자)이 통째로 들어가지만, 그 문단의 둘째 줄부터만 다시 싣는다
+    expect(chunkPdfText([longParagraph.join("\n"), shortParagraph, lastParagraph].join("\n\n"), 130, 40)).toEqual([
+      longParagraph.join("\n"),
+      `${longParagraph[5]}\n\n${shortParagraph}`,
+      `표지 둘째 줄\n\n${lastParagraph}`,
+    ]);
+  });
+
+  it("겹침이 상한의 절반을 넘으면 절반까지만 겹친다", () => {
+    const text = paragraphOfLines("줄", 12, 20);
+
+    expect(chunkPdfText(text, 90, 1000)).toEqual(chunkPdfText(text, 90, 45));
   });
 });
 
