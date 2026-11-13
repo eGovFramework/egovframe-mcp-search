@@ -308,20 +308,31 @@ export class SQLiteManager {
 
   /**
    * 키워드 검색 — 모든 검색어가 일치하는 행을 배열로 돌려준다. 행에는 id 와 created_at 도 들어 있다.
-   * 일치 규칙과 정렬은 queryCompatibleSoftware 의 1단계(all-terms)와 같다 (이름과 달리 FTS5 인덱스는 쓰지 않는다).
-   *
-   * queryCompatibleSoftware 와 달리 대체 검색(any-term)으로 넘어가지 않는다. 배열만 돌려주는 이 메서드는
-   * 결과를 찾은 방식(matchMode)을 알릴 수 없어, 대체 검색 결과를 돌려주면 호출부가 일부 검색어만 일치한 행을
-   * 아무 표시 없이 쓰게 된다. 모든 검색어가 일치하는 행이 없거나 검색어가 하나도 추출되지 않으면 빈 배열을 돌려준다.
+   * queryCompatibleSoftwareAllTerms 의 rows 다. 전체 일치 건수가 필요하면 그 메서드를 쓴다.
    */
   fullTextSearchCompatibility(query: string, limit: number = 20): CompatibilitySoftware[] {
+    return this.queryCompatibleSoftwareAllTerms(query, limit).rows;
+  }
+
+  /**
+   * 키워드 검색 — 모든 검색어가 일치하는 행(rows, 앞에서부터 limit 건)과 그 전체 건수(total)를 돌려준다.
+   * 행에는 id 와 created_at 도 들어 있다. 일치 규칙과 정렬은 queryCompatibleSoftware 의 1단계(all-terms)와 같다.
+   *
+   * queryCompatibleSoftware 와 달리 대체 검색(any-term)으로 넘어가지 않는다. 이 메서드의 결과는 통합 검색이
+   * 결과를 찾은 방식(matchMode)의 표시 없이 싣기 때문에, 대체 검색 결과를 돌려주면 일부 검색어만 일치한 행이
+   * 아무 표시 없이 쓰인다. 모든 검색어가 일치하는 행이 없거나 검색어가 하나도 추출되지 않으면 빈 결과(total 0)다.
+   */
+  queryCompatibleSoftwareAllTerms(
+    query: string,
+    limit: number = 20,
+  ): { rows: CompatibilitySoftware[]; total: number } {
     const terms = dropSingleCharacterTerms(extractSearchTerms(query));
     if (terms.length === 0) {
-      return [];
+      return { rows: [], total: 0 };
     }
     const page: SqlPage = { limit: toSqlLimit(limit), offset: 0 };
     const found = this.allTermsSearch<CompatibilitySoftware>(COMPATIBILITY_SEARCH_ALL_COLUMNS, terms, NO_FILTER, page);
-    return found ? found.rows : [];
+    return found ?? { rows: [], total: 0 };
   }
 
   /**

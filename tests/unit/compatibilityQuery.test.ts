@@ -1319,6 +1319,23 @@ describe("SQLiteManager 호환 소프트웨어 조회", () => {
       expect(() => sqlite.fullTextSearchCompatibility("JEUS")).toThrow(/compatibility_software/);
     });
 
+    it("queryCompatibleSoftwareAllTerms 는 같은 행과 함께 전체 일치 건수를 돌려준다", () => {
+      // 여섯 행 모두의 설명에 든 낱말. limit 건만 돌려주고 total 로 전체 건수를 알린다
+      const found = sqlite.queryCompatibleSoftwareAllTerms("표준프레임워크", 2);
+      expect(versionsOf(found.rows)).toEqual(["JEUS 21", "SampleCMS 1.0"]);
+      expect(found.total).toBe(CATALOGUE.length);
+      expect(found.rows[0]).toHaveProperty("id");
+      // 배열을 돌려주는 메서드는 이 결과의 rows 다
+      expect(sqlite.fullTextSearchCompatibility("표준프레임워크", 2)).toEqual(found.rows);
+      // limit 을 주지 않으면 20건까지다
+      expect(sqlite.queryCompatibleSoftwareAllTerms("JEUS")).toMatchObject({ total: 2 });
+    });
+
+    it("queryCompatibleSoftwareAllTerms 도 대체 검색으로 넘어가지 않는다", () => {
+      expect(sqlite.queryCompatibleSoftwareAllTerms("JEUS Tibero")).toEqual({ rows: [], total: 0 });
+      expect(sqlite.queryCompatibleSoftwareAllTerms("?!")).toEqual({ rows: [], total: 0 });
+    });
+
     it("검색어가 하나도 추출되지 않으면 빈 배열을 돌려준다", () => {
       expect(sqlite.fullTextSearchCompatibility("?!")).toEqual([]);
     });

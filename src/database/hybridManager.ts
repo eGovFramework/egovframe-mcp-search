@@ -25,8 +25,19 @@ export interface HybridSearchOptions {
 }
 
 export interface HybridSearchResult {
+  /** 모든 검색어가 일치하는 호환성 소프트웨어 (앞에서부터 limit 건) */
   compatibility: CompatibilitySoftware[];
+  /**
+   * 모든 검색어가 일치하는 호환성 소프트웨어의 전체 건수 (limit 적용 전).
+   * compatibility 는 limit 건까지만 담으므로, 이 값이 더 크면 뒤에 남은 행이 있다. 찾지 않았으면 0 이다
+   */
+  compatibilityTotal: number;
   knowledge: KnowledgeSearchResult[];
+  /**
+   * 이 결과에 담아 돌려준 건수의 합 (compatibility 와 knowledge 의 길이).
+   * 조건에 맞는 전체 건수가 아니다: 호환성 소프트웨어의 전체 일치 건수는 compatibilityTotal 이고,
+   * 지식은 가까운 순으로 limit 건을 고른 것이라 전체 건수라는 것이 없다
+   */
   totalResults: number;
 }
 
@@ -131,6 +142,7 @@ export class HybridDatabaseManager {
 
     const result: HybridSearchResult = {
       compatibility: [],
+      compatibilityTotal: 0,
       knowledge: [],
       totalResults: 0,
     };
@@ -138,11 +150,13 @@ export class HybridDatabaseManager {
     // 병렬로 검색 실행
     const searches: Promise<void>[] = [];
 
-    // 1. 호환성 소프트웨어 검색 (키워드 기반): 모든 검색어가 일치하는 행을 limit 건까지
+    // 1. 호환성 소프트웨어 검색 (키워드 기반): 모든 검색어가 일치하는 행을 limit 건까지, 전체 건수와 함께
     if (includeCompatibility) {
       searches.push(
         (async () => {
-          result.compatibility = this.getSQLite().fullTextSearchCompatibility(query, limit);
+          const { rows, total } = this.getSQLite().queryCompatibleSoftwareAllTerms(query, limit);
+          result.compatibility = rows;
+          result.compatibilityTotal = total;
         })()
       );
     }
@@ -162,6 +176,7 @@ export class HybridDatabaseManager {
     // 모든 검색 완료 대기
     await Promise.all(searches);
 
+    // 돌려준 건수의 합이다 (전체 일치 건수가 아니다)
     result.totalResults =
       result.compatibility.length +
       result.knowledge.length;

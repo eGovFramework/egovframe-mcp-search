@@ -404,6 +404,57 @@ describe("통합 검색의 호환 제품 표기", () => {
   });
 });
 
+describe("통합 검색의 호환 소프트웨어 건수", () => {
+  const compatibilityRow = (product_name: string) => ({
+    id: 1,
+    product_name,
+    product_version: `${product_name} 1.0`,
+    framework_version: "4.3",
+    category: "CMS Solution",
+    compatibility_level: 2,
+    vendor: "벤더",
+    description: null,
+  });
+  const knowledgeRow = { id: "k1", type: "solution", title: "글", content: "본문", tags: [], importance: 3, score: 0.1 };
+
+  beforeEach(() => {
+    // 호환 소프트웨어는 298건이 일치하지만 limit 건(2건)만 돌려준 경우
+    hybrid.current = {
+      getKnowledge: () => ({}),
+      smartSearch: async () => ({
+        compatibility: [compatibilityRow("A CMS"), compatibilityRow("B CMS")],
+        compatibilityTotal: 298,
+        knowledge: [knowledgeRow],
+        totalResults: 3,
+      }),
+    };
+  });
+
+  it("searchKnowledge(scope=all) 은 호환 소프트웨어의 전체 일치 건수를 compatibilityTotal 로 싣는다", async () => {
+    const output = (await searchKnowledge({ query: "CMS", scope: "all", limit: 2 })) as {
+      compatibilityTotal: number;
+      compatibility: unknown[];
+    };
+    expect(output.compatibility).toHaveLength(2);
+    expect(output.compatibilityTotal).toBe(298);
+  });
+
+  it("totalResults 는 응답에 실은 건수의 합 그대로다", async () => {
+    const output = (await searchKnowledge({ query: "CMS", scope: "all", limit: 2 })) as {
+      totalResults: number;
+      compatibility: unknown[];
+      knowledge: unknown[];
+    };
+    expect(output.totalResults).toBe(output.compatibility.length + output.knowledge.length);
+  });
+
+  it("smartSearch 도 같은 값을 싣는다", async () => {
+    const output = await smartSearch({ query: "CMS", limit: 2 });
+    expect(output.compatibilityTotal).toBe(298);
+    expect(output.totalResults).toBe(3);
+  });
+});
+
 describe.skipIf(!HAS_BUNDLED_TABLES)("searchKnowledge 도구 — query 필수 여부", () => {
   let knowledge: DeveloperKnowledgeManager;
 

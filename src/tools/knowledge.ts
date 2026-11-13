@@ -85,7 +85,8 @@ function normalizeExcerptLength(value: number | undefined): number | undefined {
  * - query + scope="knowledge" → 시맨틱 검색 (기본)
  * - sort="recent" → 최근 추가 순 조회 (질의를 쓰지 않으므로 query 없이 호출할 수 있다).
  *   type·tags·minImportance·verifiedOnly 필터는 시맨틱 검색과 같은 뜻으로 적용한다
- * - query + scope="all" → 통합 검색 (지식 + 호환성)
+ * - query + scope="all" → 통합 검색 (지식 + 호환성). 호환 소프트웨어는 모든 검색어가 일치하는 행을 limit 건까지
+ *   싣고 전체 일치 건수를 compatibilityTotal 로 알린다. totalResults 는 응답에 실은 건수의 합이다
  *
  * excerptLength 를 주면 결과의 content 를 그 길이 이내의 발췌로 바꾼다 (표지·생략 표시 포함).
  * Q&A 본문은 질문과 답변에 길이를 나눠 답변의 앞부분이 반드시 들어간다 (utils/knowledgeExcerpt).
@@ -154,7 +155,10 @@ export async function searchKnowledge(args: {
       success: true,
       scope: 'all',
       query: echoQuery(query),
+      // 이 응답에 실은 건수의 합이다 (compatibility 와 knowledge 의 길이). 조건에 맞는 전체 건수가 아니다
       totalResults: results.totalResults,
+      // 호환 소프트웨어는 limit 건까지만 싣는다. 모든 검색어가 일치하는 전체 건수를 함께 알린다
+      compatibilityTotal: results.compatibilityTotal,
       compatibility: results.compatibility.map((s: any) => ({
         product: formatProductLabel(s.product_name, s.product_version),
         framework: s.framework_version,
@@ -269,7 +273,9 @@ export async function smartSearch(args: {
   return {
     success: true,
     query: echoQuery(args.query),
+    // 이 응답에 실은 건수의 합이다. 호환 소프트웨어의 전체 일치 건수는 compatibilityTotal 이다
     totalResults: results.totalResults,
+    compatibilityTotal: results.compatibilityTotal,
     compatibility: results.compatibility.map(s => ({
       product: formatProductLabel(s.product_name, s.product_version),
       framework: s.framework_version,
