@@ -36,6 +36,8 @@ export interface KnowledgeRowSpec {
 }
 
 export interface KnowledgeTableFixture {
+  /** 테이블을 만든 임시 디렉토리 (지식베이스 디렉토리 역할) */
+  dir: string;
   /** 행을 넣은 뒤에 연 매니저 (검증 대상) */
   manager: DeveloperKnowledgeManager;
   /** 임시 테이블을 새 핸들로 연다 (매니저와는 별개의 핸들) */
@@ -106,6 +108,7 @@ export async function createKnowledgeTable(rows: KnowledgeRowSpec[]): Promise<Kn
       const records = await (await openTable()).query().select(["id"]).toArray();
       return records.map((record: { id: unknown }) => String(record.id)).sort();
     },
+    dir,
     cleanup: () => fs.remove(dir),
   };
 }
