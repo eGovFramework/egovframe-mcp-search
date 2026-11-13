@@ -798,7 +798,7 @@ export interface ComponentSourceContent {
 
 /**
  * 컴포넌트 소스 파일 내용 읽기
- * 보안: common-components-src 디렉토리 내부만 허용
+ * 보안: common-components-src 디렉토리 내부만 허용하고, 그 안의 저장소 메타데이터(.git)는 읽지 않는다
  *
  * 텍스트는 한 번에 60,000자까지 돌려주고, options.offset 으로 이어 읽는다.
  * UTF-8 로 읽고, UTF-8 이 아니면 EUC-KR 로 읽는다 (어느 쪽으로 읽었는지는 encoding).
@@ -819,6 +819,17 @@ interface ResolvedSourcePath {
   relPath: string;
 }
 
+/** 저장소 메타데이터의 이름: .git 디렉토리, 또는 서브모듈·워크트리의 .git 파일 */
+const GIT_METADATA_NAME = '.git';
+
+/**
+ * 경로 마디 가운데 이름이 '.git' 인 것이 있는지 (대소문자 무시).
+ * .gitignore, .github 처럼 이름이 .git 으로 시작할 뿐인 마디는 해당하지 않는다.
+ */
+function hasGitMetadataSegment(somePath: string): boolean {
+  return somePath.split(/[\\/]/).some(segment => segment.toLowerCase() === GIT_METADATA_NAME);
+}
+
 /**
  * 호출자가 준 경로를 소스 루트 안의 실제 경로로 해석한다.
  *
@@ -826,10 +837,17 @@ interface ResolvedSourcePath {
  * 문자열 접두 비교와 달리, 이름만 루트를 접두어로 가진 형제 디렉토리(v-1 과 v-10)나
  * 루트 밖을 가리키는 심볼릭 링크가 통과하지 못한다.
  * 절대 경로 입력, 존재하지 않는 경로, 루트 밖의 경로, 루트 자신은 null.
+ *
+ * 저장소 메타데이터(.git)도 null 이다. 소스 루트가 독립 클론이면 .git/config 에 원격
+ * 주소와 자격증명이 들어 있을 수 있다. 요청 경로와, 심볼릭 링크를 푼 실제 경로(루트 기준
+ * 상대 경로)를 모두 검사하므로 루트 안의 링크가 .git 안을 가리켜도 통과하지 못한다.
  */
 function resolveSourcePath(srcRoot: string, filePath: string): ResolvedSourcePath | null {
   // 절대 경로는 받지 않는다 (sourceFiles 가 알려 주는 경로는 모두 상대 경로다)
   if (typeof filePath !== 'string' || path.isAbsolute(filePath) || filePath.includes('\0')) {
+    return null;
+  }
+  if (hasGitMetadataSegment(filePath)) {
     return null;
   }
 
@@ -846,6 +864,10 @@ function resolveSourcePath(srcRoot: string, filePath: string): ResolvedSourcePat
   const relPath = path.relative(realRoot, realPath);
   const outsideRoot = relPath === '..' || relPath.startsWith(`..${path.sep}`) || path.isAbsolute(relPath);
   if (relPath === '' || outsideRoot) {
+    return null;
+  }
+  // 링크를 따라간 끝이 .git 안이면 요청 경로에는 .git 이 없어도 거부한다
+  if (hasGitMetadataSegment(relPath)) {
     return null;
   }
 

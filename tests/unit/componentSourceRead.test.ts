@@ -2,6 +2,8 @@
  * 공통컴포넌트 소스 파일 읽기(readSourceFileInRoot) 단위 테스트
  *
  * readSource 는 호출자가 준 경로의 파일을 읽으므로, 소스 루트 밖의 파일이 읽히면 안 된다.
+ * 루트 안에 있더라도 저장소 메타데이터(.git)는 읽히면 안 된다 (독립 클론이면 .git/config 에
+ * 원격 주소와 자격증명이 들어 있을 수 있다).
  * 또 글꼴·문서 같은 바이너리를 텍스트로 돌려주거나 큰 파일을 통째로 돌려주면 응답이
  * 수 MB 가 되므로, 내용으로 바이너리를 판정하고 텍스트는 구간으로 나눠 읽는다.
  * 텍스트는 UTF-8 로 읽고, UTF-8 이 아니면 EUC-KR 로 읽는다 (오래된 JSP 가 EUC-KR 로 남아 있다).
@@ -147,6 +149,125 @@ describe('readSourceFileInRoot — 소스 루트 밖의 파일을 읽지 않는�
 
   it('NUL 문자가 든 경로는 예외 없이 거부한다', () => {
     expect(readSourceFileInRoot(root, 'src/A.java\0.txt')).toBeNull();
+  });
+});
+
+describe('readSourceFileInRoot — 저장소 메타데이터(.git)를 읽지 않는다', () => {
+  let tmpDir: string;
+  /** .git 디렉토리가 있는 소스 루트 (독립 클론) */
+  let root: string;
+  /** .git 이 일반 파일인 소스 루트 (서브모듈·워크트리) */
+  let submoduleRoot: string;
+  /** 심볼릭 링크 테스트는 Windows 와 링크를 만들 수 없는 환경에서 건너뛴다 */
+  let canSymlink = process.platform !== 'win32';
+
+  /** 원격 주소에 자격증명이 들어 있는 .git/config */
+  const GIT_CONFIG = '[remote "origin"]\n\turl = https://user:SECRET-TOKEN@example.com/repo.git\n';
+
+  beforeAll(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'egov-src-git-'));
+    root = path.join(tmpDir, 'clone');
+    submoduleRoot = path.join(tmpDir, 'submodule');
+    const write = (base: string, relPath: string, content: string) => {
+      const target = path.join(base, relPath);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, content);
+    };
+
+    write(root, 'pom.xml', '<project/>\n');
+    write(root, path.join('src', 'A.java'), 'class A {}\n');
+    write(root, path.join('.git', 'config'), GIT_CONFIG);
+    write(root, path.join('.git', 'HEAD'), 'ref: refs/heads/main\n');
+    write(root, path.join('.git', 'refs', 'heads', 'main'), '0123456789abcdef\n');
+    // 하위 디렉토리에 있는 서브모듈의 .git 파일과, 대소문자만 다른 이름의 디렉토리
+    write(root, path.join('modules', 'sub', '.git'), 'gitdir: ../../.git/modules/sub\n');
+    write(root, path.join('modules', 'sub', 'B.txt'), 'B\n');
+    write(root, path.join('upper', '.GIT', 'config'), GIT_CONFIG);
+    // 이름이 .git 으로 시작할 뿐인 파일과 디렉토리
+    write(root, '.gitignore', 'build/\n');
+    write(root, '.gitattributes', '* text=auto\n');
+    write(root, '.gitmodules', '[submodule "sub"]\n');
+    write(root, path.join('.github', 'x.yml'), 'name: ci\n');
+    write(root, path.join('src', '.git.txt'), 'DOT-GIT-TXT\n');
+    write(root, path.join('src', 'x.git'), 'X-DOT-GIT\n');
+    write(root, path.join('git', 'config'), 'NOT-A-DOT-GIT\n');
+
+    write(submoduleRoot, 'pom.xml', '<project/>\n');
+    write(submoduleRoot, '.git', 'gitdir: ../.git/modules/submodule\n');
+
+    if (canSymlink) {
+      try {
+        fs.symlinkSync(path.join(root, '.git', 'config'), path.join(root, 'link-to-git-config'));
+        fs.symlinkSync(path.join(root, '.git'), path.join(root, 'link-to-git-dir'));
+        fs.symlinkSync(path.join(root, 'modules', 'sub', '.git'), path.join(root, 'src', 'gitlink.txt'));
+        // 이름이 .git 인 링크가 평범한 디렉토리를 가리킨다
+        fs.mkdirSync(path.join(root, 'alias'));
+        fs.symlinkSync(path.join(root, 'src'), path.join(root, 'alias', '.git'));
+      } catch {
+        canSymlink = false;
+      }
+    }
+  });
+
+  afterAll(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('.git 디렉토리 아래의 파일을 읽지 않는다', () => {
+    expect(readSourceFileInRoot(root, '.git/config')).toBeNull();
+    expect(readSourceFileInRoot(root, '.git/HEAD')).toBeNull();
+    expect(readSourceFileInRoot(root, '.git/refs/heads/main')).toBeNull();
+    expect(readSourceFileInRoot(root, './.git/config')).toBeNull();
+    expect(readSourceFileInRoot(root, 'src/../.git/config')).toBeNull();
+    expect(readSourceFileInRoot(root, path.join('.git', 'config'))).toBeNull();
+  });
+
+  it('.git 이 일반 파일이어도(서브모듈·워크트리) 읽지 않는다', () => {
+    expect(readSourceFileInRoot(submoduleRoot, '.git')).toBeNull();
+    expect(readSourceFileInRoot(root, 'modules/sub/.git')).toBeNull();
+    // 같은 디렉토리의 다른 파일은 읽는다
+    expect(readSourceFileInRoot(root, 'modules/sub/B.txt')?.content).toBe('B\n');
+  });
+
+  it('대소문자만 다른 이름도 저장소 메타데이터로 본다', () => {
+    // 대소문자를 가리지 않는 파일 시스템(macOS, Windows)에서는 .GIT 이 .git 을 가리킨다
+    expect(readSourceFileInRoot(root, '.GIT/config')).toBeNull();
+    expect(readSourceFileInRoot(root, '.Git/HEAD')).toBeNull();
+    expect(readSourceFileInRoot(root, 'upper/.GIT/config')).toBeNull();
+  });
+
+  it('요청 경로에 .git 마디가 있으면 가리키는 곳이 .git 밖이어도 거부한다', () => {
+    expect(readSourceFileInRoot(root, '.git/../src/A.java')).toBeNull();
+    expect(readSourceFileInRoot(root, 'src/../.git/../pom.xml')).toBeNull();
+  });
+
+  it('루트 안의 심볼릭 링크가 .git 안을 가리켜도 읽지 않는다', () => {
+    if (!canSymlink) return;
+    expect(readSourceFileInRoot(root, 'link-to-git-config')).toBeNull();
+    expect(readSourceFileInRoot(root, 'link-to-git-dir/config')).toBeNull();
+    expect(readSourceFileInRoot(root, 'link-to-git-dir/refs/heads/main')).toBeNull();
+    // .git 파일(서브모듈)을 가리키는 링크
+    expect(readSourceFileInRoot(root, 'src/gitlink.txt')).toBeNull();
+  });
+
+  it('이름이 .git 인 심볼릭 링크는 평범한 디렉토리를 가리켜도 거치지 않는다', () => {
+    if (!canSymlink) return;
+    expect(readSourceFileInRoot(root, 'alias/.git/A.java')).toBeNull();
+  });
+
+  it('이름이 .git 으로 시작할 뿐인 파일과 디렉토리는 그대로 읽는다', () => {
+    expect(readSourceFileInRoot(root, '.gitignore')?.content).toBe('build/\n');
+    expect(readSourceFileInRoot(root, '.gitattributes')?.content).toBe('* text=auto\n');
+    expect(readSourceFileInRoot(root, '.gitmodules')?.content).toBe('[submodule "sub"]\n');
+    expect(readSourceFileInRoot(root, '.github/x.yml')?.content).toBe('name: ci\n');
+    expect(readSourceFileInRoot(root, 'src/.git.txt')?.content).toBe('DOT-GIT-TXT\n');
+    expect(readSourceFileInRoot(root, 'src/x.git')?.content).toBe('X-DOT-GIT\n');
+    expect(readSourceFileInRoot(root, 'git/config')?.content).toBe('NOT-A-DOT-GIT\n');
+  });
+
+  it('.git 이 있는 루트에서도 평범한 소스 파일은 읽는다', () => {
+    expect(readSourceFileInRoot(root, 'src/A.java')?.content).toBe('class A {}\n');
+    expect(readSourceFileInRoot(submoduleRoot, 'pom.xml')?.content).toBe('<project/>\n');
   });
 });
 

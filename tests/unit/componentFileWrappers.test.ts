@@ -81,6 +81,8 @@ describe('공통컴포넌트 파일 기능 공개 함수 (임시 DB + 임시 소
     const javaDir = path.join('src', 'main', 'java', 'egovframework', 'com', 'cop', 'brd', 'service');
     const springDir = path.join('src', 'main', 'resources', 'egovframework', 'spring', 'com');
     write('pom.xml', '<project/>\n');
+    // 소스 루트가 독립 클론일 때의 저장소 메타데이터
+    write(path.join('.git', 'config'), '[remote "origin"]\n\turl = https://example.com/repo.git\n');
     write(path.join('script', 'ddl', 'mysql', 'com_DDL_mysql.sql'), DDL_SCRIPT);
     write(path.join('script', 'dml', 'mysql', 'com_DML_mysql.sql'), DML_SCRIPT);
     write(path.join(javaDir, 'BoardService.java'), '// 게시판 서비스\npublic class BoardService {}\n');
@@ -193,6 +195,11 @@ describe('공통컴포넌트 파일 기능 공개 함수 (임시 DB + 임시 소
       expect(tools.readComponentSource('../egovframe.db')).toBeNull();
       expect(tools.readComponentSource(path.join(tmpDir, 'egovframe.db'))).toBeNull();
       expect(tools.readComponentSource('src/Nope.java')).toBeNull();
+    });
+
+    it('저장소 메타데이터(.git)는 소스 루트 안에 있어도 null 이다', () => {
+      expect(fs.existsSync(path.join(srcRoot, '.git', 'config'))).toBe(true);
+      expect(tools.readComponentSource('.git/config')).toBeNull();
     });
   });
 
