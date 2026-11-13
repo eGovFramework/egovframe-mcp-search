@@ -6,6 +6,7 @@
 import { getHybridManager, type HybridDatabaseManager } from '../database/hybridManager.js';
 import type { SQLiteManager } from '../database/sqliteManager.js';
 import { CompatibilitySearchFilter, CompatibilitySoftwareInfo, KeywordMatchMode } from '../types/database.js';
+import { normalizeFrameworkVersion } from '../utils/frameworkVersion.js';
 
 /** 문자열 필터 값의 앞뒤 공백을 뗀다. 문자열이 아니거나 비어 있으면 undefined. */
 function cleanFilter(value: string | undefined): string | undefined {
@@ -14,18 +15,6 @@ function cleanFilter(value: string | undefined): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed === '' ? undefined : trimmed;
-}
-
-/**
- * frameworkVersion 필터를 데이터의 표기(major.minor)에 맞춘다.
- *
- * 앞의 v 또는 V 를 떼고, x.y.z 꼴은 x.y 로 줄인다 ('v4.3.0' → '4.3').
- * 숫자가 아니라 문자열로 다룬다 ('3.10' 과 '3.1' 은 다른 버전이다).
- */
-export function normalizeFrameworkVersion(value: string): string {
-  const version = value.trim().replace(/^[vV](?=\s*\d)/, '').trim();
-  const patched = /^(\d+\.\d+)\.\d+$/.exec(version);
-  return patched ? patched[1] : version;
 }
 
 /** 호출 인자에서 실제로 적용할 필터만 추린다 (공백 제거, 버전 표기 정규화). */
