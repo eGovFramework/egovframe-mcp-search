@@ -387,6 +387,9 @@ export class GuideSearchManager {
   async clearAll(): Promise<void> {
     try {
       await this.db.dropTable(this.tableName);
+      // 지운 테이블의 인덱스 정보를 연결이 기억하고 있다가, 새 테이블의 버전이 예전 버전에 닿으면 다시 읽어
+      // optimize 가 실패한다 ("No scalar index plugin found for name vector"). 연결을 새로 연 뒤에 만든다.
+      this.db = await lancedb.connect(this.dbPath);
       await this.createTable();
       console.error('🗑️ 기존 가이드 데이터 전체 삭제 완료');
     } catch {
