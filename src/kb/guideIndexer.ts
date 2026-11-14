@@ -60,6 +60,11 @@ export function relativeGuidePath(
   return pathModule.relative(guideDir, filePath).split(pathModule.sep).join('/');
 }
 
+/** 가이드 저장소의 기여자용 문서인지 (최상위 _index.md, docs/ 아래). 경로는 relativeGuidePath 의 결과다. */
+function isContributorDocument(relativePath: string): boolean {
+  return relativePath === '_index.md' || relativePath.startsWith('docs/');
+}
+
 /**
  * 가이드 문서 하나를 색인할 청크로 나눈다. 색인하지 않을 문서면 null.
  *
@@ -67,6 +72,9 @@ export function relativeGuidePath(
  * - 프론트매터에 draft: true 가 있는 문서 — Hugo 가 사이트에 게시하지 않는 초안이다.
  *   공식 가이드로 내보내면 게시된 문서와 내용이 겹치는 청크가 결과 자리를 차지한다.
  * - 본문이 너무 짧은 문서 (목차만 있는 _index.md 등)
+ * - 가이드 저장소의 기여자용 문서: 최상위 _index.md(컨트리뷰션 안내 페이지)와 docs/ 아래의 문서(문서 저장소의
+ *   파일 트리 등). 가이드가 아닌데, 파일 트리의 조각은 컴포넌트 이름이 줄지어 있어 짧은 이름 질의의 상위 결과로 나온다.
+ *   하위 디렉토리의 _index.md 는 가이드의 문서이므로 색인한다.
  *
  * @param relativePath 가이드 디렉토리 기준 상대 경로 (relativeGuidePath 참고)
  */
@@ -74,6 +82,10 @@ export function chunkGuideDocument(
   content: string,
   relativePath: string,
 ): Omit<GuideChunk, 'id' | 'vector'>[] | null {
+  if (isContributorDocument(relativePath)) {
+    return null;
+  }
+
   const { frontmatter, body } = parseFrontMatter(content);
 
   if (frontmatter.draft) {

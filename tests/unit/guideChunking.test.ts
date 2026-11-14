@@ -103,6 +103,20 @@ describe("chunkGuideDocument — 색인 대상 판정", () => {
     expect(chunkGuideDocument(BODY, "a/b/c.md")).toHaveLength(2);
   });
 
+  it("가이드 저장소의 기여자용 문서(최상위 _index.md, docs/ 아래)는 색인하지 않는다", () => {
+    // 최상위 _index.md 는 컨트리뷰션 안내 페이지, docs/ 는 문서 저장소의 파일 트리 같은 기여자용 문서다
+    expect(chunkGuideDocument(withFrontMatter("title: Contribution 전용 페이지"), "_index.md")).toBeNull();
+    expect(chunkGuideDocument(BODY, "docs/directory-structure.md")).toBeNull();
+    expect(chunkGuideDocument(withFrontMatter("title: 안내"), "docs/sub/guide.md")).toBeNull();
+  });
+
+  it("하위 디렉토리의 _index.md 와 이름에 docs 가 든 다른 경로는 지금처럼 색인한다", () => {
+    expect(chunkGuideDocument(withFrontMatter("title: 공통컴포넌트"), "common-component/_index.md")).toHaveLength(2);
+    expect(chunkGuideDocument(withFrontMatter("title: 문서"), "egovframe-runtime/docs/a.md")).toHaveLength(2);
+    expect(chunkGuideDocument(withFrontMatter("title: 문서"), "docs.md")).toHaveLength(2);
+    expect(chunkGuideDocument(withFrontMatter("title: 시작하기"), "gettingstarted.md")).toHaveLength(2);
+  });
+
   it("본문이 너무 짧은 문서는 색인하지 않는다", () => {
     expect(chunkGuideDocument(["---", "title: 목차", "---", "# 목차", "", "짧은 본문"].join("\n"), "a/_index.md")).toBeNull();
   });
