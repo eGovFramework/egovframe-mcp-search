@@ -29,7 +29,7 @@ knowledge-base/
 | `resources` 의 키 | 기록된 값 | 값의 출처 |
 |-------------------|-----------|-----------|
 | `developer_knowledge` | `version` 이 `2026-08-11.0`, `row_count` 가 17941 | 스냅샷의 `dataset_version`. Excel 에서 만든 스냅샷은 Excel 파일 가운데 가장 늦은 수정 시각의 날짜(UTC 기준)에 `.0` 을 붙인 값 |
-| `guide` | `version` 이 `v5.0.0-ready-2026-contribution`, `chunk_count` 가 4625 | 가이드 원문 서브모듈의 git 태그 (체크아웃이 태그와 일치하지 않으면 `git describe` 의 결과) |
+| `guide` | `version` 이 `v5.0.0-ready-2026-contribution`, `chunk_count` 가 4610 | 가이드 원문 서브모듈의 git 태그 (체크아웃이 태그와 일치하지 않으면 `git describe` 의 결과) |
 | `common_components` | `source_version` 이 `v5.0.1`, `metadata_version` 이 `5.0.0` | 소스 서브모듈의 git 태그와 `templates/common-components.json` 의 최상위 `version` |
 | `compatibility` | `version` 이 `2026-07-20.0`, `row_count` 가 481 | 원본 JSON 파일을 수정한 시각의 날짜(UTC 기준)에 `.0` 을 붙인 값 |
 
@@ -91,7 +91,7 @@ knowledge-base/
 | # | 테이블 | 설명 | 데이터 소스 | 행 수 |
 |---|--------|------|-------------|-------|
 | 5 | `developer_knowledge` | 개발자 지식 (포털의 묻고답하기·FAQ·적용가이드) | `templates/developer_knowledge/` 의 묻고답하기·FAQ Excel 과 적용가이드 PDF | 18,195 |
-| 6 | `egovframe_guide` | 공식 가이드 | git 서브모듈 `templates/egovframe_guide/` ([eGovFramework/egovframe-docs](https://github.com/eGovFramework/egovframe-docs)) | 4,625 |
+| 6 | `egovframe_guide` | 공식 가이드 | git 서브모듈 `templates/egovframe_guide/` ([eGovFramework/egovframe-docs](https://github.com/eGovFramework/egovframe-docs)) | 4,610 |
 
 ---
 
@@ -399,7 +399,7 @@ SQLite 의 테이블 네 개와 그 관계입니다. PK 는 기본 키, UK 는 U
 | `extra` | `Utf8` | 위 필드에 속하지 않는 값을 담는 JSON 문자열. 동봉 데이터에서는 모두 `{}` |
 
 **데이터 소스:**
-- 묻고답하기·FAQ: `templates/developer_knowledge/` 에 스냅샷(`manifest.json`, `snapshot.jsonl.gz`)이 있으면 그것을 읽고, 없으면 같은 디렉토리의 Excel(`*.xlsx`)을 같은 형식의 스냅샷으로 바꿔서 적재합니다. 저장소에는 Excel 두 개가 들어 있습니다. `build-index` 를 `online` 방식으로 실행하면 릴리스 스냅샷을 먼저 내려받고, 받지 못했을 때 이 디렉토리를 씁니다.
+- 묻고답하기·FAQ: `templates/developer_knowledge/` 에 스냅샷(`manifest.json`, `snapshot.jsonl.gz`)이 있으면 그것을 읽고, 없으면 같은 디렉토리의 Excel(`*.xlsx`)을 같은 형식의 스냅샷으로 바꿔서 적재합니다. 저장소는 FAQ Excel 만 추적합니다. 묻고답하기 원본 Excel(`묻고답하기-LET_TN_QA_INFO.xlsx`)은 색인에 쓰지 않는 개인정보 컬럼이 들어 있어 git 이 추적하지 않으므로(`.gitignore`), 다시 구축하려면 같은 자리에 따로 두어야 합니다. 이 파일 없이 bundled 모드로 구축하면 개발자 지식이 FAQ 와 적용가이드 PDF 만으로 만들어집니다([KNOWN_ISSUES.md](KNOWN_ISSUES.md) 의 BI-13). `build-index` 를 `online` 방식으로 실행하면 릴리스 스냅샷을 먼저 내려받고, 받지 못했을 때 이 디렉토리를 씁니다.
 - Excel 을 스냅샷으로 바꿀 때 답변이 없는 글은 넣지 않습니다. 동봉 원본에서는 묻고답하기 17,863건 가운데 18건이 여기에 해당합니다. 묻고답하기·FAQ 를 색인할 때 제목과 본문에 든 주민등록번호 형식의 값은 `******-*******` 로 가리며, 동봉 데이터에는 해당하는 값이 없습니다.
 - 적용가이드: `templates/developer_knowledge/` 의 PDF 를 600자 이하의 청크로 나눠 적재합니다(`src/scripts/buildIndex.ts` 의 `chunkPdfText`). 문단, 줄, 문장, 낱말의 순서로 경계를 찾아 나누고, 둘째 청크부터는 앞 청크의 끝부분을 100자까지 앞에 다시 싣습니다. 겹친 부분도 600자에 포함됩니다. 동봉 PDF 는 청크 254건이 되었고, 청크의 길이는 485자에서 599자, 이웃한 청크가 겹치는 길이는 36자에서 99자입니다.
 - `build-index` 는 테이블을 지우고 새로 만들어 모든 행을 다시 임베딩합니다. 묻고답하기·FAQ 원본을 찾지 못하면 이 테이블을 건너뛰고 기존 내용을 유지합니다.
@@ -419,7 +419,7 @@ SQLite 의 테이블 네 개와 그 관계입니다. PK 는 기본 키, UK 는 U
 | `title` | `Utf8` | 청크 제목. `문서 제목: 제목 경로` 형식이며, 첫 `##` 제목 앞의 도입부 청크는 문서 제목만 씀 (도입부를 더 깊은 제목에서 나눈 청크는 `개요` 를 넣지 않은 `문서 제목: 소절`). 여러 조각으로 나뉜 절은 끝에 조각 번호 ` (k/n)` 이 붙음 (예: `MyBatis Configuration XML File: Configuration XML > Sample Configuration (2/8)`) |
 | `content` | `Utf8` | 청크 본문 (마크다운) |
 | `source` | `Utf8` | 원본 파일 경로. 가이드 원문 디렉토리 기준 상대 경로이고 구분자는 `/` (예: `egovframe-runtime/persistence-layer/dataaccess-configuration_xml.md`) |
-| `layer` | `Utf8` | 경로의 첫째 마디 (예: `egovframe-runtime`). 최상위 문서는 파일 이름이 그대로 들어감 (`gettingstarted.md`, `_index.md`) |
+| `layer` | `Utf8` | 경로의 첫째 마디 (예: `egovframe-runtime`). 최상위 문서는 파일 이름이 그대로 들어감 (`gettingstarted.md`) |
 | `category` | `Utf8` | 경로가 세 마디 이상일 때의 둘째 마디 (예: `persistence-layer`). 그 밖에는 빈 문자열 |
 | `section` | `Utf8` | 제목 경로. `##` 절은 절 제목, 더 깊은 제목에서 나눈 청크는 `절 > 소절`, 도입부 청크는 `개요`(도입부를 더 깊은 제목에서 나눈 청크는 `개요 > 소절`). 여러 조각으로 나뉜 절은 `title` 과 같은 조각 번호가 붙음 |
 | `docTitle` | `Utf8` | 문서 제목. 프론트매터의 `title`, 없으면 `linkTitle`, 그것도 없으면 확장자 `.md` 를 뺀 파일 이름 |
@@ -427,8 +427,8 @@ SQLite 의 테이블 네 개와 그 관계입니다. PK 는 기본 키, UK 는 U
 | `vector` | `FixedSizeList[384]<Float32>` | 임베딩 벡터 |
 
 **데이터 소스와 색인 규칙** (`src/kb/guideIndexer.ts`, `src/rag/guideChunking.ts`):
-- `templates/egovframe_guide/` 아래의 `.md` 파일을 모읍니다. `.git`, `.github`, `images` 디렉토리와 `README.md`, `how-to-write-Frontmatter.md` 는 제외합니다.
-- 프론트매터에 `draft: true` 가 있는 문서와 본문이 50자 미만인 문서는 색인하지 않습니다. 동봉 인덱스를 만든 원문에서는 663개 가운데 초안 4개와 본문이 짧은 문서 255개가 빠져 404개가 색인되었습니다.
+- `templates/egovframe_guide/` 아래의 `.md` 파일을 모읍니다. `.git`, `.github`, `images` 디렉토리와 `README.md`, `how-to-write-Frontmatter.md` 는 제외합니다. 가이드 저장소의 기여자용 문서인 최상위 `_index.md`(컨트리뷰션 안내 페이지)와 `docs/` 아래의 문서는 모으더라도 색인하지 않습니다 (하위 디렉토리의 `_index.md` 는 색인합니다).
+- 프론트매터에 `draft: true` 가 있는 문서와 본문이 50자 미만인 문서는 색인하지 않습니다. 동봉 인덱스를 만든 원문에서는 663개 가운데 기여자용 문서 2개, 초안 4개, 본문이 짧은 문서 255개가 빠져 402개가 색인되었습니다.
 - 문서를 `##` 제목에서 절로 나눕니다. 첫 `##` 제목 앞의 내용은 도입부이고, 맨 앞의 `#` 제목 줄은 뺍니다. 본문이 50자 미만인 절과 도입부는 색인하지 않습니다.
 - 청크 하나의 임베딩 입력(`제목`, `내용`, `분류`, `카테고리` 줄을 이은 문자열)이 추정 토큰 400 이하가 되게 합니다. 토큰 수는 토크나이저 없이 글자 종류별 가중치로 어림합니다. 한도 안에 드는 절은 청크 하나이고, 절 안의 더 깊은 제목은 본문에 그대로 둡니다.
 - 한도를 넘는 절은 그 안에 있는 가장 얕은 제목(`###` 이 있으면 `###`, 없으면 더 깊은 제목)에서 도입부와 소절로 나누고, 소절의 제목을 제목 경로에 올립니다(`절 > 소절`). 나눈 결과가 100자 미만이면 이웃과 한 청크에 합칠 수 있을 때 합칩니다. 합친 청크의 제목 경로에는 합쳐진 소절의 이름을 셋까지 이어 적고, 넘는 수는 ` 외 N개` 로 적습니다. 더 깊은 제목으로 내려가면 ` > ` 로, 그렇지 않으면 ` / ` 로 잇습니다(`설명 > Input / Output`).
@@ -436,7 +436,7 @@ SQLite 의 테이블 네 개와 그 관계입니다. PK 는 기본 키, UK 는 U
 - 한 문서에서 제목 경로가 같은 절이 둘 이상 조각으로 나뉘면 둘째부터 조각 번호 앞에 ` [2]`, ` [3]` 을 붙입니다(`iterate 연산 > Sample TestCase [2] (1/2)`).
 - `build-index` 와 갱신 CLI 모두 테이블을 새로 만들어 모든 청크를 다시 임베딩합니다.
 
-동봉 인덱스의 4,625행 가운데 조각 번호가 붙은 행은 1,946건(665개 절)이고, 본문이 50자 미만인 행은 없습니다. `url` 이 빈 행은 문서 3개(`_index.md`, `docs/directory-structure.md`, `egovframe-runtime/intro.md`)의 35건입니다. 이 가운데 뒤의 두 문서는 프론트매터가 없어서 `docTitle` 이 확장자를 뺀 파일 이름(`directory-structure`, `intro`)입니다. 원문에 `## 개요` 절이 있는 문서도 그 절의 `section` 이 `개요` 이고, 이때 `title` 은 `문서 제목: 개요` 입니다. `section` 이 `개요` 인 350행 가운데 도입부 청크는 56건이고 나머지 294건이 `## 개요` 절의 청크입니다.
+동봉 인덱스의 4,610행 가운데 조각 번호가 붙은 행은 1,932건(664개 절)이고, 본문이 50자 미만인 행은 없습니다. `url` 이 빈 행은 `egovframe-runtime/intro.md` 의 20건입니다. 이 문서는 프론트매터가 없어서 `docTitle` 이 확장자를 뺀 파일 이름(`intro`)입니다. 원문에 `## 개요` 절이 있는 문서도 그 절의 `section` 이 `개요` 이고, 이때 `title` 은 `문서 제목: 개요` 입니다. `section` 이 `개요` 인 349행 가운데 도입부 청크는 55건이고 나머지 294건이 `## 개요` 절의 청크입니다.
 
 서버는 `source` 와 `section` 의 조각 번호로 같은 절의 이웃 조각을 찾아, 검색 결과와 청크 읽기 응답에 이전 조각과 다음 조각의 `id` 를 함께 싣습니다.
 
@@ -455,7 +455,7 @@ SQLite 의 테이블 네 개와 그 관계입니다. PK 는 기본 키, UK 는 U
 | SQLite | `common_components` | 153 | 적재할 때 새 ID 를 받은 컴포넌트 6개 포함 |
 | SQLite | `component_dependencies` | 1,455 | 컴포넌트마다 5행부터 15행 |
 | LanceDB | `developer_knowledge` | 18,195 | 묻고답하기 17,845건, FAQ 96건, 적용가이드 PDF 청크 254건 |
-| LanceDB | `egovframe_guide` | 4,625 | 문서 404개. `egovframe-runtime` 2,840건, `egovframe-development` 1,236건, `common-component` 516건, 그 밖의 문서 33건 |
+| LanceDB | `egovframe_guide` | 4,610 | 문서 402개. `egovframe-runtime` 2,840건, `egovframe-development` 1,236건, `common-component` 516건, `gettingstarted.md` 18건 |
 
 `npm run build-index` 는 실행할 때마다 `compatibility_software` 를 비우고, 공통컴포넌트 테이블 세 개와 `components_fts` 를 지운 뒤 현재 정의로 다시 만듭니다. 그다음 원본 JSON 전체를 다시 적재하고 두 FTS 인덱스를 다시 만듭니다. 그래서 원본에서 지운 행이 남지 않고, 공통컴포넌트 테이블의 `id` 는 1 부터 다시 매겨집니다. LanceDB 테이블은 원본이 있을 때만 새로 만들고, 원본을 찾지 못한 테이블은 건너뛰어 기존 내용을 유지합니다.
 

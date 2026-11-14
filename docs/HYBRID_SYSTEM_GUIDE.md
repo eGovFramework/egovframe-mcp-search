@@ -65,7 +65,7 @@ npm run build-index -- --yes    # 비대화형: 현재 체크아웃의 원본만
 |--------|------|
 | 호환 소프트웨어 (SQLite) | `templates/compatibility/compatibility-software.json` |
 | 공통컴포넌트 메타데이터 (SQLite) | `templates/common-components.json`. 사용 테이블 목록은 `templates/common-components-src` 의 DDL 스크립트와 매퍼 XML 에서 도출합니다. 스크립트와 매퍼가 모두 없는 컴포넌트는 메타의 목록이나 모든 스크립트에 공통인 기본 테이블을 쓰고, 소스 트리가 없으면 모든 컴포넌트가 메타의 목록을 그대로 씁니다. |
-| 개발자 지식 (LanceDB) | 릴리스 스냅샷(`manifest.json`, `snapshot.jsonl.gz`) 또는 `templates/developer_knowledge/` 의 xlsx 파일, 그리고 같은 디렉토리의 적용가이드 PDF |
+| 개발자 지식 (LanceDB) | 릴리스 스냅샷(`manifest.json`, `snapshot.jsonl.gz`) 또는 `templates/developer_knowledge/` 의 xlsx 파일(묻고답하기 원본은 git 이 추적하지 않아 따로 두어야 함), 그리고 같은 디렉토리의 적용가이드 PDF |
 | 공식 가이드 (LanceDB) | `templates/egovframe_guide/` (서브모듈) |
 
 질문은 모두 시작 단계에서 끝나고, 그 뒤에는 `knowledge-base.staging/` 에 새 인덱스를 만든 다음 검증을 거쳐 `knowledge-base/` 와 한 번에 교체합니다. 직전 인덱스는 `knowledge-base.prev/` 에 하나 남습니다. 개발자 지식이나 공식 가이드의 원본이 없으면 그 리소스는 건너뛰고 기존 인덱스를 그대로 둡니다. 두 리소스를 다시 임베딩하므로 임베딩 모델(`models/`)이 필요하고, Apple Silicon 장비에서 10분 안팎이 걸립니다. 구축이 끝나면 `knowledge-base/` 에 SQLite DB 와 두 LanceDB 테이블, 그리고 `state.json`, `manifest.json`, `snapshot.jsonl.gz` 가 놓입니다. 다시 구축하면 가이드 청크의 ID 가 새로 매겨지므로, 이전 응답에서 받은 `filters.chunkId` 값은 쓸 수 없습니다.

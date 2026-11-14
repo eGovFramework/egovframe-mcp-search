@@ -164,7 +164,7 @@ npm run build-index -- --source=local \
 |-----------|------|
 | `online` | github.com 에서 공통컴포넌트와 가이드 소스 저장소의 태그를 받아 옵니다. 대화형 실행에서는 적용할 태그를 묻고, 비대화형 실행에서는 `--guide-tag`, `--components-tag` 로 지정한 태그를 체크아웃하며, 지정하지 않으면 현재 체크아웃을 유지합니다. 개발자 지식은 릴리스 스냅샷을 내려받고, 받지 못하면 `templates/developer_knowledge/` 의 파일을 씁니다. github.com 에 접속할 수 없으면 대화형 실행은 `local` 과 `bundled` 가운데 하나를 다시 묻고, 비대화형 실행은 `bundled` 로 진행합니다. |
 | `local` | `--template-dir` 아래의 `egovframe_guide/`(가이드 마크다운)와 `developer_knowledge/`(스냅샷 쌍 또는 xlsx)를 씁니다. 없는 것은 저장소의 `templates/` 로 대신합니다. 공통컴포넌트 메타, 호환 소프트웨어 목록, 적용가이드 PDF 는 항상 저장소의 `templates/` 에서 읽습니다. |
-| `bundled` | 저장소의 현재 체크아웃만 쓰고 네트워크에 접속하지 않습니다. `--source` 없이 `--yes` 만 주었을 때의 기본값입니다. |
+| `bundled` | 저장소의 현재 체크아웃만 쓰고 네트워크에 접속하지 않습니다. `--source` 없이 `--yes` 만 주었을 때의 기본값입니다. 묻고답하기 원본 Excel(`templates/developer_knowledge/묻고답하기-LET_TN_QA_INFO.xlsx`)은 git 이 추적하지 않으므로, 이 모드로 개발자 지식을 다시 만들려면 그 파일을 같은 자리에 따로 두어야 합니다. 파일이 없으면 FAQ 와 적용가이드 PDF 만으로 만들어집니다 ([`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) 의 BI-13). |
 
 소스 모드, 버전 태그, 실행 계획 확인 같은 질문은 모두 빌드를 시작하기 전에 끝나고, 그 뒤로는 입력 없이 끝까지 진행합니다. 새 인덱스는 `knowledge-base.staging/` 에 만든 뒤 검증을 거쳐 `knowledge-base/` 와 교체하므로, 도중에 실패해도 기존 인덱스는 그대로 남습니다. 직전 인덱스는 `knowledge-base.prev/` 에 하나 보존됩니다. 실행 중인 MCP 서버는 열어 둔 SQLite DB 를 계속 읽고, LanceDB 인덱스는 읽기에 실패한 뒤에야 다시 엽니다. 그래서 다시 구축한 뒤에는 서버를 재시작합니다.
 
@@ -455,7 +455,7 @@ egovframe-mcp-search/
 │   ├── common-components-src/              # 공통컴포넌트 소스와 SQL 스크립트 (git 서브모듈)
 │   ├── common-components.json              # 공통컴포넌트 메타와 의존성
 │   ├── compatibility/                      # 호환 소프트웨어 목록 (compatibility-software.json)
-│   ├── developer_knowledge/                # 개발자 지식 원본 (포털 Q&A·FAQ xlsx, 적용가이드 PDF)
+│   ├── developer_knowledge/                # 개발자 지식 원본 (FAQ xlsx, 적용가이드 PDF. Q&A xlsx 는 추적하지 않음)
 │   └── egovframe_guide/                    # 공식 가이드 마크다운 (git 서브모듈)
 │
 ├── knowledge-base/                         # build-index 결과물 (git 에 포함)
