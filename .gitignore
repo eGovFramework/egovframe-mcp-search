@@ -64,3 +64,6 @@ dist/
 
 # 로컬 임베딩 모델 (113MB 파일이 GitHub 100MB 제한 초과 — npm run fetch-model 로 생성, tgz 에는 files 로 동봉)
 models/
+
+# 묻고답하기 원본 Excel (색인에 쓰지 않는 개인정보 컬럼이 들어 있어 추적하지 않음 — 로컬에만 둔다)
+templates/developer_knowledge/묻고답하기-LET_TN_QA_INFO.xlsx
