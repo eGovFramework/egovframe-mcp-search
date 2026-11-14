@@ -20,6 +20,7 @@
 | [HYBRID_SYSTEM_GUIDE.md](./HYBRID_SYSTEM_GUIDE.md) | SQLite, LanceDB, 공통컴포넌트 소스 트리로 이루어진 저장 구조와 검색 방식, 인덱스 재구축, 번들과 오버레이 |
 | [DATABASE_SCHEMA.md](./DATABASE_SCHEMA.md) | SQLite 와 LanceDB 테이블의 스키마 |
 | [TESTING_GUIDE.md](./TESTING_GUIDE.md) | 빌드와 테스트 실행 방법, 테스트 구성 |
+| [KNOWN_ISSUES.md](./KNOWN_ISSUES.md) | 확인했지만 고치지 않고 남긴 문제와 후속 작업 (재현 방법, 원인, 고칠 방법, 결정이 필요한 항목) |
 | [tests/](./tests/) | 테스트 코드를 설명하는 문서 |
 
 ## 현재 공개 도구

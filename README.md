@@ -539,6 +539,7 @@ MCP 서버가 검색에 쓰는 데이터는 모두 **로컬**에 있습니다.
 | [`docs/DATABASE_SCHEMA.md`](docs/DATABASE_SCHEMA.md)                                       | DB 스키마                                       |
 | [`docs/DEPLOYMENT_GUIDE.md`](docs/DEPLOYMENT_GUIDE.md)                                     | 배포 가이드                                      |
 | [`docs/TESTING_GUIDE.md`](docs/TESTING_GUIDE.md)                                           | 빌드/테스트 가이드                               |
+| [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md)                                             | 알려진 문제와 후속 작업                          |
 | [`docs/tests/`](docs/tests/)                                                               | 테스트 코드를 설명하는 문서                       |
 | [`docs/test-scenarios/`](docs/test-scenarios/)                                             | 폐쇄망 OSS LLM 테스트 시나리오                  |
 
