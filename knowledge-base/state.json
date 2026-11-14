@@ -3,33 +3,33 @@
   "embedding_model": {
     "id": "Xenova/multilingual-e5-small"
   },
-  "generated_at": "2026-11-13T21:30:34.271Z",
+  "generated_at": "2026-11-14T08:53:31.762Z",
   "resources": {
     "developer_knowledge": {
       "version": "2026-08-11.0",
       "row_count": 17941,
       "origin": "bundled",
       "embedding_model": "Xenova/multilingual-e5-small",
-      "applied_at": "2026-11-13T21:30:34.271Z"
+      "applied_at": "2026-11-14T08:53:31.762Z"
     },
     "guide": {
       "version": "v5.0.0-ready-2026-contribution",
-      "chunk_count": 4625,
+      "chunk_count": 4610,
       "origin": "bundled",
       "embedding_model": "Xenova/multilingual-e5-small",
-      "applied_at": "2026-11-13T21:30:34.284Z"
+      "applied_at": "2026-11-14T08:53:31.776Z"
     },
     "common_components": {
       "source_version": "v5.0.1",
       "metadata_version": "5.0.0",
       "origin": "bundled",
-      "applied_at": "2026-11-13T21:30:34.305Z"
+      "applied_at": "2026-11-14T08:53:31.801Z"
     },
     "compatibility": {
       "version": "2026-07-20.0",
       "row_count": 481,
       "origin": "bundled",
-      "applied_at": "2026-11-13T21:30:34.305Z"
+      "applied_at": "2026-11-14T08:53:31.801Z"
     }
   }
 }
