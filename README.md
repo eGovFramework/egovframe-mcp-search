@@ -449,7 +449,8 @@ egovframe-mcp-search/
 │
 ├── scripts/
 │   ├── pack-platforms.sh                   # 플랫폼별 tgz 생성 (npm run pack:platforms)
-│   └── fetch-model.mjs                     # 임베딩 모델 내려받기 (npm run fetch-model)
+│   ├── fetch-model.mjs                     # 임베딩 모델 내려받기 (npm run fetch-model)
+│   └── convert-components-xls-to-json.mjs  # 공통컴포넌트 목록 엑셀 → templates/common-components.json
 │
 ├── templates/                              # build-index 의 입력 원본
 │   ├── common-components-src/              # 공통컴포넌트 소스와 SQL 스크립트 (git 서브모듈)

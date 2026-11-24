@@ -478,6 +478,8 @@ npm run build-index -- --yes
 
 호환 소프트웨어 원본 Excel 은 저장소에 들어 있지 않습니다. 포털에서 받은 파일을 `templates/compatibility/호환성확인SW-LET_TN_COMPATSW.xlsx` 로 저장하고 `python3 notebooks/convert-compatibility-xlsx-to-json.py --json` 을 실행하면 `templates/compatibility/compatibility-software.json` 이 다시 만들어집니다. 이 스크립트에는 `pandas` 와 `openpyxl` 이 필요합니다. `--json` 을 빼면 스크립트가 `knowledge-base/egovframe.db` 에 직접 쓰므로 `--json` 을 붙여 실행하고, 적재는 `npm run build-index` 로 합니다.
 
+공통컴포넌트 메타(`templates/common-components.json`)는 공통컴포넌트 목록 엑셀(`components.xls`)에서 만듭니다. 엑셀도 저장소에 들어 있지 않으므로, 받은 파일을 `references/components.xls` 로 저장하고(`references/` 는 git 이 추적하지 않습니다) `node scripts/convert-components-xls-to-json.mjs --version=5.1.0` 을 실행합니다. 엑셀에는 컴포넌트별 버전 열이 없어서 `--version` 의 값이 파일 머리와 모든 컴포넌트의 `version` 에 들어갑니다. 변환 규칙은 스크립트 머리의 주석에 있고, 적재는 `npm run build-index` 로 합니다.
+
 ---
 
 ## 🔧 데이터베이스 관리
