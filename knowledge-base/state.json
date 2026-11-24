@@ -3,33 +3,32 @@
   "embedding_model": {
     "id": "Xenova/multilingual-e5-small"
   },
-  "generated_at": "2026-11-14T08:53:31.762Z",
+  "generated_at": "2026-11-24T08:35:00.607Z",
   "resources": {
     "developer_knowledge": {
-      "version": "2026-08-11.0",
-      "row_count": 17941,
+      "version": "2026-11-24.0",
+      "row_count": 8411,
       "origin": "bundled",
       "embedding_model": "Xenova/multilingual-e5-small",
-      "applied_at": "2026-11-14T08:53:31.762Z"
+      "applied_at": "2026-11-24T08:35:00.607Z"
     },
     "guide": {
-      "version": "v5.0.0-ready-2026-contribution",
-      "chunk_count": 4610,
+      "version": "v5.0.0-end-2026-contribution",
+      "chunk_count": 7011,
       "origin": "bundled",
       "embedding_model": "Xenova/multilingual-e5-small",
-      "applied_at": "2026-11-14T08:53:31.776Z"
+      "applied_at": "2026-11-24T08:35:00.622Z"
     },
     "common_components": {
-      "source_version": "v5.0.1",
       "metadata_version": "5.1.0",
       "origin": "bundled",
-      "applied_at": "2026-11-14T08:53:31.801Z"
+      "applied_at": "2026-11-24T08:35:00.625Z"
     },
     "compatibility": {
-      "version": "2026-07-20.0",
-      "row_count": 481,
+      "version": "2026-11-24.0",
+      "row_count": 626,
       "origin": "bundled",
-      "applied_at": "2026-11-14T08:53:31.801Z"
+      "applied_at": "2026-11-24T08:35:00.625Z"
     }
   }
 }

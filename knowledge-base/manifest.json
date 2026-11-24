@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "dataset_version": "2026-08-11.0",
-  "generated_at": "2026-11-14T08:43:38.544Z",
+  "dataset_version": "2026-11-24.0",
+  "generated_at": "2026-11-24T08:28:29.889Z",
   "embedding_model": {
     "id": "Xenova/multilingual-e5-small"
   },
-  "row_count": 17941
+  "row_count": 8411
 }
