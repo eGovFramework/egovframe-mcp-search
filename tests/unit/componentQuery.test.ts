@@ -103,9 +103,9 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
 
     it("버전 컬럼에서는 찾지 않는다 (버전은 version 필터로 지정한다)", () => {
       // 호환 소프트웨어 검색은 검색어를 프레임워크 버전과도 견주지만, 공통컴포넌트 검색에는 그런 컬럼이 없다.
-      // '5.0.0' 은 bst 와 cmm 의 version 에만, '4.3.1' 은 나머지 여섯 컴포넌트의 version 에만 있다
+      // '5.0.0' 은 bst 와 cmm 의 version 에만, '5.1.0' 은 나머지 여섯 컴포넌트의 version 에만 있다
       expect(sqlite.queryComponents({ query: "5.0.0" }).rows).toEqual([]);
-      expect(sqlite.queryComponents({ query: "4.3.1" }).rows).toEqual([]);
+      expect(sqlite.queryComponents({ query: "5.1.0" }).rows).toEqual([]);
     });
 
     it("영문자의 대소문자를 가리지 않는다", () => {
@@ -768,7 +768,7 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     });
 
     it("hasWeb, version, keyword 필터도 키워드 검색에 적용한다", () => {
-      // '게시' 가 든 컴포넌트: bbs, tpl(4.3.1), bst(5.0.0)
+      // '게시' 가 든 컴포넌트: bbs, tpl(5.1.0), bst(5.0.0)
       expect(idsOf(sqlite.queryComponents({ query: "게시" }).rows).sort()).toEqual(["bbs", "bst", "tpl"]);
       expect(idsOf(sqlite.queryComponents({ query: "게시", filters: { version: "5.0.0" } }).rows)).toEqual(["bst"]);
       expect(idsOf(sqlite.queryComponents({ query: "게시", filters: { keyword: "템플릿" } }).rows)).toEqual(["tpl"]);
@@ -779,7 +779,7 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
 
     it("필터는 LIMIT 보다 먼저 적용한다", () => {
       // 필터를 나중에 적용하면 상위 1건만 남긴 뒤 걸러, 버전에 따라 0건이 된다
-      for (const version of ["4.3.1", "5.0.0"]) {
+      for (const version of ["5.1.0", "5.0.0"]) {
         const result = sqlite.queryComponents({ query: "게시", filters: { version }, limit: 1 });
         expect(result.rows.map((row) => row.version)).toEqual([version]);
       }
@@ -795,8 +795,8 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     });
 
     it("필터까지 만족하는 컴포넌트가 없으면 대체 검색으로 넘어간다", () => {
-      // '게시판 관리' 는 tpl 하나와 일치하지만 tpl 은 4.3.1 이다.
-      // 대체 검색: 게시판 2행, 관리 3행 모두 4.3.1 이라 5.0.0 안에는 일치하는 행이 없다 → k=0
+      // '게시판 관리' 는 tpl 하나와 일치하지만 tpl 은 5.1.0 이다.
+      // 대체 검색: 게시판 2행, 관리 3행 모두 5.1.0 이라 5.0.0 안에는 일치하는 행이 없다 → k=0
       const result = sqlite.queryComponents({ query: "게시판 관리", filters: { version: "5.0.0" } });
       expect(result.rows).toEqual([]);
       expect(result.matchMode).toBe("any-term");
@@ -1046,7 +1046,7 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
     });
 
     it("필터나 limit 을 줘도 같은 순서에서 고른다", () => {
-      expect(idsOf(sqlite.queryComponents({ filters: { version: "4.3.1" } }).rows)).toEqual([
+      expect(idsOf(sqlite.queryComponents({ filters: { version: "5.1.0" } }).rows)).toEqual([
         "bbs",
         "tpl",
         "sec",
@@ -1123,24 +1123,24 @@ describe("SQLiteManager 공통컴포넌트 조회", () => {
 
   describe("목록의 limit 과 전체 건수", () => {
     it("limit 을 주면 앞에서부터 그만큼만 돌려주고, total 은 전체 건수다", () => {
-      const result = sqlite.queryComponents({ filters: { version: "4.3.1" }, limit: 2 });
+      const result = sqlite.queryComponents({ filters: { version: "5.1.0" }, limit: 2 });
       expect(result.rows).toHaveLength(2);
       expect(result.total).toBe(6);
       // 잘린 목록은 전체 목록의 앞부분이다
-      const all = sqlite.queryComponents({ filters: { version: "4.3.1" } });
+      const all = sqlite.queryComponents({ filters: { version: "5.1.0" } });
       expect(idsOf(result.rows)).toEqual(idsOf(all.rows).slice(0, 2));
     });
 
     it("limit 을 주지 않으면 전체를 돌려준다", () => {
-      const result = sqlite.queryComponents({ filters: { version: "4.3.1" } });
+      const result = sqlite.queryComponents({ filters: { version: "5.1.0" } });
       expect(result.rows).toHaveLength(6);
       expect(result.total).toBe(6);
       expect(sqlite.queryComponents().rows).toHaveLength(COMPONENTS.length);
     });
 
     it("getCommonComponents 도 선택 인자로 limit 을 받는다", () => {
-      expect(sqlite.getCommonComponents({ version: "4.3.1" }, 2)).toHaveLength(2);
-      expect(sqlite.getCommonComponents({ version: "4.3.1" })).toHaveLength(6);
+      expect(sqlite.getCommonComponents({ version: "5.1.0" }, 2)).toHaveLength(2);
+      expect(sqlite.getCommonComponents({ version: "5.1.0" })).toHaveLength(6);
     });
 
     it("limit 은 1 이상의 정수로 맞춘다", () => {

@@ -161,7 +161,7 @@
 | `상세 조회에 쓰이지 않은 action 전용 필터는 어느 action 에서 쓰는지 함께 알린다` | `filters: { componentId: "uia", dbType: "oracle" }` | 오류가 아니고 `### 기본 정보` 가 있음. 무시한 필터 안내 줄에 `dbType` 과 `"ddl"` 이 있음 | |
 | `query 와 목록 필터를 함께 주면 두 조건을 모두 적용한다` | `query: "login"`, `filters: { categoryId: "로그인" }`, `limit: 10` | `uia` 가 있고, 다른 카테고리에 속한 `rsc` 와 `oauth` 가 없음 | |
 | `필터 목록에 limit 을 주면 전체 건수와 함께 그만큼만 보여 준다` | `filters: { keyword: "로그인" }`, `limit: 3` | 제목이 `공통컴포넌트 목록 (N개 중 3개 표시)` 형태임 | |
-| `limit 을 주지 않은 필터 목록은 조건에 맞는 컴포넌트를 모두 보여 준다` | `filters: { hasWeb: true }` | 제목에 `개 중` 이 없고 건수가 20 보다 큼 | |
+| `limit 을 주지 않은 필터 목록은 조건에 맞는 컴포넌트를 모두 보여 준다` | `filters: { hasWeb: false }` | 제목에 `개 중` 이 없고 건수가 20 보다 큼 | |
 | `키워드 검색 결과가 limit 보다 많으면 전체 건수를 알린다` | `query: "관리"`, `limit: 2` | 제목이 `공통컴포넌트 목록 (N개 중 2개 표시)` 형태임 | |
 | `낱말의 가운데에 든 검색어로도 찾는다` | `query: "증서"` | `sec`(인증서로그인)가 있고, 본문에 `모든 검색어가 들어 있는 항목이 없어` 가 없음 | |
 | `모든 검색어가 든 컴포넌트가 없으면 대체 검색으로 찾았다는 것과 쓰지 않은 낱말을 알린다` | `query: "게시판 템플릿 없는낱말"` | `tpl` 이 있고 `모든 검색어가 들어 있는 항목이 없어` 가 있음. `검색에 쓰지 않은 낱말` 이 든 줄에 `없는낱말` 이 있고 `게시판` 이 없음 | |
@@ -226,7 +226,7 @@
 | `찾지 못한 filePath 를 되돌려 실을 때 줄바꿈을 그대로 싣지 않는다` | `scope: "components"`, `action: "readSource"` 에 줄바꿈과 안내 줄 모양의 줄(`> 이 조회에 ...`)이 든 `filters.filePath` 를 줌 | 응답에 `> 이 조회에` 로 시작하는 줄이 없음 | |
 | `없는 categoryId 를 주면 쓸 수 있는 카테고리 ID 를 알려 준다` | `scope: "components"`, `filters: { categoryId: "board" }` | 오류가 아니고 `공통컴포넌트 목록 (0개)` 가 있음. `filters.categoryId` 가 든 안내 줄에 `board` 와 카테고리 ID `게시판`, `역할-권한관리` 가 있음 | |
 | `있는 categoryId 로 0건이면 카테고리 안내를 붙이지 않는다` | `scope: "components"`, `query: "존재하지않는낱말"`, `filters: { categoryId: "게시판" }` | `공통컴포넌트 목록 (0개)` 가 있고 `에 해당하는 카테고리가 없습니다` 가 없음 | |
-| `없는 version 을 주면 데이터에 있는 version 값을 알려 준다` | `scope: "components"`, `filters: { version: "4.3" }` | 오류가 아님. `filters.version` 이 든 안내 줄에 `4.3.1` 이 있음 | |
+| `없는 version 을 주면 데이터에 있는 version 값을 알려 준다` | `scope: "components"`, `filters: { version: "4.3" }` | 오류가 아님. `filters.version` 이 든 안내 줄에 `5.1.0` 이 있음 | |
 
 ### 3-10. 개발자 지식과 통합 검색
 

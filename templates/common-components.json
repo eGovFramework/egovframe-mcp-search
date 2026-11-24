@@ -1,8 +1,8 @@
 {
-  "version": "5.0.0",
+  "version": "5.1.0",
   "generatedFrom": "components.xls",
   "totalCategories": 37,
-  "totalComponents": 153,
+  "totalComponents": 155,
   "categories": [
     {
       "id": "공통",
@@ -89,7 +89,8 @@
       "description": "공동의 사용자 작업그룹, 공동 관심분야 사용자의 협업 및 정보공유를 지원하기 위한 자료의 조회, 등록, 수정, 삭제 기능을 제공하고 사용자의 등급별 관리 및 축적 자료의 검증/관리, 커뮤니티 신설을 제공하는 서비스를 정의함",
       "descriptionEn": "Provide service that enables community registration and management and verification of user's ratings and data. Support functions to view, register, edit and delete data to help  users with common interest or task group to cooperate and share information",
       "components": [
-        "cmy"
+        "cmy",
+        "clb"
       ]
     },
     {
@@ -199,7 +200,8 @@
       "description": "회원가입에 따른 정보공유 동의여부 및 회원약관 동의여부를 확인하는 기능을 제공함-웹에디터(WYSIWYG) 포함",
       "descriptionEn": "Provide information sharing/member terms agreement according to member registration",
       "components": [
-        "ipm"
+        "ipm",
+        "fiter"
       ]
     },
     {
@@ -510,7 +512,8 @@
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
         "egovframework.com.sec.ram",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -522,7 +525,7 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
+      "version": "5.1.0",
       "hasWeb": true,
       "addedOptions": ""
     },
@@ -545,7 +548,8 @@
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
         "egovframework.com.sec.ram",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -557,8 +561,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -579,7 +583,8 @@
         "egovframework.com.cop.ems",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -595,8 +600,8 @@
         "COMTNFILEDETAIL",
         "COMTHEMAILDSPTCHMANAGE"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -616,7 +621,8 @@
         "egovframework.com.cop.ems",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -632,8 +638,8 @@
         "COMTNFILEDETAIL",
         "COMTHEMAILDSPTCHMANAGE"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -651,7 +657,8 @@
         "egovframework.com.uat.uia",
         "egovframework.com.utl.sim",
         "egovframework.com.utl.fcc",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -666,7 +673,7 @@
         "COMVNUSERMASTER",
         "COMTNLOGINPOLICY"
       ],
-      "version": "4.3.1",
+      "version": "5.1.0",
       "hasWeb": true,
       "addedOptions": ""
     },
@@ -692,7 +699,8 @@
         "egovframework.com.cop.ems",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -707,8 +715,8 @@
         "COMVNUSERMASTER",
         "COMTNLOGINPOLICY"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -733,7 +741,8 @@
         "egovframework.com.cop.ems",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -748,8 +757,8 @@
         "COMVNUSERMASTER",
         "COMTNLOGINPOLICY"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -774,7 +783,8 @@
         "egovframework.com.cop.ems",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -789,8 +799,8 @@
         "COMVNUSERMASTER",
         "COMTNLOGINPOLICY"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -815,7 +825,8 @@
         "egovframework.com.cop.ems",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -837,7 +848,7 @@
         "COMTNFILEDETAIL",
         "COMTHEMAILDSPTCHMANAGE"
       ],
-      "version": "4.3.1",
+      "version": "5.1.0",
       "hasWeb": true,
       "addedOptions": ""
     },
@@ -863,7 +874,8 @@
         "egovframework.com.cop.ems",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -885,8 +897,8 @@
         "COMTNFILEDETAIL",
         "COMTHEMAILDSPTCHMANAGE"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -911,7 +923,8 @@
         "egovframework.com.cop.ems",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -933,8 +946,8 @@
         "COMTNFILEDETAIL",
         "COMTHEMAILDSPTCHMANAGE"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -955,7 +968,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -977,8 +991,8 @@
         "COMTNFILEDETAIL",
         "COMTHEMAILDSPTCHMANAGE"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -995,7 +1009,8 @@
         "egovframework.com.sec.security",
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1017,8 +1032,8 @@
         "COMTNFILEDETAIL",
         "COMTHEMAILDSPTCHMANAGE"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1037,7 +1052,8 @@
         "egovframework.com.uat.uia",
         "egovframework.com.sts.com",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1056,8 +1072,8 @@
         "COMTNBBSMASTER",
         "COMTNBBS"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1076,7 +1092,8 @@
         "egovframework.com.uat.uia",
         "egovframework.com.sts.com",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1091,8 +1108,8 @@
         "COMTNEMPLYRINFO",
         "COMTNENTRPRSMBER"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1116,7 +1133,8 @@
         "egovframework.com.cop.ems",
         "egovframework.com.utl.wed",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1127,8 +1145,8 @@
         "COMTCCMMNCODE",
         "COMTCCMMNDETAILCODE"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1154,7 +1172,8 @@
         "egovframework.com.utl.wed",
         "egovframework.com.sym.mnu.mcm",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1179,8 +1198,8 @@
         "COMTHEMAILDSPTCHMANAGE",
         "COMTNFILE"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1200,7 +1219,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.sts.com",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1214,8 +1234,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1235,7 +1255,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.sts.com",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.짛"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1255,8 +1276,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1283,7 +1304,8 @@
         "egovframework.com.cop.stf",
         "egovframework.com.sym.cal",
         "egovframework.com.utl.wed",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1303,8 +1325,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1330,7 +1352,8 @@
         "egovframework.com.cop.tpl",
         "egovframework.com.sym.cal",
         "egovframework.com.utl.wed",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1354,8 +1377,8 @@
         "COMTNCLUB",
         "COMTNBBSMASTEROPTN"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1381,7 +1404,8 @@
         "egovframework.com.cop.tpl",
         "egovframework.com.sym.cal",
         "egovframework.com.utl.wed",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1406,8 +1430,8 @@
         "COMTNCLUB",
         "COMTNBBSMASTEROPTN"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1433,7 +1457,8 @@
         "egovframework.com.cop.tpl",
         "egovframework.com.sym.cal",
         "egovframework.com.utl.wed",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1458,8 +1483,8 @@
         "COMTNCLUB",
         "COMTNBBSMASTEROPTN"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1485,7 +1510,8 @@
         "egovframework.com.cop.tpl",
         "egovframework.com.sym.cal",
         "egovframework.com.utl.wed",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1510,8 +1536,8 @@
         "COMTNCLUB",
         "COMTNBBSMASTEROPTN"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1538,7 +1564,8 @@
         "egovframework.com.cop.tpl",
         "egovframework.com.sym.cal",
         "egovframework.com.utl.wed",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1565,8 +1592,32 @@
         "COMTNCLUBUSER",
         "COMTNBBSMASTEROPTN"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
+      "addedOptions": ""
+    },
+    {
+      "id": "clb",
+      "name": "동호회 ID 생성",
+      "nameEn": "Club ID Generation",
+      "categoryId": "커뮤니티",
+      "categoryName": "커뮤니티",
+      "packageName": "egovframework.com.cop.clb",
+      "description": "커뮤니티에서 사용하는 동호회 ID(CLB_ID)를 COMTECOPSEQ 테이블 기반으로 생성하는 ID 생성 서비스(egovClbIdGnrService) 설정을 제공함",
+      "descriptionEn": "Provide configuration of the ID generation service (egovClbIdGnrService) that generates club IDs (CLB_ID) based on the COMTECOPSEQ table",
+      "dependencies": [
+        "egovframework.com.cmm",
+        "egovframework.com.sec.security",
+        "egovframework.com.uat.uap",
+        "egovframework.com.uat.uia",
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
+      ],
+      "useTables": [
+        "COMTECOPSEQ"
+      ],
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1593,7 +1644,8 @@
         "egovframework.com.cop.tpl",
         "egovframework.com.sym.cal",
         "egovframework.com.utl.wed",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1617,8 +1669,8 @@
         "COMTNCLUB",
         "COMTNBBSMASTEROPTN"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1639,7 +1691,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1655,8 +1708,8 @@
         "COMTNSMS",
         "COMTNSMSRECPTN"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1681,7 +1734,8 @@
         "egovframework.com.cop.smt.sdm",
         "egovframework.com.uss.olp.mgt",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1698,8 +1752,8 @@
         "COMTNSCHDULINFO",
         "COMTNDIARYINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1724,7 +1778,8 @@
         "egovframework.com.cop.smt.sdm",
         "egovframework.com.uss.olp.mgt",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1741,8 +1796,8 @@
         "COMTNSCHDULINFO",
         "COMTNDIARYINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1767,7 +1822,8 @@
         "egovframework.com.cop.smt.sim",
         "egovframework.com.uss.olp.mgt",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1784,8 +1840,8 @@
         "COMTNSCHDULINFO",
         "COMTNDIARYINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1810,7 +1866,8 @@
         "egovframework.com.cop.smt.sdm",
         "egovframework.com.uss.olp.mgt",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1827,8 +1884,8 @@
         "COMTNSCHDULINFO",
         "COMTNDIARYINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1849,7 +1906,8 @@
         "egovframework.com.utl.sim",
         "egovframework.com.cop.ems",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1866,8 +1924,8 @@
         "COMTNLEADERSCHDUL",
         "COMTNLEADERSCHDULDE"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1887,7 +1945,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.sim",
         "egovframework.com.cop.ems",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1902,8 +1961,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1924,7 +1983,8 @@
         "egovframework.com.utl.sim",
         "egovframework.com.cop.ems",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1939,8 +1999,8 @@
         "COMTNFILEDETAIL",
         "COMTNWIKMNTHNGREPRT"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1961,7 +2021,8 @@
         "egovframework.com.utl.sim",
         "egovframework.com.cop.ems",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -1976,8 +2037,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -1999,7 +2060,8 @@
         "egovframework.com.cop.ems",
         "egovframework.com.utl.wed",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2014,8 +2076,8 @@
         "COMTNFILEDETAIL",
         "COMTNMEMOREPRT"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2035,7 +2097,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.sim",
         "egovframework.com.utl.wed",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2049,8 +2112,8 @@
         "COMTNFILEDETAIL",
         "COMTHEMAILDSPTCHMANAGE"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2072,7 +2135,8 @@
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
         "egovframework.com.sym.ccm.zip",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2092,8 +2156,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2114,7 +2178,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2132,8 +2197,8 @@
         "COMTNADBKMANAGE",
         "COMTNADBK"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2154,7 +2219,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2168,8 +2234,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2190,7 +2256,6 @@
         "egovframework.com.utl.sim",
         "egovframework.com.cop.ems",
         "egovframework.com.utl.wed",
-        "egovframework.com.sec.rnc",
         "egovframework.com.sym.ccm.zip",
         "egovframework.com.sym.log.wlg"
       ],
@@ -2211,8 +2276,8 @@
         "COMTNFILEDETAIL",
         "COMTHEMPLYRINFOCHANGEDTLS"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2234,7 +2299,8 @@
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
         "egovframework.com.uss.ion.sit",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2249,8 +2315,8 @@
         "COMTNINDVDLPGEESTBS",
         "COMTNCNTNTSLIST"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2271,7 +2337,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2284,8 +2351,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2306,7 +2373,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2319,8 +2387,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2342,7 +2410,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.wed.fiter",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2356,7 +2425,29 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
+      "version": "5.1.0",
+      "hasWeb": true,
+      "addedOptions": ""
+    },
+    {
+      "id": "fiter",
+      "name": "웹에디터(WYSIWYG) 리소스",
+      "nameEn": "Web Editor (WYSIWYG) Resources",
+      "categoryId": "약관관리-웹에디터(wysiwyg)",
+      "categoryName": "약관관리/웹에디터(WYSIWYG)",
+      "packageName": "egovframework.com.utl.wed.fiter",
+      "description": "개인정보보호정책확인 화면에서 사용하는 웹에디터(CKEditor) 정적 리소스와 기본 web.xml을 제공함",
+      "descriptionEn": "Provide static resources of the web editor (CKEditor) and the default web.xml used by the privacy agreement confirm screen",
+      "dependencies": [
+        "egovframework.com.cmm",
+        "egovframework.com.sec.security",
+        "egovframework.com.uat.uap",
+        "egovframework.com.uat.uia",
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
+      ],
+      "useTables": [],
+      "version": "5.1.0",
       "hasWeb": true,
       "addedOptions": ""
     },
@@ -2375,7 +2466,8 @@
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
         "egovframework.com.cop.ems",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2388,8 +2480,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2407,7 +2499,8 @@
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
         "egovframework.com.cop.ems",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2421,8 +2514,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2440,7 +2533,8 @@
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
         "egovframework.com.cop.ems",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2453,8 +2547,8 @@
         "COMTNFILEDETAIL",
         "COMTNFAQINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2473,7 +2567,8 @@
         "egovframework.com.uat.uia",
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2487,8 +2582,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2506,7 +2601,8 @@
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
         "egovframework.com.cop.ems",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2520,8 +2616,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2541,7 +2637,8 @@
         "egovframework.com.cop.ems",
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.wed",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2558,8 +2655,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2580,7 +2677,8 @@
         "egovframework.com.utl.wed",
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2595,8 +2693,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2621,7 +2719,8 @@
         "egovframework.com.uss.olp.qtm",
         "egovframework.com.uss.olp.qqm",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2636,8 +2735,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2662,7 +2761,8 @@
         "egovframework.com.uss.olp.qqm",
         "egovframework.com.uss.olp.qim",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2677,8 +2777,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2703,7 +2803,8 @@
         "egovframework.com.uss.olp.qtm",
         "egovframework.com.uss.olp.qim",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2718,8 +2819,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2744,7 +2845,8 @@
         "egovframework.com.uss.olp.qqm",
         "egovframework.com.uss.olp.qim",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2759,8 +2861,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2785,7 +2887,8 @@
         "egovframework.com.uss.olp.qqm",
         "egovframework.com.uss.olp.qim",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2800,8 +2903,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2826,7 +2929,8 @@
         "egovframework.com.uss.olp.qqm",
         "egovframework.com.uss.olp.qim",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2846,8 +2950,8 @@
         "COMTNQUSTNRRSPNSRESULT",
         "COMTNQUSTNRIEM"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2867,7 +2971,8 @@
         "egovframework.com.cop.ems",
         "egovframework.com.utl.wed",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2882,8 +2987,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2902,12 +3007,11 @@
         "egovframework.com.uat.uia",
         "egovframework.com.cop.ems",
         "egovframework.com.utl.wed",
-        "egovframework.com.cop.ems",
-        "egovframework.com.utl.wed",
         "egovframework.com.uss.olp.opp",
         "egovframework.com.uss.olp.opr",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2924,8 +3028,8 @@
         "COMTNONLINEPOLLIEM",
         "COMTNONLINEPOLLRESULT"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2947,7 +3051,8 @@
         "egovframework.com.uss.olp.opp",
         "egovframework.com.uss.olp.opm",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -2964,8 +3069,8 @@
         "COMTNONLINEPOLLIEM",
         "COMTNONLINEPOLLRESULT"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -2987,7 +3092,8 @@
         "egovframework.com.uss.olp.opm",
         "egovframework.com.uss.olp.opr",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3004,8 +3110,8 @@
         "COMTNONLINEPOLLIEM",
         "COMTNONLINEPOLLRESULT"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3023,7 +3129,8 @@
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3037,8 +3144,8 @@
         "COMTNFILEDETAIL",
         "COMTNNEWSINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3055,7 +3162,8 @@
         "egovframework.com.sec.security",
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3069,8 +3177,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3088,7 +3196,8 @@
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3102,8 +3211,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3122,7 +3231,8 @@
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3138,8 +3248,8 @@
         "COMTNEVENTINFO",
         "COMTNEXTRLHRINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3157,7 +3267,8 @@
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3172,8 +3283,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3191,7 +3302,8 @@
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3209,8 +3321,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3227,7 +3339,8 @@
         "egovframework.com.sec.security",
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3240,8 +3353,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3258,7 +3371,8 @@
         "egovframework.com.sec.security",
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3271,8 +3385,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3289,7 +3403,8 @@
         "egovframework.com.sec.security",
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3304,8 +3419,8 @@
         "COMTNRECENTSRCHWRDMANAGE",
         "COMTNRECENTSRCHWRD"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3322,7 +3437,8 @@
         "egovframework.com.sec.security",
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3335,8 +3451,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3355,7 +3471,8 @@
         "egovframework.com.uat.uia",
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.wed",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3369,8 +3486,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3387,7 +3504,8 @@
         "egovframework.com.sec.security",
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3401,8 +3519,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3421,7 +3539,8 @@
         "egovframework.com.uat.uia",
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.wed",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3434,8 +3553,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3452,7 +3571,8 @@
         "egovframework.com.sec.security",
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3467,8 +3587,8 @@
         "COMTNTWITTER",
         "COMTNWIKIBKMK"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3486,7 +3606,8 @@
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
         "egovframework.com.uss.ion.rss",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3500,8 +3621,8 @@
         "COMTNEMPLYRINFO",
         "COMTNRSS"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3519,7 +3640,8 @@
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
         "egovframework.com.uss.ion.rsn",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3533,8 +3655,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3551,7 +3673,8 @@
         "egovframework.com.sec.security",
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3564,8 +3687,8 @@
         "COMTNFILEDETAIL",
         "COMTNTWITTER"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3584,7 +3707,8 @@
         "egovframework.com.uat.uia",
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.wed",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3600,8 +3724,8 @@
         "COMTNNOTETRNSMIT",
         "COMTNNOTERECPTN"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3620,7 +3744,8 @@
         "egovframework.com.uat.uia",
         "egovframework.com.uss.ion.nts",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3637,8 +3762,8 @@
         "COMTNNOTETRNSMIT",
         "COMTNNOTERECPTN"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3656,7 +3781,8 @@
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3673,8 +3799,8 @@
         "COMTNNOTETRNSMIT",
         "COMTNNOTERECPTN"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3693,7 +3819,8 @@
         "egovframework.com.uat.uia",
         "egovframework.com.utl.fcc",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTNRESTDE",
@@ -3712,8 +3839,8 @@
         "COMTNMTGPLACEFXTRS",
         "COMTNMTGPLACERESVE"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3733,7 +3860,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.uss.ion.ism",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3752,8 +3880,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3773,7 +3901,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.uss.ion.ism",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3794,8 +3923,8 @@
         "COMTNTWITTER",
         "COMTNINDVDLYRYCMANAGE"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3814,7 +3943,8 @@
         "egovframework.com.uat.uia",
         "egovframework.com.utl.fcc",
         "egovframework.com.uss.ion.ism",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3826,8 +3956,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3847,7 +3977,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.uss.ion.ism",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3866,8 +3997,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3886,7 +4017,8 @@
         "egovframework.com.uat.uia",
         "egovframework.com.utl.fcc",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3904,8 +4036,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3926,7 +4058,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.uss.ion.ism",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -3946,8 +4079,8 @@
         "COMTNEVENTMANAGE",
         "COMTNEVENTATDRN"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -3994,8 +4127,8 @@
         "COMTNEVENTMANAGE",
         "COMTNEVENTATDRN"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4018,15 +4151,14 @@
         "egovframework.com.utl.wed",
         "egovframework.com.uss.umt",
         "egovframework.com.utl.sim",
-        "egovframework.com.sec.rnc",
-        "egovframework.com.sym.ccm",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "UserConnection"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4043,13 +4175,14 @@
         "egovframework.com.sec.security",
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTNROUGHMAP"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4070,7 +4203,8 @@
         "egovframework.com.utl.sim",
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -4087,8 +4221,8 @@
         "COMTHEMAILDSPTCHMANAGE",
         "COMTNINDVDLYRYCMANAGE"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4106,13 +4240,14 @@
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
         "egovframework.com.utl.fcc",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTNCOMMUTE"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4135,13 +4270,14 @@
         "egovframework.com.utl.sim",
         "egovframework.com.sym.ccm.cde",
         "egovframework.com.sym.ccm.ccc",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTNCOMMUTE"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4164,13 +4300,14 @@
         "egovframework.com.utl.sim",
         "egovframework.com.sym.ccm.cca",
         "egovframework.com.sym.ccm.cde",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTNCOMMUTE"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4193,7 +4330,8 @@
         "egovframework.com.utl.sim",
         "egovframework.com.sym.ccm.cca",
         "egovframework.com.sym.ccm.ccc",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -4205,8 +4343,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4227,7 +4365,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTCZIP",
@@ -4240,8 +4379,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4264,7 +4403,8 @@
         "egovframework.com.utl.sim",
         "egovframework.com.sym.ccm.adc",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -4279,8 +4419,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4303,7 +4443,8 @@
         "egovframework.com.utl.sim",
         "egovframework.com.sym.ccm.acr",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -4318,8 +4459,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4340,7 +4481,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -4354,8 +4496,8 @@
         "COMTNINSTTCODE",
         "COMTNINSTTCODERECPTNLOG"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4377,7 +4519,8 @@
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -4391,8 +4534,8 @@
         "COMTNINSTTCODE",
         "COMTNINSTTCODERECPTNLOG"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4410,7 +4553,8 @@
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -4429,8 +4573,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4448,7 +4592,8 @@
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -4467,8 +4612,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4488,7 +4633,8 @@
         "egovframework.com.utl.sys.trm",
         "egovframework.com.utl.fcc",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -4513,8 +4659,8 @@
         "COMTNFILEDETAIL",
         "COMTHTRSMRCVMNTRNGLOGINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4533,7 +4679,8 @@
         "egovframework.com.uat.uia",
         "egovframework.com.utl.fcc",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -4551,8 +4698,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4569,7 +4716,8 @@
         "egovframework.com.sec.security",
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
-        "egovframework.com.sym.cal"
+        "egovframework.com.sym.cal",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -4588,8 +4736,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4630,8 +4778,8 @@
         "COMTNFILEDETAIL",
         "COMTHEMAILDSPTCHMANAGE"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4649,13 +4797,14 @@
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
         "egovframework.com.sec.ram",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTNPRIVACYLOG"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4682,13 +4831,14 @@
         "egovframework.com.sym.cal",
         "egovframework.com.sym.ccm.zip",
         "egovframework.com.utl.wed",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTNPRIVACYLOG"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4715,13 +4865,14 @@
         "egovframework.com.sym.cal",
         "egovframework.com.sym.ccm.zip",
         "egovframework.com.utl.wed",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTNPRIVACYLOG"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4748,7 +4899,8 @@
         "egovframework.com.sym.cal",
         "egovframework.com.sym.ccm.zip",
         "egovframework.com.utl.wed",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -4777,8 +4929,8 @@
         "COMTNMENUCREATDTLS",
         "COMTHEMAILDSPTCHMANAGE"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4805,7 +4957,8 @@
         "egovframework.com.sym.cal",
         "egovframework.com.sym.ccm.zip",
         "egovframework.com.utl.wed",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -4834,8 +4987,8 @@
         "COMTNMENUCREATDTLS",
         "COMTHEMAILDSPTCHMANAGE"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4857,7 +5010,8 @@
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -4874,8 +5028,8 @@
         "COMTNBATCHSCHDUL",
         "COMTNBATCHSCHDULDFK"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4897,7 +5051,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.sim",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -4913,8 +5068,8 @@
         "COMTNBACKUPOPERT",
         "COMTNBACKUPSCHDULDFK"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4935,7 +5090,8 @@
         "egovframework.com.utl.wed",
         "egovframework.com.utl.fcc",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -4947,8 +5103,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -4969,7 +5125,8 @@
         "egovframework.com.utl.wed",
         "egovframework.com.utl.fcc",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -4984,8 +5141,8 @@
         "COMTNSERVERINFO",
         "COMTNSERVEREQPMNRELATE"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5007,7 +5164,8 @@
         "egovframework.com.utl.sim",
         "egovframework.com.utl.fcc",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5019,8 +5177,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5042,7 +5200,8 @@
         "egovframework.com.utl.sim",
         "egovframework.com.utl.fcc",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5054,8 +5213,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5080,7 +5239,8 @@
         "egovframework.com.ssi.syi.sim",
         "egovframework.com.ssi.syi.ist",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5092,8 +5252,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5118,7 +5278,8 @@
         "egovframework.com.ssi.syi.sim",
         "egovframework.com.ssi.syi.ist",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5130,8 +5291,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5156,7 +5317,8 @@
         "egovframework.com.ssi.syi.ims",
         "egovframework.com.ssi.syi.sim",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5168,8 +5330,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5194,7 +5356,8 @@
         "egovframework.com.ssi.syi.ims",
         "egovframework.com.ssi.syi.ist",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5214,8 +5377,8 @@
         "COMTNCNTCMESSAGE",
         "COMTNCNTCMESSAGEITEM"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5239,7 +5402,8 @@
         "egovframework.com.dam.map.mat",
         "egovframework.com.dam.map.tea",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5259,8 +5423,8 @@
         "COMTNDAMKNOIFM",
         "COMTNDAMMAPKNO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5283,7 +5447,8 @@
         "egovframework.com.utl.sim",
         "egovframework.com.dam.map.tea",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5294,8 +5459,8 @@
         "COMTCCMMNDETAILCODE",
         "COMTNDAMMAPKNO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5318,7 +5483,8 @@
         "egovframework.com.utl.sim",
         "egovframework.com.dam.map.mat",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5329,8 +5495,8 @@
         "COMTCCMMNDETAILCODE",
         "COMTNDAMMAPKNO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5355,7 +5521,8 @@
         "egovframework.com.dam.map.tea",
         "egovframework.com.sym.cal",
         "egovframework.com.cop.com",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5371,8 +5538,8 @@
         "COMTNDAMMAPKNO",
         "COMTNDAMPRO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5394,7 +5561,8 @@
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5415,8 +5583,8 @@
         "COMTNDAMKNOIFM",
         "COMTNDAMMAPKNO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5438,7 +5606,8 @@
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5459,8 +5628,8 @@
         "COMTNDAMMAPKNO",
         "COMTNDAMPRO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5484,7 +5653,8 @@
         "egovframework.com.dam.map.mat",
         "egovframework.com.dam.map.tea",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5503,8 +5673,8 @@
         "COMTNDAMMAPKNO",
         "COMTNDAMPRO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5525,7 +5695,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5538,8 +5709,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5560,7 +5731,8 @@
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
         "egovframework.com.utl.fcc",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5572,8 +5744,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5594,7 +5766,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5606,8 +5779,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5628,7 +5801,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5640,8 +5814,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5661,7 +5835,8 @@
         "egovframework.com.cop.ems",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.sim",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5673,8 +5848,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5694,7 +5869,8 @@
         "egovframework.com.cop.ems",
         "egovframework.com.utl.sim",
         "egovframework.com.utl.fcc",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5706,8 +5882,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5727,7 +5903,8 @@
         "egovframework.com.cop.ems",
         "egovframework.com.utl.wed",
         "egovframework.com.utl.fcc",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5739,8 +5916,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5762,7 +5939,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.sym.cal",
         "egovframework.com.cop.ems",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5781,8 +5959,8 @@
         "COMTNFILEDETAIL",
         "COMTHTRSMRCVMNTRNGLOGINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5804,7 +5982,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.sym.cal",
         "egovframework.com.cop.ems",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5820,8 +5999,8 @@
         "COMTHTRSMRCVMNTRNGLOGINFO",
         "COMTHDBMNTRNGLOGINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5843,7 +6022,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.sym.cal",
         "egovframework.com.cop.ems",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5860,8 +6040,8 @@
         "COMTHDBMNTRNGLOGINFO",
         "COMTHHTTPMONLOGINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5883,7 +6063,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.sym.cal",
         "egovframework.com.cop.ems",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5900,8 +6081,8 @@
         "COMTNPROCESSMON",
         "COMTNPROCESSMONLOGINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5923,7 +6104,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.sym.cal",
         "egovframework.com.cop.ems",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5940,8 +6122,8 @@
         "COMTNNTWRKSVCMNTRNG",
         "COMTNNTWRKSVCMNTRNGLOGINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -5963,7 +6145,8 @@
         "egovframework.com.utl.fcc",
         "egovframework.com.sym.cal",
         "egovframework.com.cop.ems",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -5980,8 +6163,8 @@
         "COMTNFILESYSMNTRNG",
         "COMTNFILESYSMNTRNGLOGINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -6003,7 +6186,8 @@
         "egovframework.com.cop.ems",
         "egovframework.com.utl.fcc",
         "egovframework.com.sym.cal",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -6020,8 +6204,8 @@
         "COMTNPROXYINFO",
         "COMTNPROXYLOGINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -6042,7 +6226,8 @@
         "egovframework.com.utl.wed",
         "egovframework.com.cop.ems",
         "egovframework.com.utl.fcc",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -6055,8 +6240,8 @@
         "COMTNFILEDETAIL",
         "COMTNSYNCHRNSERVERINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -6077,7 +6262,8 @@
         "egovframework.com.utl.wed",
         "egovframework.com.cop.ems",
         "egovframework.com.utl.fcc",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -6089,8 +6275,8 @@
         "COMTNFILE",
         "COMTNFILEDETAIL"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -6113,7 +6299,8 @@
         "egovframework.com.cop.sms",
         "egovframework.com.sym.cal",
         "egovframework.com.cop.ems",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -6139,8 +6326,8 @@
         "COMTNSERVEREQPMNRELATE",
         "COMTNSERVERRESRCELOGINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -6161,7 +6348,8 @@
         "egovframework.com.utl.wed",
         "egovframework.com.cop.ems",
         "egovframework.com.utl.fcc",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -6187,8 +6375,8 @@
         "COMTNSERVEREQPMNRELATE",
         "COMTNSERVERRESRCELOGINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -6209,7 +6397,8 @@
         "egovframework.com.utl.wed",
         "egovframework.com.cop.ems",
         "egovframework.com.utl.fcc",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -6235,8 +6424,8 @@
         "COMTNSERVEREQPMNRELATE",
         "COMTNSERVERRESRCELOGINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -6258,10 +6447,10 @@
         "egovframework.com.utl.wed",
         "egovframework.com.uss.umt",
         "egovframework.com.utl.sim",
-        "egovframework.com.sec.rnc",
         "egovframework.com.sym.ccm.zip",
         "egovframework.com.uss.ion.lsi",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -6287,8 +6476,8 @@
         "COMTNSERVEREQPMNRELATE",
         "COMTNSERVERRESRCELOGINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -6305,7 +6494,8 @@
         "egovframework.com.sec.security",
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -6331,8 +6521,8 @@
         "COMTNSERVEREQPMNRELATE",
         "COMTNSERVERRESRCELOGINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -6349,7 +6539,8 @@
         "egovframework.com.sec.security",
         "egovframework.com.uat.uap",
         "egovframework.com.uat.uia",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -6375,8 +6566,8 @@
         "COMTNSERVEREQPMNRELATE",
         "COMTNSERVERRESRCELOGINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     },
     {
@@ -6398,7 +6589,8 @@
         "egovframework.com.utl.sim",
         "egovframework.com.uat.uia",
         "egovframework.com.uss.ion.lsi",
-        "egovframework.com.sym.log.wlg"
+        "egovframework.com.sym.log.wlg",
+        "egovframework.com.sym.log.clg"
       ],
       "useTables": [
         "COMTECOPSEQ",
@@ -6424,8 +6616,8 @@
         "COMTNSERVEREQPMNRELATE",
         "COMTNSERVERRESRCELOGINFO"
       ],
-      "version": "4.3.1",
-      "hasWeb": true,
+      "version": "5.1.0",
+      "hasWeb": false,
       "addedOptions": ""
     }
   ]

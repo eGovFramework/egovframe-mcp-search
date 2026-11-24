@@ -189,7 +189,7 @@ export class SQLiteManager {
         description TEXT,
         description_en TEXT,
         use_tables TEXT,
-        version TEXT DEFAULT '4.3.1',
+        version TEXT DEFAULT '5.1.0',
         has_web INTEGER DEFAULT 1,
         added_options TEXT,
         FOREIGN KEY (category_id) REFERENCES component_categories(category_id)
@@ -1061,7 +1061,7 @@ export class SQLiteManager {
       component.description || null,
       component.description_en || null,
       component.use_tables || null,
-      component.version || '4.3.1',
+      component.version || '5.1.0',
       component.has_web ? 1 : 0,
       component.added_options || null
     );
@@ -1091,7 +1091,7 @@ export class SQLiteManager {
           comp.description || null,
           comp.description_en || null,
           comp.use_tables || null,
-          comp.version || '4.3.1',
+          comp.version || '5.1.0',
           comp.has_web ? 1 : 0,
           comp.added_options || null
         );

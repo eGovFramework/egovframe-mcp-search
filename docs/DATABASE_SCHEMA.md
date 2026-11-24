@@ -30,7 +30,7 @@ knowledge-base/
 |-------------------|-----------|-----------|
 | `developer_knowledge` | `version` 이 `2026-08-11.0`, `row_count` 가 17941 | 스냅샷의 `dataset_version`. Excel 에서 만든 스냅샷은 Excel 파일 가운데 가장 늦은 수정 시각의 날짜(UTC 기준)에 `.0` 을 붙인 값 |
 | `guide` | `version` 이 `v5.0.0-ready-2026-contribution`, `chunk_count` 가 4610 | 가이드 원문 서브모듈의 git 태그 (체크아웃이 태그와 일치하지 않으면 `git describe` 의 결과) |
-| `common_components` | `source_version` 이 `v5.0.1`, `metadata_version` 이 `5.0.0` | 소스 서브모듈의 git 태그와 `templates/common-components.json` 의 최상위 `version` |
+| `common_components` | `source_version` 이 `v5.0.1`, `metadata_version` 이 `5.1.0` | 소스 서브모듈의 git 태그와 `templates/common-components.json` 의 최상위 `version` |
 | `compatibility` | `version` 이 `2026-07-20.0`, `row_count` 가 481 | 원본 JSON 파일을 수정한 시각의 날짜(UTC 기준)에 `.0` 을 붙인 값 |
 
 - 최상위에는 `schema_version`(1), `embedding_model.id`(`Xenova/multilingual-e5-small`), `generated_at`(구축 시각)이 있습니다. 리소스 항목에는 `origin`(동봉 파일은 모두 `bundled`)과 `applied_at` 이 함께 있고, 벡터를 가진 두 리소스에는 `embedding_model` 도 있습니다.
@@ -81,8 +81,8 @@ knowledge-base/
 |---|--------|------|-------------|-------|
 | 1 | `compatibility_software` | 호환 소프트웨어 | `templates/compatibility/compatibility-software.json` | 481 |
 | 2 | `component_categories` | 공통컴포넌트 카테고리 | `templates/common-components.json` | 37 |
-| 3 | `common_components` | 공통컴포넌트 | `templates/common-components.json` | 153 |
-| 4 | `component_dependencies` | 공통컴포넌트 의존성 | `templates/common-components.json` | 1,455 |
+| 3 | `common_components` | 공통컴포넌트 | `templates/common-components.json` | 155 |
+| 4 | `component_dependencies` | 공통컴포넌트 의존성 | `templates/common-components.json` | 1,613 |
 
 이 밖에 FTS5 가상 테이블 `compatibility_fts`, `components_fts` 가 있습니다. 두 테이블은 스키마에 남아 있지만 검색에는 쓰이지 않습니다(아래 "키워드 검색과 FTS5 테이블" 참고). `sqlite_master` 에는 SQLite 가 자동으로 만드는 내부 객체도 함께 보입니다. FTS5 가 쓰는 `*_fts_data`, `*_fts_idx`, `*_fts_docsize`, `*_fts_config` 테이블, `AUTOINCREMENT` 용 `sqlite_sequence` 테이블, UNIQUE 제약용 `sqlite_autoindex_*` 인덱스가 그것입니다. 표준용어사전 관련 테이블은 기능과 함께 제거되어 남아 있지 않습니다.
 
@@ -167,8 +167,8 @@ CREATE TABLE common_components (
   description TEXT,                     -- 설명
   description_en TEXT,                  -- 영문 설명
   use_tables TEXT,                      -- 사용하는 테이블과 뷰 이름의 JSON 배열
-  version TEXT DEFAULT '4.3.1',         -- 컴포넌트 메타의 버전
-  has_web INTEGER DEFAULT 1,            -- 웹 배포 여부 (0 또는 1)
+  version TEXT DEFAULT '5.1.0',         -- 컴포넌트 메타의 버전
+  has_web INTEGER DEFAULT 1,            -- 웹 배포 여부 (0 또는 1, 원본 목록의 webexist)
   added_options TEXT,                   -- 추가 옵션
   FOREIGN KEY (category_id) REFERENCES component_categories(category_id)
 );
@@ -181,12 +181,13 @@ CREATE INDEX idx_comp_package ON common_components(package_name);
 ```
 
 - `component_id` 는 고유하고 `package_name` 은 고유하지 않습니다. 게시판(`bbs`)과 블로그관리(`blog-management`)가 `egovframework.com.cop.bbs` 패키지를 함께 씁니다. 패키지명으로 컴포넌트를 찾을 때는 먼저 적재된 컴포넌트(게시판)를 고릅니다.
-- `use_tables` 는 메타의 `useTables` 를 그대로 쓰지 않고, 적재할 때 공통컴포넌트 소스 트리(`templates/common-components-src`)에서 도출합니다(`src/kb/componentTables.ts`). 컴포넌트 패키지의 설치 스크립트가 만드는 테이블과 뷰에, 그 컴포넌트의 매퍼 XML 이 참조하는 테이블을 더한 목록입니다. 설치 스크립트는 소스 트리의 `src/script/ddl/mysql/` 에 있는 `cop.bbs_create_mysql.sql` 같은 파일이고, 자기 패키지의 스크립트가 없으면 가장 가까운 상위 패키지의 스크립트를 씁니다. 스크립트가 없는 컴포넌트는 모든 스크립트에 공통인 기반 테이블에 매퍼가 참조하는 테이블을 더합니다. 스크립트도 매퍼도 없는 컴포넌트는 메타의 목록을 쓰되, 그 목록이 메타에서 바로 앞 항목의 목록과 같으면 기반 테이블만 씁니다. 동봉 데이터에서는 설치 스크립트에서 나온 컴포넌트가 125개, 기반 테이블과 매퍼에서 나온 컴포넌트가 19개, 기반 테이블만 쓰는 컴포넌트가 7개, 메타의 목록을 쓰는 컴포넌트가 2개입니다. 소스 트리가 없는 상태에서 적재하면 153개 모두 메타의 값이 그대로 들어갑니다.
-- 동봉 데이터는 153행 모두 `version` 이 `4.3.1`, `has_web` 이 1 이고 `added_options` 는 NULL 입니다. `version` 은 메타에 컴포넌트마다 적힌 값이고, `state.json` 의 `metadata_version`(`5.0.0`)은 메타 파일의 최상위 `version` 입니다.
+- `use_tables` 는 메타의 `useTables` 를 그대로 쓰지 않고, 적재할 때 공통컴포넌트 소스 트리(`templates/common-components-src`)에서 도출합니다(`src/kb/componentTables.ts`). 컴포넌트 패키지의 설치 스크립트가 만드는 테이블과 뷰에, 그 컴포넌트의 매퍼 XML 이 참조하는 테이블을 더한 목록입니다. 설치 스크립트는 소스 트리의 `src/script/ddl/mysql/` 에 있는 `cop.bbs_create_mysql.sql` 같은 파일이고, 자기 패키지의 스크립트가 없으면 가장 가까운 상위 패키지의 스크립트를 씁니다. 스크립트가 없는 컴포넌트는 모든 스크립트에 공통인 기반 테이블에 매퍼가 참조하는 테이블을 더합니다. 스크립트도 매퍼도 없는 컴포넌트는 메타의 목록을 쓰되, 그 목록이 메타에서 바로 앞 항목의 목록과 같으면 기반 테이블만 씁니다. 동봉 데이터에서는 설치 스크립트에서 나온 컴포넌트가 126개, 기반 테이블과 매퍼에서 나온 컴포넌트가 19개, 기반 테이블만 쓰는 컴포넌트가 7개, 메타의 목록을 쓰는 컴포넌트가 3개입니다. 소스 트리가 없는 상태에서 적재하면 155개 모두 메타의 값이 그대로 들어갑니다.
+- 동봉 데이터는 155행 모두 `version` 이 `5.1.0` 이고 `added_options` 는 NULL 입니다. `version` 은 메타에 컴포넌트마다 적힌 값이고, `state.json` 의 `metadata_version`(`5.1.0`)은 메타 파일의 최상위 `version` 입니다.
+- `has_web` 은 메타의 `hasWeb` 이고, 메타를 만든 원본 엑셀(`components.xls`)의 `webexist`(web 배포여부) 열에서 옵니다. 컴포넌트가 프로젝트에 `web.xml` 을 가져오는지를 나타내며, 공통컴포넌트를 프로젝트에 넣을 때 JSP 와 XML 설정 파일을 처리하는 데만 쓰이는 값입니다. 동봉 데이터에서는 5행(`cmm`, `uap`, `ram`, `ipm`, `fiter`)만 1 입니다. JSP 화면이 있는지와는 다른 값이어서, JSP 가 있는 컴포넌트도 대부분 0 입니다.
 
 #### 컴포넌트 ID 부여 규칙
 
-공통컴포넌트 메타(`templates/common-components.json`)의 `id` 는 패키지명의 마지막 마디라서 서로 다른 컴포넌트가 같은 값을 가질 수 있습니다. 153개 항목에 고유한 `id` 는 147개입니다. 적재할 때 `src/kb/componentIds.ts` 가 메타에 적힌 순서대로 아래 규칙을 적용해 고유한 ID 를 정합니다. 고유한지는 대소문자를 구분하지 않고 판정합니다.
+공통컴포넌트 메타(`templates/common-components.json`)의 `id` 는 패키지명의 마지막 마디라서 서로 다른 컴포넌트가 같은 값을 가질 수 있습니다. 155개 항목에 고유한 `id` 는 149개입니다. 적재할 때 `src/kb/componentIds.ts` 가 메타에 적힌 순서대로 아래 규칙을 적용해 고유한 ID 를 정합니다. 고유한지는 대소문자를 구분하지 않고 판정합니다.
 
 1. 처음 나온 항목은 메타의 `id` 를 그대로 씁니다.
 2. 같은 `id` 가 이미 쓰였으면 패키지명의 상위 마디를 고유해질 때까지 앞에 붙입니다. 예를 들어 `egovframework.com.uss.cmt` 는 `uss-cmt` 가 됩니다.
@@ -227,7 +228,7 @@ CREATE INDEX idx_comp_dep_component ON component_dependencies(component_id);
 CREATE INDEX idx_comp_dep_package ON component_dependencies(depends_on_package);
 ```
 
-`depends_on_package` 에는 외래키 제약이 없습니다. 의존성을 해석할 때 이 값을 `common_components.package_name` 과 대조해 대상 컴포넌트를 찾습니다. 일치하는 컴포넌트가 없는 패키지는 의존성 해석 결과에 "컴포넌트 정보가 없는 의존 패키지" 로 따로 나오고, 컴포넌트 상세 정보의 의존성 표에는 컴포넌트명이 `-` 로 나옵니다. 동봉 데이터에서는 1,455행 가운데 7행(패키지 5종)이 여기에 해당합니다.
+`depends_on_package` 에는 외래키 제약이 없습니다. 의존성을 해석할 때 이 값을 `common_components.package_name` 과 대조해 대상 컴포넌트를 찾습니다. 일치하는 컴포넌트가 없는 패키지는 의존성 해석 결과에 "컴포넌트 정보가 없는 의존 패키지" 로 따로 나오고, 컴포넌트 상세 정보의 의존성 표에는 컴포넌트명이 `-` 로 나옵니다. 동봉 데이터에는 여기에 해당하는 행이 없습니다.
 
 **관련 조회:** `{"scope": "components", "action": "dependencies", "filters": {"componentIds": ["bbs"]}}` 는 간접 의존성까지 모두 해석해 필요한 컴포넌트와 패키지를 돌려줍니다.
 
@@ -296,7 +297,7 @@ END;
 - `common_components` 의 트리거 `components_ai`, `components_ad`, `components_au` 는 같은 형태이며 `components_fts` 의 컬럼(`name`, `name_en`, `description`, `description_en`, `package_name`)을 다룹니다.
 - 외부 콘텐츠 테이블에서는 원본 행이 지워진 뒤에 인덱스 항목을 일반 `DELETE` 문으로 지울 수 없습니다. 그래서 삭제와 수정 트리거는 이전 값을 함께 넘기는 `'delete'` 명령을 씁니다.
 - `build-index` 는 DB 를 쓰기 모드로 열 때 트리거 여섯 개를 지우고 다시 만들며, `INSERT OR REPLACE` 가 내부에서 수행하는 삭제에도 트리거가 실행되도록 `PRAGMA recursive_triggers = ON` 을 설정합니다. 적재를 마치면 `'rebuild'` 명령으로 두 FTS 인덱스를 원본 테이블 기준으로 다시 만듭니다.
-- 동봉 DB 에서 두 FTS 인덱스의 문서 수는 원본 테이블의 행 수와 같습니다 (`compatibility_fts` 481, `components_fts` 153).
+- 동봉 DB 에서 두 FTS 인덱스의 문서 수는 원본 테이블의 행 수와 같습니다 (`compatibility_fts` 481, `components_fts` 155).
 
 ---
 
@@ -452,8 +453,8 @@ SQLite 의 테이블 네 개와 그 관계입니다. PK 는 기본 키, UK 는 U
 |--------|--------|-------|------|
 | SQLite | `compatibility_software` | 481 | 표준프레임워크 버전 13종(2.7 부터 4.3 까지), 분류 17종, 호환성 레벨 1 이 34건, 레벨 2 가 447건 |
 | SQLite | `component_categories` | 37 | 카테고리마다 컴포넌트 1개부터 32개 |
-| SQLite | `common_components` | 153 | 적재할 때 새 ID 를 받은 컴포넌트 6개 포함 |
-| SQLite | `component_dependencies` | 1,455 | 컴포넌트마다 5행부터 15행 |
+| SQLite | `common_components` | 155 | 적재할 때 새 ID 를 받은 컴포넌트 6개 포함 |
+| SQLite | `component_dependencies` | 1,613 | 컴포넌트마다 6행부터 16행 |
 | LanceDB | `developer_knowledge` | 18,195 | 묻고답하기 17,845건, FAQ 96건, 적용가이드 PDF 청크 254건 |
 | LanceDB | `egovframe_guide` | 4,610 | 문서 402개. `egovframe-runtime` 2,840건, `egovframe-development` 1,236건, `common-component` 516건, `gettingstarted.md` 18건 |
 

@@ -59,10 +59,10 @@
 
 ### KW-2. 공통컴포넌트에서 프레임워크 이름과 없는 낱말을 함께 적으면 전체가 나옵니다 (낮음)
 
-- **지금의 동작**: `eGovFrame`, `egov`, `egovframework` 를 컴포넌트에 없는 낱말과 함께 적으면 153건 전체가 나옵니다. 모든 컴포넌트의 패키지명이 `egovframework.com` 으로 시작해서 이 낱말이 모든 행과 일치하기 때문입니다.
-- **재현**: `{"scope":"components","query":"eGovFrame Spring Boot"}` 는 153건이고, 안내 줄에 검색어가 `eGovFrame` 하나, 쓰지 않은 낱말이 `Spring`, `Boot` 라고 나옵니다. `scope` 를 주지 않은 통합 검색의 공통컴포넌트 섹션과, 컴포넌트를 찾지 못했을 때의 "비슷한 컴포넌트" 후보에서도 같습니다.
+- **지금의 동작**: `eGovFrame`, `egov`, `egovframework` 를 컴포넌트에 없는 낱말과 함께 적으면 155건 전체가 나옵니다. 모든 컴포넌트의 패키지명이 `egovframework.com` 으로 시작해서 이 낱말이 모든 행과 일치하기 때문입니다.
+- **재현**: `{"scope":"components","query":"eGovFrame Spring Boot"}` 는 155건이고, 안내 줄에 검색어가 `eGovFrame` 하나, 쓰지 않은 낱말이 `Spring`, `Boot` 라고 나옵니다. `scope` 를 주지 않은 통합 검색의 공통컴포넌트 섹션과, 컴포넌트를 찾지 못했을 때의 "비슷한 컴포넌트" 후보에서도 같습니다.
 - **원인**: 프레임워크 이름 같은 대상 낱말은 "일치하는 행이 있는 다른 검색어" 가 있을 때만 뺍니다. 다른 검색어가 모두 일치하지 않으면 대상 낱말을 보통의 검색어로 씁니다 (공통컴포넌트의 `"컴포넌트 목록"` 이 0건이 되지 않게 하려는 규칙입니다).
-- **고칠 방법**: 빼지 않기로 한 대상 낱말이 필터를 적용한 대상의 모든 행과 일치하고, `query` 에 영어 기능어도 대상 낱말도 아닌 다른 검색어가 있으면, 그 낱말을 `droppedTerms` 로 돌리고 0건을 돌려줍니다. 대상 낱말이 일부 행하고만 일치하는 공통컴포넌트의 `"컴포넌트 목록"`(7건)과 호환 소프트웨어의 `"eGovFrame 8"`(1건), 대상 낱말뿐인 공통컴포넌트의 `"eGovFrame"`(153건)은 달라지지 않아야 합니다. 공통컴포넌트의 `"eGovFrame 8"` 은 지금 153건이므로(`8` 은 한 글자 낱말이라 뺍니다), 이 질의의 기대값도 함께 정합니다. 확인하지 않은 방법입니다.
+- **고칠 방법**: 빼지 않기로 한 대상 낱말이 필터를 적용한 대상의 모든 행과 일치하고, `query` 에 영어 기능어도 대상 낱말도 아닌 다른 검색어가 있으면, 그 낱말을 `droppedTerms` 로 돌리고 0건을 돌려줍니다. 대상 낱말이 일부 행하고만 일치하는 공통컴포넌트의 `"컴포넌트 목록"`(7건)과 호환 소프트웨어의 `"eGovFrame 8"`(1건), 대상 낱말뿐인 공통컴포넌트의 `"eGovFrame"`(155건)은 달라지지 않아야 합니다. 공통컴포넌트의 `"eGovFrame 8"` 은 지금 155건이므로(`8` 은 한 글자 낱말이라 뺍니다), 이 질의의 기대값도 함께 정합니다. 확인하지 않은 방법입니다.
 
 ### KW-3. 구분 기호가 다른 표기를 찾는 꼴의 한계 (낮음)
 
@@ -643,7 +643,7 @@
 ### PR-10. 입력 스키마의 `scope` 와 `filters.keyword` 설명이 실제 동작과 다릅니다 (참고)
 
 - **지금의 동작**: `tools/list` 의 `scope` 설명은 auto 추론에서 출처 필터도 `query` 도 없으면 "a call without query returns the component category overview" 라고 적지만, `filters.keyword` 나 `filters.version` 만 준 호출은 개요가 아니라 걸러진 공통컴포넌트 목록을 돌려줍니다. `filters.keyword` 설명은 "component name, description and package name" 에서 찾는다고 적지만 실제로는 영문명에서도 찾습니다. 두 곳 모두 결과가 설명보다 넓을 뿐 틀린 결과가 나가지는 않습니다. 기대하는 동작은 설명이 실제 동작을 그대로 적는 것입니다.
-- **재현**: `{"filters":{"keyword":"게시판"}}` 은 `## 공통컴포넌트 목록 (13개)` 를, `{"filters":{"version":"4.3.1"},"limit":2}` 는 `(153개 중 2개 표시)` 목록을 돌려줍니다. `{"scope":"components","filters":{"keyword":"General Login"}}` 은 영문명이 General Login 인 일반로그인(`uia`) 1건을 돌려줍니다.
+- **재현**: `{"filters":{"keyword":"게시판"}}` 은 `## 공통컴포넌트 목록 (13개)` 를, `{"filters":{"version":"5.1.0"},"limit":2}` 는 `(155개 중 2개 표시)` 목록을 돌려줍니다. `{"scope":"components","filters":{"keyword":"General Login"}}` 은 영문명이 General Login 인 일반로그인(`uia`) 1건을 돌려줍니다.
 - **원인**: `src/server.ts` 의 `scope` 설명은 출처를 고르는 필터만 나열하고, 출처를 고르지 않는 `keyword` 와 `version` 이 `query` 없는 호출에서 목록을 만든다는 것을 적지 않습니다. 동작은 `src/tools/egovSearchKnowledge.ts` 의 `inferScope`(`query` 도 출처 필터도 없으면 components)와 `formatComponentListLookup`(목록 필터가 있으면 목록)이 정합니다. `filters.keyword` 설명과 달리 `SQLiteManager.buildComponentFilter`(`src/database/sqliteManager.ts`)는 `name`, `name_en`, `description`, `package_name` 에서 찾습니다.
 - **고칠 방법**: `scope` 설명의 해당 구절을 "a call without query returns the component category overview, or the filtered component list when keyword or version is given" 로, `filters.keyword` 설명을 "components: substring filter on component name, English name, description and package name." 로 고칩니다. 두 문장을 그대로 단언하는 테스트는 없습니다.
 
@@ -709,28 +709,20 @@
 
 #### DC-3. 메타의 패키지명과 소스 디렉토리가 다른 컴포넌트는 `sourceFiles` 가 설명 없이 0개나 1개만 돌려줍니다 (낮음)
 
-- **지금의 동작**: 인증서로그인(`sec`, 패키지 `egovframework.com.utl.sec`), 배치 프레임워크 간소화 기능(`batch`, `egovframework.com.ext.batch`), LDAP조직도관리(`ldap`, `egovframework.com.ext.ldap`)는 메타의 패키지에 해당하는 디렉토리가 공통컴포넌트 소스 트리에 없습니다. `sourceFiles` 는 `sec` 와 `batch` 에 파일 0개를, `ldap` 에 Spring 설정 1개만 돌려주고, 응답에는 다른 컴포넌트와 같은 수집 범위 안내만 있어 소스가 없는 컴포넌트로 읽힙니다. 기대하는 동작은 실제 소스 파일이 나오거나, 적어도 패키지에 해당하는 디렉토리가 없다는 사실을 알리는 것입니다.
-- **재현**: `{"scope":"components","action":"sourceFiles","filters":{"componentId":"sec"}}` 와 `batch` 는 "총 파일 수: 0개" 이고, `ldap` 은 "총 파일 수: 1개"(`context-ldap.xml`)입니다. 소스 트리의 `src/main/java/egovframework/com/ext` 에는 `ldapumt`(Java 12개)와 `easybatch`(Java 2개)가 있고, 이 14개는 어느 컴포넌트의 목록에도 나오지 않습니다. 153개 컴포넌트 가운데 패키지 디렉토리가 없는 것은 이 셋뿐입니다.
-- **원인**: `collectComponentSourceFiles`(`src/tools/commonComponents.ts`)는 패키지명을 경로로 바꾼 디렉토리만 읽고, 디렉토리가 없으면 빈 목록을 돌려줍니다. `templates/common-components.json` 의 `packageName` 이 실제 소스 디렉토리와 다릅니다.
+- **지금의 동작**: 인증서로그인(`sec`, 패키지 `egovframework.com.utl.sec`), 배치 프레임워크 간소화 기능(`batch`, `egovframework.com.ext.batch`), LDAP조직도관리(`ldap`, `egovframework.com.ext.ldap`), 동호회 ID 생성(`clb`, `egovframework.com.cop.clb`), 웹에디터(WYSIWYG) 리소스(`fiter`, `egovframework.com.utl.wed.fiter`)는 메타의 패키지에 해당하는 디렉토리가 공통컴포넌트 소스 트리에 없습니다. `sourceFiles` 는 `sec`, `batch`, `clb`, `fiter` 에 파일 0개를, `ldap` 에 Spring 설정 1개만 돌려주고, 응답에는 다른 컴포넌트와 같은 수집 범위 안내만 있어 소스가 없는 컴포넌트로 읽힙니다. 기대하는 동작은 실제 소스 파일이 나오거나, 적어도 패키지에 해당하는 디렉토리가 없다는 사실을 알리는 것입니다.
+- **재현**: `{"scope":"components","action":"sourceFiles","filters":{"componentId":"sec"}}` 와 `batch`, `clb`, `fiter` 는 "총 파일 수: 0개" 이고, `ldap` 은 "총 파일 수: 1개"(`context-ldap.xml`)입니다. 소스 트리의 `src/main/java/egovframework/com/ext` 에는 `ldapumt`(Java 12개)와 `easybatch`(Java 2개)가 있고, 이 14개는 어느 컴포넌트의 목록에도 나오지 않습니다. 155개 컴포넌트 가운데 패키지 디렉토리가 없는 것은 이 다섯뿐입니다.
+- **원인**: `collectComponentSourceFiles`(`src/tools/commonComponents.ts`)는 패키지명을 경로로 바꾼 디렉토리만 읽고, 디렉토리가 없으면 빈 목록을 돌려줍니다. `templates/common-components.json` 의 `packageName` 이 실제 소스 디렉토리와 다릅니다. `clb` 와 `fiter` 는 5.1.0-beta 의 컴포넌트 목록(`components.xls`)에 새로 들어온 항목이고, 동봉 소스 트리는 `v5.0.1` 입니다.
 - **고칠 방법**: `collectComponentSourceFiles` 가 `src/main/java/<패키지 경로>` 디렉토리가 있는지를 결과에 담고, `formatComponentSourceFiles` 가 없을 때 "메타데이터의 패키지에 해당하는 소스 디렉토리가 소스 트리에 없습니다" 한 줄을 출력하게 합니다. 확인하지 않은 방법입니다.
-- **결정할 것**: 메타의 `packageName` 을 실제 디렉토리에 맞출지, 컴포넌트별 소스 경로를 메타에 따로 둘지 정해야 합니다. `ldap` 은 `ext/ldapumt`, `batch` 는 `ext/easybatch` 가 영문명(`OrgManageLdap`, `EasyBatch`)과 맞고, `sec` 은 해당하는 디렉토리를 원본에서 확인해야 합니다. `packageName` 을 바꾸면 사용 테이블의 도출도 달라질 수 있습니다. `src/kb/componentTables.ts` 의 `findScriptTables` 가 패키지 접미어로 컴포넌트별 스크립트(소스 트리의 `src/script/ddl/mysql/ext.ldap_create_mysql.sql`)를 찾기 때문입니다.
+- **결정할 것**: 메타의 `packageName` 을 실제 디렉토리에 맞출지, 컴포넌트별 소스 경로를 메타에 따로 둘지 정해야 합니다. `ldap` 은 `ext/ldapumt`, `batch` 는 `ext/easybatch` 가 영문명(`OrgManageLdap`, `EasyBatch`)과 맞고, `sec` 은 해당하는 디렉토리를 원본에서 확인해야 합니다. `fiter` 는 소스 트리에 있는 `utl/wed/filter`(Java 5개)의 오타로 보이지만, 원본 목록에도 `fiter` 로 적혀 있고 다른 컴포넌트(`ipm`)의 의존 목록도 이 이름을 씁니다. `cop/clb` 는 `v5.0.1` 소스 트리에 없으므로, 5.1.0 소스를 받은 뒤 다시 확인합니다. `packageName` 을 바꾸면 사용 테이블의 도출도 달라질 수 있습니다. `src/kb/componentTables.ts` 의 `findScriptTables` 가 패키지 접미어로 컴포넌트별 스크립트(소스 트리의 `src/script/ddl/mysql/ext.ldap_create_mysql.sql`)를 찾기 때문입니다.
 
-#### DC-4. 메타의 `version` 과 `hasWeb` 이 153개 모두 같은 값이어서, 버전 표시와 `hasWeb` 필터가 실제와 다릅니다 (낮음)
+#### DC-4. 메타의 `version` 이 155개 모두 같은 값이고 소스 버전과도 달라서, 버전 표시가 실제와 다릅니다 (낮음)
 
-- **지금의 동작**: 상세의 "버전", 검색 결과 표의 "버전" 열, 개요의 "버전별 분포" 가 153개 모두 4.3.1 입니다. 같은 도구가 돌려주는 소스는 5.0.x 인데(소스 트리의 `README.md` 첫 줄은 "표준프레임워크 공통컴포넌트 5.0.1" 이고 `knowledge-base/state.json` 의 `common_components.source_version` 은 `v5.0.1` 입니다) 응답에는 이 값이 메타데이터의 값이라는 표시가 없습니다. "웹 배포" 도 153개 모두 Yes 여서 패키지 경로에 JSP 가 하나도 없는 컴포넌트 11개(`ucc`, `fcc`, `security`, `sts-com` 등)도 Yes 로 나오고, `query` 없이 `filters.hasWeb: false` 만 주면 안내 없이 0건입니다. 기대하는 동작은 소스와 맞는 버전이 나오고, `hasWeb` 이 웹 화면이 있는 컴포넌트를 가려 주는 것입니다.
-- **재현**: `{"scope":"components","filters":{"componentId":"ucc"}}` 는 "버전: 4.3.1", "웹 배포: Yes" 인데 `ucc` 의 `sourceFiles` 는 Java 1개뿐입니다. `{"scope":"components","filters":{"hasWeb":false}}` 는 "공통컴포넌트 목록 (0개)" 와 "검색 결과가 없습니다." 뿐입니다. `{"scope":"components"}` 의 버전별 분포는 `| 4.3.1 | 153개 |` 한 행입니다.
-- **이미 해결된 것**: `filters.version` 에 데이터에 없는 값을 주면 데이터에 있는 `version` 값을 알려 줍니다.
-- **원인**: `templates/common-components.json` 의 컴포넌트별 `version` 이 153건 모두 `"4.3.1"` 이고 `hasWeb` 이 모두 `true` 입니다 (파일 머리의 `version` 은 `"5.0.0"` 입니다). `src/tools/commonComponents.ts` 의 `formatComponentInfo`, `formatComponentList`, `formatComponentSummary` 가 그 값을 "버전" 으로 싣고, `src/tools/egovSearchKnowledge.ts` 의 `unknownComponentFilterNotes` 는 0건일 때 `categoryId` 와 `version` 만 살핍니다.
-- **고칠 방법**: 원본을 고치지 않고 할 수 있는 것은 두 가지입니다. 첫째, 세 함수의 "버전" 을 "메타데이터 버전" 으로 바꾸고, 상세와 개요에 소스 트리 버전(`src/utils/dataPaths.ts` 의 `resolveResource` 로 얻는 `common_components` 의 `state.source_version`)을 함께 싣습니다. 둘째, `unknownComponentFilterNotes` 에 `hasWeb` 을 더해, 0건이고 데이터의 `has_web` 값이 한 가지뿐이면 "데이터의 모든 컴포넌트가 hasWeb true 입니다" 를 알립니다. 확인하지 않은 방법입니다.
-- **결정할 것**: 메타의 `version` 을 소스 태그에 맞출지와, `hasWeb` 을 원본에서 고칠지 적재할 때(`loadCommonComponentsFromJson`) 패키지 경로에 JSP 가 있는지로 정할지를 결정해야 합니다.
-
-#### DC-5. 메타의 의존 패키지 이름 5개가 어느 컴포넌트와도 맞지 않습니다 (낮음)
-
-- **지금의 동작**: 의존 대상으로 적힌 패키지 이름 가운데 5개가 어느 컴포넌트의 패키지와도 같지 않습니다. `dependencies` 는 이런 패키지를 "컴포넌트 정보가 없는 의존 패키지" 로 따로 알리고 상세의 의존성 표는 컴포넌트명을 `-` 로 적으므로 틀린 응답이 나가지는 않지만, 그 의존 관계는 "전체 필요 컴포넌트" 에 반영되지 않습니다. 해당하는 이름은 `egovframework.com.sym.log.짛`(`dst` 가 적음), `egovframework.com.cop.clb`(`cmy`), `egovframework.com.sec.rnc`(`umt`, `fbk`, `oauth`), `egovframework.com.utl.wed.fiter`(`ipm`), `egovframework.com.sym.ccm`(`fbk`)입니다. 기대하는 동작은 의존 패키지가 모두 컴포넌트로 해석되는 것입니다.
-- **재현**: `{"scope":"components","action":"dependencies","filters":{"componentIds":["dst"]}}` 의 끝에 "컴포넌트 정보가 없는 의존 패키지 (1개)" 와 `egovframework.com.sym.log.짛` 이 나옵니다. `fbk` 로 호출하면 2개(`egovframework.com.sec.rnc`, `egovframework.com.sym.ccm`)가 나옵니다.
-- **원인**: `templates/common-components.json` 의 `dependencies` 에 적힌 값입니다. build-index 에는 컴포넌트 행이 없는 의존 패키지를 알리는 검증이 없습니다.
-- **고칠 방법**: `loadCommonComponentsFromJson`(`src/kb/sqliteLoaders.ts`)이 컴포넌트 행이 없는 의존 패키지를 결과에 담고, `src/scripts/buildIndex.ts` 의 `loadCommonComponents` 가 경고로 출력하게 합니다. 확인하지 않은 방법입니다.
-- **결정할 것**: 다섯 이름을 원본에서 바로잡아야 합니다. 판단에 쓸 사실은 다음과 같습니다. `wlg` 자신과 `dst` 를 뺀 151개 컴포넌트가 모두 의존하는 `egovframework.com.sym.log.wlg` 가 `dst` 의 목록에만 없습니다. 소스 트리에 `utl/wed/filter` 디렉토리가 있습니다. `egovframework.com.sym.ccm` 은 공통코드 계열 7개 컴포넌트의 상위 패키지이고 그 이름의 컴포넌트는 없습니다. `cop/clb` 와 `sec/rnc` 디렉토리는 소스 트리에 없습니다.
+- **지금의 동작**: 상세의 "버전", 검색 결과 표의 "버전" 열, 개요의 "버전별 분포" 가 155개 모두 5.1.0 입니다. 같은 도구가 돌려주는 소스는 5.0.1 인데(소스 트리의 `README.md` 첫 줄은 "표준프레임워크 공통컴포넌트 5.0.1" 이고 `knowledge-base/state.json` 의 `common_components.source_version` 은 `v5.0.1` 입니다) 응답에는 이 값이 메타데이터의 값이라는 표시가 없습니다. 기대하는 동작은 버전이 메타데이터의 값인지 소스의 값인지 구분되어 나오는 것입니다.
+- **재현**: `{"scope":"components","filters":{"componentId":"ucc"}}` 는 "버전: 5.1.0" 인데 `ucc` 의 소스는 `v5.0.1` 소스 트리에서 읽습니다. `{"scope":"components"}` 의 버전별 분포는 `| 5.1.0 | 155개 |` 한 행입니다.
+- **이미 해결된 것**: `filters.version` 에 데이터에 없는 값을 주면 데이터에 있는 `version` 값을 알려 줍니다. `hasWeb` 은 원본 목록(`components.xls`)의 `webexist` 열을 따르게 되어, 5개가 `true`, 150개가 `false` 입니다.
+- **원인**: 원본 목록(`components.xls`)에는 컴포넌트별 버전 열이 없어서, `templates/common-components.json` 의 컴포넌트별 `version` 을 155건 모두 파일 머리의 `version`(`"5.1.0"`)과 같은 값으로 적었습니다. `src/tools/commonComponents.ts` 의 `formatComponentInfo`, `formatComponentList`, `formatComponentSummary` 가 그 값을 "버전" 으로 싣습니다.
+- **고칠 방법**: 세 함수의 "버전" 을 "메타데이터 버전" 으로 바꾸고, 상세와 개요에 소스 트리 버전(`src/utils/dataPaths.ts` 의 `resolveResource` 로 얻는 `common_components` 의 `state.source_version`)을 함께 싣습니다. 확인하지 않은 방법입니다.
+- **결정할 것**: 컴포넌트별 `version` 을 계속 메타 파일의 버전과 같게 둘지, 컴포넌트마다 처음 들어온 버전처럼 다른 값을 둘지 정해야 합니다.
 
 #### DC-6. 업체명이나 확인일자가 틀린 행이 다섯 건 있습니다 (낮음)
 

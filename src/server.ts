@@ -172,7 +172,9 @@ const filtersSchema = z.strictObject({
   hasWeb: z
     .boolean()
     .optional()
-    .describe("components: filter the list or keyword search by whether the component ships web pages."),
+    .describe(
+      "components: filter the list or keyword search by the webexist flag of the eGovFrame component list: whether the component brings a web.xml into the project. It does not tell whether the component has JSP pages; most components with JSP pages are false.",
+    ),
   version: filterString()
     .optional()
     .describe(

@@ -45,7 +45,7 @@ const component = (
   description,
   description_en: undefined,
   use_tables: undefined,
-  version: extra.version ?? "4.3.1",
+  version: extra.version ?? "5.1.0",
   has_web: extra.has_web ?? true,
   added_options: undefined,
 });

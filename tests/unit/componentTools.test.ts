@@ -146,18 +146,18 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
       // 적재 순서는 uia, sec, bbs, tpl, ram, drm, bst, cmm 이다
       const BY_NAME = ["bbs", "tpl", "cmm", "sec", "uia", "ram", "drm", "bst"];
       expect(idsOf(listCommonComponents().components)).toEqual(BY_NAME);
-      expect(idsOf(listCommonComponents({ version: "4.3.1" }, 3).components)).toEqual(["bbs", "tpl", "sec"]);
+      expect(idsOf(listCommonComponents({ version: "5.1.0" }, 3).components)).toEqual(["bbs", "tpl", "sec"]);
     });
 
     it("limit 을 주면 그만큼만 돌려주고 total 로 전체 건수를 알린다", () => {
-      const listed = listCommonComponents({ version: "4.3.1" }, 2);
+      const listed = listCommonComponents({ version: "5.1.0" }, 2);
       expect(listed.components).toHaveLength(2);
       expect(listed.total).toBe(6);
-      expect(listed.filters).toEqual({ version: "4.3.1" });
+      expect(listed.filters).toEqual({ version: "5.1.0" });
     });
 
     it("limit 을 주지 않으면 지금처럼 전체를 돌려준다", () => {
-      const listed = listCommonComponents({ version: "4.3.1" });
+      const listed = listCommonComponents({ version: "5.1.0" });
       expect(listed.components).toHaveLength(6);
       expect(listed.total).toBe(6);
       expect(listCommonComponents().components).toHaveLength(COMPONENTS.length);
@@ -353,7 +353,7 @@ describe("공통컴포넌트 도구 — 메타데이터 조회", () => {
       expect(idsOf(searchComponents("관리", 20, { categoryId: "게시판" }).results)).toEqual(["tpl"]);
       expect(searchComponents("공통", 20, { hasWeb: true })).toMatchObject({ results: [], total: 0 });
 
-      const filtered = searchComponents("게시", 1, { version: "4.3.1" });
+      const filtered = searchComponents("게시", 1, { version: "5.1.0" });
       expect(filtered.results).toHaveLength(1);
       expect(filtered.total).toBe(2);
     });

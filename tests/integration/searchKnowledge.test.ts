@@ -783,7 +783,8 @@ describe("integration — egov_search_knowledge 공통컴포넌트 조회", () =
   });
 
   it("limit 을 주지 않은 필터 목록은 조건에 맞는 컴포넌트를 모두 보여 준다", async () => {
-    const res = await search({ scope: "components", filters: { hasWeb: true } });
+    // 동봉 메타에서 hasWeb 이 true 인 컴포넌트는 5개뿐이라, 20개가 넘는 false 쪽으로 확인한다
+    const res = await search({ scope: "components", filters: { hasWeb: false } });
     expect(res.isError).toBe(false);
     expect(res.text).not.toContain("개 중");
     const count = Number(res.text.match(/공통컴포넌트 목록 \((\d+)개\)/)?.[1]);
@@ -1335,7 +1336,7 @@ describe("integration — egov_search_knowledge 쓰이지 않은 입력 안내",
     const res = await search({ scope: "components", filters: { version: "4.3" } });
     expect(res.isError).toBe(false);
     const note = noteLine(res.text, "filters.version");
-    expect(note).toContain("4.3.1");
+    expect(note).toContain("5.1.0");
   });
 });
 

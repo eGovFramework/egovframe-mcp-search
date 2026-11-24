@@ -637,8 +637,8 @@ egov_search_knowledge로 MyBatis 설정 방법을 검색해줘. 특정 출처에
   "scope": "components",
   "filters": {
     "categoryId": "게시판",
-    "hasWeb": true,
-    "version": "4.3.1"
+    "hasWeb": false,
+    "version": "5.1.0"
   }
 }
 ```
@@ -779,8 +779,8 @@ egov_search_knowledge로 MyBatis 설정 방법을 검색해줘. 특정 출처에
 | `table` | string | `dml` 에서 INSERT 문을 조회할 테이블 하나 |
 | `categoryId` | string | 목록과 키워드 검색을 한 카테고리로 한정. 카테고리 ID, 국문 이름, 영문 이름 가운데 하나 |
 | `keyword` | string | 목록과 키워드 검색에 적용하는 부분 문자열 필터. 이름, 영문명, 설명, 패키지명에서 찾음 |
-| `hasWeb` | boolean | 웹 화면 포함 여부(상세 정보의 "웹 배포")로 목록과 키워드 검색을 한정 |
-| `version` | string | 컴포넌트 메타데이터의 버전으로 목록과 키워드 검색을 한정. 동봉 데이터의 값은 `4.3.1` 하나 |
+| `hasWeb` | boolean | 상세 정보의 "웹 배포" 값으로 목록과 키워드 검색을 한정. 이 값은 공통컴포넌트 목록(`components.xls`)의 `webexist` 로, 컴포넌트가 프로젝트에 `web.xml` 을 가져오는지를 나타냄. JSP 화면이 있는지와는 다르며, 동봉 데이터에서 `true` 는 5개 |
+| `version` | string | 컴포넌트 메타데이터의 버전으로 목록과 키워드 검색을 한정. 동봉 데이터의 값은 `5.1.0` 하나 |
 | `limit`, `offset` | integer | 구간 조회. "limit 과 offset" 절 참고 |
 
 ---

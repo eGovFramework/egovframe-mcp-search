@@ -153,7 +153,7 @@ export interface CommonComponent {
   description_en?: string;
   use_tables?: string;        // JSON array of table names
   version: string;            // '4.3.1', '5.0.0' 등
-  has_web: boolean;           // 웹 배포 여부
+  has_web: boolean;           // 웹 배포 여부 — 원본 목록(components.xls)의 webexist: 프로젝트에 web.xml 을 가져오는지 (JSP 화면 유무가 아님)
   added_options?: string;
 }
 
