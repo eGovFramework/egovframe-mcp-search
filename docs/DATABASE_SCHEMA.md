@@ -481,6 +481,8 @@ npm run build-index -- --yes
 
 공통컴포넌트 메타(`templates/common-components.json`)는 공통컴포넌트 목록 엑셀(`components.xls`)에서 만듭니다. 엑셀도 저장소에 들어 있지 않으므로, 받은 파일을 `references/components.xls` 로 저장하고(`references/` 는 git 이 추적하지 않습니다) `node scripts/convert-components-xls-to-json.mjs --version=5.1.0` 을 실행합니다. 엑셀에는 컴포넌트별 버전 열이 없어서 `--version` 의 값이 파일 머리와 모든 컴포넌트의 `version` 에 들어갑니다. 변환 규칙은 스크립트 머리의 주석에 있고, 적재는 `npm run build-index` 로 합니다.
 
+묻고답하기 원본(`templates/developer_knowledge/묻고답하기-LET_TN_QA_INFO.xlsx`)은 포털에서 내려받은 전체 목록을 그대로 쓰지 않습니다. 내려받은 파일을 `references/묻고답하기-LET_TN_QA_INFO.xlsx` 로 저장하고 `node scripts/filter-qa-xlsx.mjs` 를 실행하면, 삭제글(`DELETE_YN` 이 `Y`)과 작성일(`WRITNG_DE`)이 2016-01-01 이전인 글을 뺀 파일이 `templates/developer_knowledge/` 에 만들어집니다. 이 조건은 스냅샷을 발행하는 쪽의 조회 조건과 같고, 기준일은 `--since=YYYYMMDD` 로 바꿀 수 있습니다. 두 파일 모두 개인정보 컬럼이 들어 있어 git 이 추적하지 않습니다.
+
 ---
 
 ## 🔧 데이터베이스 관리
