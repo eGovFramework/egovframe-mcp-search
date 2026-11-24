@@ -28,12 +28,12 @@ import {
 } from "./tools/egovSearchKnowledge.js";
 import { SUPPORTED_DB_TYPES } from "./tools/commonComponents.js";
 
-// 서버 버전은 package.json 한 곳에서만 관리한다 (build/server.js 기준 한 단계 위).
-const packageJson = createRequire(import.meta.url)("../package.json") as { version: string };
+// 서버 이름과 버전은 package.json 한 곳에서만 관리한다 (build/server.js 기준 한 단계 위).
+const packageJson = createRequire(import.meta.url)("../package.json") as { name: string; version: string };
 
 const server = new McpServer(
   {
-    name: "egovframe-mcp-search",
+    name: packageJson.name,
     version: packageJson.version,
   },
   {

@@ -1634,9 +1634,12 @@ describe("integration — egov_search_knowledge 공개 스키마", () => {
     expect(tool.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
   });
 
-  it("서버 버전은 package.json 의 버전과 같다", () => {
-    const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf-8")) as { version: string };
-    expect(client.getServerVersion()?.version).toBe(pkg.version);
+  it("서버 이름과 버전은 package.json 의 이름·버전과 같다", () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf-8")) as {
+      name: string;
+      version: string;
+    };
+    expect(client.getServerVersion()).toMatchObject({ name: pkg.name, version: pkg.version });
   });
 });
 
