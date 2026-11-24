@@ -10,11 +10,13 @@
  * 대신하고(_lanceFixtures 참고), 실제 모델로 임베딩하는 검증은 모델이 있을 때만 수행한다.
  */
 import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
+import * as lancedb from "@lancedb/lancedb";
 import type { Table } from "@lancedb/lancedb";
 import { GuideSearchManager } from "../../src/rag/guideManager.js";
 import { DeveloperKnowledgeManager } from "../../src/rag/knowledgeManager.js";
 import { MAX_VECTOR_SEARCH_LIMIT } from "../../src/utils/lanceFilter.js";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { REPO_ROOT, hasEmbeddingModel } from "../integration/_helper.js";
 import {
@@ -198,19 +200,34 @@ describe.skipIf(!HAS_BUNDLED_TABLES)("개발자 지식 검색 — 전수 검색"
 
   it("limit 가 필터에 맞는 행 수보다 크면 맞는 행을 모두 돌려준다", async () => {
     // 검색 한 번의 상한(MAX_VECTOR_SEARCH_LIMIT) 안에서 확인한다 — 그보다 큰 limit 은 상한으로 줄어든다.
-    // 상한보다 적은 행에 맞는 필터가 필요하다. 동봉 데이터에서는 FAQ 태그가 그렇다 (96행).
-    // 적용가이드 PDF 청크(type best-practice)는 청킹에 따라 상한을 넘으므로 쓰지 않는다 (600자 청킹에서는 254행)
-    const total = await table.countRows("array_has_any(tags, ['faq'])");
-    expect(total).toBeGreaterThan(0);
-    expect(total).toBeLessThan(MAX_VECTOR_SEARCH_LIMIT);
+    // 상한보다 적은 행에 맞는 필터가 필요한데, 동봉 데이터의 태그는 모두 상한보다 많은 행에 붙어 있다
+    // (2026-11-24 의 데이터에서 가장 적은 FAQ 가 105행). 그래서 동봉 테이블의 FAQ 60행과 Q&A 60행을
+    // 임시 테이블로 옮겨, 그 테이블에서 확인한다 (동봉 테이블은 바꾸지 않는다)
+    const sample = 60;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "egov-exhaustive-"));
+    try {
+      const db = await lancedb.connect(dir);
+      const copy = await db.createTable(
+        KNOWLEDGE_TABLE,
+        await table.query().where("array_has_any(tags, ['faq'])").limit(sample).toArrow(),
+      );
+      await copy.add(await table.query().where("array_has_any(tags, ['qa'])").limit(sample).toArrow());
+      const total = await copy.countRows("array_has_any(tags, ['faq'])");
+      expect(total).toBe(sample);
+      expect(total).toBeLessThan(MAX_VECTOR_SEARCH_LIMIT);
 
-    useQueryVector(rows.find((row) => row.type !== "best-practice")!.vector);
-    const results = await manager.searchKnowledge(STORED_VECTOR_QUERY, {
-      limit: MAX_VECTOR_SEARCH_LIMIT,
-      tags: ["faq"],
-    });
-    expect(results).toHaveLength(total);
-    expect(results.every((r) => r.tags.includes("faq"))).toBe(true);
+      const sampled = new DeveloperKnowledgeManager(dir);
+      await sampled.initialize();
+      useQueryVector(rows.find((row) => row.type !== "best-practice")!.vector);
+      const results = await sampled.searchKnowledge(STORED_VECTOR_QUERY, {
+        limit: MAX_VECTOR_SEARCH_LIMIT,
+        tags: ["faq"],
+      });
+      expect(results).toHaveLength(total);
+      expect(results.every((r) => r.tags.includes("faq"))).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it.skipIf(!hasEmbeddingModel())(

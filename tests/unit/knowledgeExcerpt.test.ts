@@ -125,7 +125,8 @@ describe.skipIf(!HAS_BUNDLED_TABLES)("excerptKnowledgeContent — 동봉 테이�
     const rows = await table.query().select(["content"]).toArray();
     const contents: string[] = rows.map((row: { content: string }) => row.content);
     const qaContents = contents.filter((content) => content.startsWith("질문:") && content.includes(ANSWER_MARK));
-    expect(qaContents.length).toBeGreaterThan(10_000);
+    // 2026-11-24 의 동봉 데이터는 묻고답하기 8,306행과 FAQ 105행이다
+    expect(qaContents.length).toBeGreaterThan(8_000);
 
     let checked = 0;
     for (const content of qaContents) {

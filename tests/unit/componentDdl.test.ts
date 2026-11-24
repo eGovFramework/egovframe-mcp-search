@@ -377,7 +377,9 @@ describe.skipIf(!hasComponentSources)('extractTableDDLs — 동봉 스크립트 
   it.each(DB_TYPES)('%s: 요청한 테이블·뷰의 CREATE 문과 인덱스만, 빠짐없이 추출한다', (dbType) => {
     const script = readScript(dbType);
     const all = parseStatements(script);
-    expect(all.filter((s) => s.kind === 'other')).toEqual([]);
+    // 테이블·뷰·인덱스가 아닌 문은 mysql 스크립트 맨 앞의 'SET NAMES utf8mb4' 하나뿐이다 (업스트림이 뷰의 collation
+    // 충돌을 막으려고 넣었다). 추출 대상이 아니라 결과에 들어가지 않는다 (KNOWN_ISSUES 의 CC-5)
+    expect(all.filter((s) => s.kind === 'other' && !/^SET\s+NAMES\s/i.test(s.text))).toEqual([]);
 
     const mismatches: string[] = [];
     for (const component of components) {

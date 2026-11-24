@@ -1062,8 +1062,14 @@ describe("integration — egov_search_knowledge 호환 소프트웨어 조회", 
     const vendors: string[] = body.software.map((s: any) => s.vendor);
     expect(vendors.some((vendor) => vendor.includes("티맥스"))).toBe(true);
     expect(vendors.some((vendor) => vendor.includes("LG"))).toBe(true);
-    const dates: string[] = body.software.map((s: any) => s.verified_date);
+    // 업체명에 낱말이 든 행끼리는 확인일자 순이다. 'LG' 를 제품명의 낱말 가운데에서 찾은 행
+    // (2026-11-24 의 데이터에서는 'RealGridJS' 의 'lG')은 그 뒤에 온다
+    const byVendor = body.software.filter((s: any) => s.vendor.includes("티맥스") || s.vendor.includes("LG"));
+    const dates: string[] = byVendor.map((s: any) => s.verified_date);
     expect(dates).toEqual([...dates].sort().reverse());
+    expect(
+      body.software.slice(byVendor.length).every((s: any) => !s.vendor.includes("티맥스") && !s.vendor.includes("LG")),
+    ).toBe(true);
 
     // OR 가 없는 조회에는 orQuery 가 없다
     const plain = parseJsonBlock((await search({ scope: "compatibility", query: "JEUS Tibero WebLogic" })).text);
@@ -1071,7 +1077,8 @@ describe("integration — egov_search_knowledge 호환 소프트웨어 조회", 
   });
 
   it("검색에서 뺀 검색어는 droppedTerms 로 싣고, 뺀 낱말이 제품명에 든 제품을 맨 앞에 싣는다", async () => {
-    const res = await search({ scope: "compatibility", query: "eGov CMS", limit: 5 });
+    // 제품명에 eGov 가 든 행은 MC@CMS eGov 네 행과 DL-WCMS for eGovframe 한 행이다
+    const res = await search({ scope: "compatibility", query: "eGov CMS", limit: 6 });
     expect(res.isError).toBe(false);
     const body = parseJsonBlock(res.text);
     // 'eGov' 를 뺀 나머지 검색어(CMS)가 모두 일치한 결과다
@@ -1080,7 +1087,7 @@ describe("integration — egov_search_knowledge 호환 소프트웨어 조회", 
     expect(body.usedTerms).toBeUndefined();
     expect(body.ignoredTerms).toBeUndefined();
     expect(body.total).toBeGreaterThan(100);
-    expect(body.software.map((s: any) => /egov/i.test(s.product_name))).toEqual([true, true, true, true, false]);
+    expect(body.software.map((s: any) => /egov/i.test(s.product_name))).toEqual([true, true, true, true, true, false]);
 
     // 영어 문장: 영어 기능어와 프레임워크를 가리키는 낱말은 droppedTerms, 일치하는 행이 없는 낱말은 ignoredTerms 다
     const sentence = parseJsonBlock(
@@ -1498,8 +1505,9 @@ describe("integration — egov_search_knowledge 개발자 지식·통합 검색"
     expect(body.matchMode).toBe("all-terms");
     expect(body.droppedTerms).toEqual(["eGov"]);
     expect(body.limit).toBe(5);
-    expect(body.software.map((s: any) => /egov/i.test(s.product_name))).toEqual([true, true, true, true, false]);
-    expect(body.software.slice(0, 4).map((s: any) => s.product_name)).toEqual([
+    // 제품명에 eGov 가 든 다섯 행(2026-11-24 의 데이터)이 섹션의 다섯 자리를 모두 차지한다
+    expect(body.software.map((s: any) => s.product_name)).toEqual([
+      "MC@CMS eGov",
       "MC@CMS eGov",
       "MC@CMS eGov",
       "MC@CMS eGov",
@@ -1511,12 +1519,13 @@ describe("integration — egov_search_knowledge 개발자 지식·통합 검색"
     'knowledgeScope all 의 호환 소프트웨어도 "eGov CMS" 에서 제품명에 eGov 가 든 제품을 맨 앞에 싣는다',
     async () => {
       // 이 목록은 모든 검색어가 일치하는 행만 찾는 조회(queryCompatibleSoftwareAllTerms)가 만든다
-      const res = await search({ scope: "knowledge", query: "eGov CMS", filters: { knowledgeScope: "all" }, limit: 5 });
+      // 제품명에 eGov 가 든 행이 다섯이라(2026-11-24 의 데이터) 그 뒤의 행까지 보도록 limit 을 6 으로 준다
+      const res = await search({ scope: "knowledge", query: "eGov CMS", filters: { knowledgeScope: "all" }, limit: 6 });
       expect(res.isError).toBe(false);
       const body = parseJsonBlock(res.text);
       expect(body.compatibilityTotal).toBeGreaterThan(100);
       // 이 목록의 product 는 제품 버전 표기다 (예: 'MC@CMS eGov 1.5.0')
-      expect(body.compatibility.map((s: any) => /egov/i.test(s.product))).toEqual([true, true, true, true, false]);
+      expect(body.compatibility.map((s: any) => /egov/i.test(s.product))).toEqual([true, true, true, true, true, false]);
     },
   );
 
