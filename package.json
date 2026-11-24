@@ -1,6 +1,6 @@
 {
   "name": "egovframe-mcp-search",
-  "version": "1.0.0",
+  "version": "5.1.0",
   "description": "eGovFrame MCP server exposing egov_search_knowledge: unified read-only search over the official developer guide, developer knowledge (portal Q&A, FAQ, application guide), common components, and compatible software. Backed by one local hybrid (SQLite + LanceDB) store.",
   "license": "Apache-2.0",
   "private": true,
