@@ -477,7 +477,7 @@ npm run build-index -- --yes
 - `--yes` 로 실행할 때 가이드 원문 서브모듈이 없으면 `egovframe_guide` 를 건너뜁니다. 공통컴포넌트 소스 서브모듈이 없으면 `use_tables` 에 메타의 값을 그대로 적재하고 경고를 출력합니다. 임베딩 모델이 없으면 구축이 실패하고 기존 지식베이스는 그대로 남습니다.
 - 배포 tgz 로 설치한 환경에는 TypeScript 소스와 원본 데이터가 없으므로 이 명령을 실행하지 않습니다. 설치 환경의 갱신은 갱신 CLI 로 합니다.
 
-호환 소프트웨어 원본 Excel 은 저장소에 들어 있지 않습니다. 포털에서 받은 파일을 `templates/compatibility/호환성확인SW-LET_TN_COMPATSW.xlsx` 로 저장하고 `python3 notebooks/convert-compatibility-xlsx-to-json.py --json` 을 실행하면 `templates/compatibility/compatibility-software.json` 이 다시 만들어집니다. 이 스크립트에는 `pandas` 와 `openpyxl` 이 필요합니다. `--json` 을 빼면 스크립트가 `knowledge-base/egovframe.db` 에 직접 쓰므로 `--json` 을 붙여 실행하고, 적재는 `npm run build-index` 로 합니다.
+호환 소프트웨어 원본은 저장소에 들어 있지 않습니다. 포털 DB 의 `LET_TN_COMPATSW` 테이블을 JSON 으로 내보낸 파일을 `references/호환성확인SW-LET_TN_COMPATSW.json` 으로 저장하고 `node scripts/convert-compatibility-to-json.mjs` 를 실행하면 `templates/compatibility/compatibility-software.json` 이 다시 만들어집니다. 원본 JSON 은 최상위 객체의 `LET_TN_COMPATSW` 배열에 행마다 원본 열 15개를 담습니다. 적재는 `npm run build-index` 로 합니다. 변환 규칙은 예전의 `notebooks/convert-compatibility-xlsx-to-json.py --json` 과 같습니다. 그 스크립트가 읽던 엑셀은 CSV 를 거치면서 `PROD_DESC` 의 쉼표에서 칸이 나뉘어 설명이 첫 쉼표에서 잘렸지만, JSON 원본에는 그런 문제가 없습니다. 파이썬 스크립트에는 `pandas` 와 `openpyxl` 이 필요하고, `--json` 을 빼면 `knowledge-base/egovframe.db` 에 직접 씁니다.
 
 공통컴포넌트 메타(`templates/common-components.json`)는 공통컴포넌트 목록 엑셀(`components.xls`)에서 만듭니다. 엑셀도 저장소에 들어 있지 않으므로, 받은 파일을 `references/components.xls` 로 저장하고(`references/` 는 git 이 추적하지 않습니다) `node scripts/convert-components-xls-to-json.mjs --version=5.1.0` 을 실행합니다. 엑셀에는 컴포넌트별 버전 열이 없어서 `--version` 의 값이 파일 머리와 모든 컴포넌트의 `version` 에 들어갑니다. 변환 규칙은 스크립트 머리의 주석에 있고, 적재는 `npm run build-index` 로 합니다.
 
