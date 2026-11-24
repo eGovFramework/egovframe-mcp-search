@@ -8,17 +8,18 @@
 - **코드의 자리**: 줄 번호는 바뀌기 쉬워서 파일과 함수 이름으로 적었습니다. 게이트웨이는 `egov_search_knowledge` 의 인자를 받아 출처별 조회로 나누는 `src/tools/egovSearchKnowledge.ts` 를 가리킵니다.
 - 문제를 고치면 해당 항목을 이 문서에서 지웁니다. 다른 항목의 번호는 바꾸지 않으므로, 빠진 번호는 고쳐서 지운 항목입니다.
 - **갱신 기록**: 2026-11-14 에 BI-1(인덱스가 걸린 테이블을 다시 만들 때의 build-index 실패)과 VS-2(가이드 저장소의 기여자용 문서가 가이드로 색인됨)를 고쳐 지웠고, 동봉 지식베이스를 다시 구축했습니다(공식 가이드 4,625행에서 4,610행). DC-13 의 `@types/node` 는 `^22` 로 올렸고, DC-17 의 묻고답하기 원본 Excel 은 git 추적에서 뺐습니다. 이 갱신 뒤에 새로 적은 항목은 BI-13 입니다. 가이드 검색의 재현 가운데 빠진 15개 청크가 결과에 들어 있던 호출은 순위가 한 칸씩 달라질 수 있습니다.
+- **갱신 기록 (2026-11-24)**: 원본 데이터를 바꾸고 가이드 원문을 `v5.0.0-end-2026-contribution` 으로 올려 동봉 지식베이스를 다시 구축했습니다. 개발자 지식은 18,195행에서 8,665행(묻고답하기에서 삭제글과 2016년 이전 글을 뺐습니다), 공식 가이드는 4,610행에서 7,011행, 호환 소프트웨어는 481행에서 626행이 되었습니다. 공통컴포넌트 소스는 git 정보가 없는 내부 5.1.0-beta 소스로 바꿨습니다. 이때 DC-2, DC-6, DC-7, BI-13, CH-4, VS-8, VS-9, DC-17 의 수치를 새 데이터로 다시 재서 고쳤고, 새로 확인한 CH-8, VS-13, KW-17 과 CC-5 의 `SET NAMES` 사례를 적었습니다. 데이터에 기대던 테스트 16건도 새 데이터에 맞게 고쳤습니다. 그 밖의 항목에 적힌 재현 수치는 2026-11-14 의 인덱스에서 잰 값이므로, 개발자 지식, 공식 가이드, 호환 소프트웨어의 검색 결과와 건수는 지금과 다를 수 있습니다.
 
 ## 목차
 
 1. [먼저 볼 것](#1-먼저-볼-것)
-2. [키워드 검색 (공통컴포넌트와 호환 소프트웨어의 `query`)](#2-키워드-검색-공통컴포넌트와-호환-소프트웨어의-query) (KW-1 ~ KW-16)
-3. [색인 청킹 (공식 가이드, 적용가이드 PDF)](#3-색인-청킹-공식-가이드-적용가이드-pdf) (CH-1 ~ CH-7)
+2. [키워드 검색 (공통컴포넌트와 호환 소프트웨어의 `query`)](#2-키워드-검색-공통컴포넌트와-호환-소프트웨어의-query) (KW-1 ~ KW-17)
+3. [색인 청킹 (공식 가이드, 적용가이드 PDF)](#3-색인-청킹-공식-가이드-적용가이드-pdf) (CH-1 ~ CH-8)
 4. [색인 구축과 갱신](#4-색인-구축과-갱신) (BI-2 ~ BI-13)
 5. [통합 검색과 입력 처리](#5-통합-검색과-입력-처리) (GT-1 ~ GT-7)
 6. [공통컴포넌트](#6-공통컴포넌트) (CC-1 ~ CC-7)
 7. [호환 소프트웨어](#7-호환-소프트웨어) (CS-1 ~ CS-5)
-8. [의미 검색 (공식 가이드, 개발자 지식)](#8-의미-검색-공식-가이드-개발자-지식) (VS-1, VS-3 ~ VS-12)
+8. [의미 검색 (공식 가이드, 개발자 지식)](#8-의미-검색-공식-가이드-개발자-지식) (VS-1, VS-3 ~ VS-13)
 9. [프로토콜, 로그, 패키징](#9-프로토콜-로그-패키징) (PR-1 ~ PR-10)
 10. [테스트 코드](#10-테스트-코드) (TS-1 ~ TS-5)
 11. [결정이 필요한 항목](#11-결정이-필요한-항목) (DC-1 ~ DC-17)
@@ -31,10 +32,10 @@
 - [KW-11](#kw-11-흔한-검색어만-일치한-행을-빼는-규칙-때문에-cms-에-군말을-붙이면-군말이-든-행만-남고-cms-행이-빠집니다-중간): 호환 소프트웨어에서 `CMS` 에 몇 행에만 든 군말을 붙이면 그 군말이 든 행만 나오고 나머지 CMS 행이 빠지며, 응답으로는 빠졌다는 것을 알 수 없습니다.
 - [BI-2](#bi-2-가이드-갱신을-같은-버전으로-다시-적용하면-쓰고-있는-오버레이-디렉토리를-먼저-지워-실패하면-빈-인덱스가-남습니다-중간): 지금 쓰는 가이드 버전을 `update --force` 로 다시 적용하면 쓰고 있는 오버레이 디렉토리를 먼저 지워서, 색인이 실패하면 CLI 가 "이전 상태 유지" 라고 알려도 서버는 비어 있거나 일부만 찬 인덱스를 읽습니다.
 - [BI-3](#bi-3-update-가-원격을-확인하지-못한-리소스가-있어도-모든-리소스가-최신입니다-로-끝납니다-중간): `update` 가 원격을 확인하지 못한 리소스가 있어도, 새 버전이 확인된 리소스가 없으면 `모든 리소스가 최신입니다.` 와 종료 코드 0 으로 끝납니다.
-- [BI-13](#bi-13-묻고답하기-원본-excel-이-없는-체크아웃에서-bundled-모드로-구축하면-개발자-지식이-faq-와-적용가이드-pdf-만으로-다시-만들어집니다-중간): 묻고답하기 원본 Excel 을 git 이 추적하지 않게 되어, 그 파일이 없는 클론에서 `npm run build-index -- --yes` 를 실행하면 개발자 지식 18,195행이 FAQ 와 적용가이드 PDF 의 350행으로 바뀌며 경고가 없습니다.
+- [BI-13](#bi-13-묻고답하기-원본-excel-이-없는-체크아웃에서-bundled-모드로-구축하면-개발자-지식이-faq-와-적용가이드-pdf-만으로-다시-만들어집니다-중간): 묻고답하기 원본 Excel 을 git 이 추적하지 않게 되어, 그 파일이 없는 클론에서 `npm run build-index -- --yes` 를 실행하면 개발자 지식 8,665행이 FAQ 와 적용가이드 PDF 의 359행으로 바뀌며 경고가 없습니다.
 - [VS-1](#vs-1-색인할-때-꺾쇠로-감싼-구간을-모두-지워-묻고답하기-본문의-xml-jsp-제네릭-코드가-빠집니다-중간): 개발자 지식의 묻고답하기와 FAQ 를 색인할 때 꺾쇠로 감싼 구간을 모두 지워서, 답변에 적힌 설정 XML, JSP 태그, Java 제네릭이 응답에서 빠집니다.
 - [DC-1](#dc-1-메타의-설명이-다른-컴포넌트의-것이어서-상세-설명과-키워드-검색-결과가-틀립니다-중간): 공통컴포넌트 메타에서 시스템연계관리와 통계 컴포넌트 넷의 설명이 다른 컴포넌트의 것이어서, 상세 설명과 키워드 검색 결과가 틀립니다.
-- [DC-2](#dc-2-분류-dbms-로-등록된-26행-가운데-23행이-데이터베이스-제품이-아닙니다-중간): 호환 소프트웨어의 분류 `DBMS` 로 등록된 26행 가운데 23행이 데이터베이스 제품이 아니어서, `filters.category` 에 `DBMS` 를 주면 이 행들이 데이터베이스 제품처럼 나옵니다.
+- [DC-2](#dc-2-분류-dbms-로-등록된-39행-가운데-데이터베이스-제품은-8행입니다-중간): 호환 소프트웨어의 분류 `DBMS` 로 등록된 39행 가운데 데이터베이스 제품은 8행뿐이어서, `filters.category` 에 `DBMS` 를 주면 이 행들이 데이터베이스 제품처럼 나옵니다.
 - [DC-8](#dc-8-최상위에-놓인-필터-키와-알-수-없는-최상위-키가-안내-없이-버려집니다-중간): 인자의 최상위에 둔 필터 키나 철자가 틀린 최상위 키가 오류나 안내 없이 버려져, 필터가 적용되지 않은 결과가 정상 응답으로 나갑니다.
 
 ### 바로 이어서 할 수 있는 작업
@@ -136,7 +137,7 @@
 ### KW-12. 모든 검색어가 든 행이 한 건이라도 있으면, 군말이 적히지 않은 행이 안내 없이 빠집니다 (낮음)
 
 - **지금의 동작**: 키워드 검색은 모든 검색어가 일치하는 행이 한 건이라도 있으면 그 행들만 돌려줍니다 (`matchMode` 가 `all-terms`). '제품', '솔루션' 같은 군말을 붙이면 그 군말이 적히지 않은 행은 찾는 제품이어도 빠지고, 응답에는 그런 표시가 없습니다. 올바른 필터에 이런 질문을 더하면 필터만 준 결과가 한 행으로 줄기도 합니다. 기대하는 동작은 군말을 붙여도 결과가 줄지 않거나, 줄었다는 사실이 응답에 드러나는 것입니다.
-- **재현**: `{"scope":"compatibility","query":"WAS 제품"}` 은 7건이고, 분류 `WAS` 의 8행 가운데 설명에 '제품' 이 없는 `JEUS 8`(프레임워크 3.6)이 빠집니다. `"티맥스 제품"` 은 3건이고 `"티맥스"` 의 5건 가운데 `JEUS 8`(3.6)과 `Tibero`(3.6)가 빠집니다. 군말을 하나 더 붙인 `"WAS 제품 추천"` 은 8건, `"티맥스 제품 목록"` 은 5건입니다. `{"scope":"compatibility","query":"CMS 솔루션","filters":{"frameworkVersion":"4.3"}}` 은 1건이고, `query` 가 `"CMS"` 이면 29건입니다.
+- **재현**: `{"scope":"compatibility","query":"WAS 제품"}` 은 7건이고, 분류 `WAS` 의 8행 가운데 설명에 '제품' 이 없는 `JEUS 8`(프레임워크 3.6)이 빠집니다. `"티맥스 제품"` 은 3건이고 `"티맥스"` 의 5건 가운데 `JEUS 8`(3.6)과 `Tibero`(3.6)가 빠집니다. 군말을 하나 더 붙인 `"WAS 제품 추천"` 은 8건입니다. `"티맥스 제품 목록"` 도 5건이지만, 2026-11-24 의 데이터에서는 '목록' 이 두 행(`Whoya UX-Platform 2.0`, `ZCMS 모바일플러스 3.0`)의 설명에 있는 '첨부파일목록' 과 일치해, 그 두 행이 `JEUS 8` 과 `Tibero` 대신 나옵니다. `{"scope":"compatibility","query":"CMS 솔루션","filters":{"frameworkVersion":"4.3"}}` 은 1건이고, `query` 가 `"CMS"` 이면 29건입니다.
 - **원인**: `src/database/sqliteManager.ts` 의 `allTermsStage` 가 고른 검색어를 모두 필수 조건으로 견줍니다. 군말이 어느 행에도 없으면 대체 검색으로 넘어가 그 군말을 쓰지 않지만, 군말이 일부 행에 들어 있으면 그 행들만 남습니다. '제품' 은 설명 컬럼에만 351행에 들어 있고 제품명, 제품 버전 표기, 업체명, 분류에는 없습니다. [KW-9](#kw-9-이전의-fts5-검색과-견줘-달라진-채로-남은-질의-낮음) 의 `"CMS 솔루션"` 1건도 이 단계에서 생깁니다.
 - **고칠 방법**: 두 가지를 함께 검토합니다. 확인하지 않은 방법입니다.
   1. `allTermsStage` 에서, 필터를 적용한 대상 행의 절반 넘게 일치하고 이름 컬럼(`nameColumns`)과 분류에는 일치하는 행이 없는 검색어는 필수 조건에서 빼고 정렬에만 씁니다. `"WAS 제품"` 은 8건, `"티맥스 제품"` 은 5건이 됩니다. '솔루션' 은 제품명 4행에 들어 있어 `"CMS 솔루션"` 은 이 방법으로 바뀌지 않으므로, 분류 이름의 영문 낱말(`Solution`)과 한글 표기('솔루션')를 같은 검색어로 견주는 방법을 따로 검토합니다. 공통컴포넌트도 같은 함수를 쓰므로 공통컴포넌트 질의의 결과도 함께 확인합니다.
@@ -149,7 +150,7 @@
 - **지금의 동작**: 모든 검색어 일치 단계는 검색어를 적힌 그대로 견주므로, 조사가 붙은 낱말('JEUS는')이나 어느 행에도 없는 군말('추천', '호환되나요')이 하나라도 있으면 대체 검색으로 넘어갑니다. 대체 검색은 쓰는 검색어 k 개의 절반(올림)만 일치해도 돌려주므로(k 가 2 이면 1개), 쓴 검색어가 모두 든 행이 있어도 한쪽만 일치한 행이 함께 나옵니다. 모두 일치한 행이 앞에 오지만 응답에는 어디까지가 그런 행인지가 없고, `total` 이 몇 배에서 수십 배로 커집니다. 기대하는 동작은 조사나 군말을 붙여도 붙이지 않은 질의와 같은 행을 돌려주는 것입니다.
 - **재현**: `{"scope":"compatibility","query":"JEUS 4.3"}` 은 1건(`JEUS 21`)이고, `{"scope":"compatibility","query":"JEUS는 4.3"}` 은 44건(`any-term`, `usedTerms` `["JEUS","4.3"]`, `requiredMatches` 1)입니다. 같은 부류로 `"티맥스소프트 WAS"` 3건과 `"티맥스소프트의 WAS"` 8건, `"Tibero 4.0"` 1건과 `"티베로는 4.0에서 호환되나요"` 66건, `"4.2 Portal"` 9건과 `"4.2 Portal 추천해줘"` 109건, `"4.3 CMS"` 29건과 `"4.3 CMS 추천"` 42건(CMS 가 아닌 4.3 행 13건 포함), `"4.3 WAS"` 1건과 `"4.3에서 쓸 수 있는 WAS"` 47건이 있습니다. 마지막 것은 `usedTerms` 가 `["4.3","있는","WAS"]` 이고, 군말 '있는' 이 설명의 상투 문구 "순위가 있는 것은 아니며" 와 일치합니다. 어느 경우에도 짧은 질의의 결과가 긴 질의 결과의 맨 앞에 그대로 있습니다.
 - **원인**: `src/database/sqliteManager.ts` 의 `anyTermSearch` 가 일치 기준을 쓰는 검색어 수의 절반(올림)에서 시작합니다. 조사를 뗀 꼴은 대체 검색이 검색어의 쓸 꼴을 고를 때(`firstMatchingForm`)만 견주고, `allTermsStage` 는 검색어를 적힌 그대로만 견줍니다.
-- **고칠 방법**: `anyTermSearch` 에서 절반 기준을 적용하기 전에, 쓰는 검색어 가운데 가려 주는 검색어(대상 행의 절반 이하와 일치하는 것)가 모두 일치하는 행이 있는지 먼저 찾고, 있으면 그 행만 돌려주며 `requiredMatches` 를 그 수로 알립니다. 흔한 검색어는 지금처럼 선택 사항으로 두므로 `"티맥스 제품 목록"` 5건을 고정한 `tests/unit/bundledKeywordSearch.test.ts` 의 테스트는 그대로 통과해야 합니다. 이 방법만으로는 흔한 검색어 `CMS` 가 든 `"4.3 CMS 추천"` 이 42건 그대로입니다. `distinctiveScope` 에서 이름이나 분류에 일치하는 흔한 검색어를 가려 주는 검색어로 다루는 변경([KW-11](#kw-11-흔한-검색어만-일치한-행을-빼는-규칙-때문에-cms-에-군말을-붙이면-군말이-든-행만-남고-cms-행이-빠집니다-중간) 의 고칠 방법)과 함께 넣으면 29건이 되지만, `CMS` 와 '솔루션' 이 함께 든 행이 1건뿐인 `"CMS 솔루션 추천"` 은 그 1건만 돌려주게 되므로 두 변경은 위의 질의들로 함께 확인합니다. 결과를 바꾸지 않으려면 대신 모든 검색어가 일치한 행의 건수(예: `fullMatchTotal`)를 응답에 싣습니다. `"JEUS는 4.3"` 이 `"JEUS 4.3"` 과 같은 행을 돌려주는지 테스트로 고정합니다. 확인하지 않은 방법입니다.
+- **고칠 방법**: `anyTermSearch` 에서 절반 기준을 적용하기 전에, 쓰는 검색어 가운데 가려 주는 검색어(대상 행의 절반 이하와 일치하는 것)가 모두 일치하는 행이 있는지 먼저 찾고, 있으면 그 행만 돌려주며 `requiredMatches` 를 그 수로 알립니다. 흔한 검색어는 지금처럼 선택 사항으로 두므로 `tests/unit/bundledKeywordSearch.test.ts` 의 "흔한 낱말이 섞인 문장형 질의는 가려 주는 낱말이 든 행만 돌려준다" 테스트는 그대로 통과해야 합니다 (이 테스트에 있던 `"티맥스 제품 목록"` 은 2026-11-24 의 데이터에서 [KW-12](#kw-12-모든-검색어가-든-행이-한-건이라도-있으면-군말이-적히지-않은-행이-안내-없이-빠집니다-낮음) 의 경우가 되어 뺐습니다). 이 방법만으로는 흔한 검색어 `CMS` 가 든 `"4.3 CMS 추천"` 이 42건 그대로입니다. `distinctiveScope` 에서 이름이나 분류에 일치하는 흔한 검색어를 가려 주는 검색어로 다루는 변경([KW-11](#kw-11-흔한-검색어만-일치한-행을-빼는-규칙-때문에-cms-에-군말을-붙이면-군말이-든-행만-남고-cms-행이-빠집니다-중간) 의 고칠 방법)과 함께 넣으면 29건이 되지만, `CMS` 와 '솔루션' 이 함께 든 행이 1건뿐인 `"CMS 솔루션 추천"` 은 그 1건만 돌려주게 되므로 두 변경은 위의 질의들로 함께 확인합니다. 결과를 바꾸지 않으려면 대신 모든 검색어가 일치한 행의 건수(예: `fullMatchTotal`)를 응답에 싣습니다. `"JEUS는 4.3"` 이 `"JEUS 4.3"` 과 같은 행을 돌려주는지 테스트로 고정합니다. 확인하지 않은 방법입니다.
 
 ### KW-14. 조사가 붙은 검색어가 설명에 그대로 든 컴포넌트가 있으면, 조사를 뗀 낱말이 이름에 든 컴포넌트가 안내 없이 빠집니다 (낮음)
 
@@ -175,6 +176,13 @@
 - **지금의 동작**: `src/server.ts` 의 `query` 설명은 `matchMode`, `usedTerms`, `requiredMatches`, `ignoredTerms`, `droppedTerms`, `orQuery` 를 공통컴포넌트와 호환 소프트웨어의 키워드 검색에 함께 해당하는 것으로 적습니다. 이 이름들은 호환 소프트웨어 응답(JSON)의 필드이고, 공통컴포넌트 응답(표)에는 같은 내용이 한국어 안내 줄로만 나옵니다. 설명을 읽고 공통컴포넌트 응답에서 `matchMode` 를 찾는 호출자는 찾지 못합니다. 기대하는 동작은 설명이 응답에 실제로 나오는 표기를 말하는 것입니다. 같은 설명에서 고칠 다른 문구는 [KW-5](#kw-5-입력-스키마의-query-설명이-실제-동작과-다르게-읽히는-곳-낮음) 에 있습니다.
 - **재현**: `{"scope":"components","query":"로그인 화면 만들기","limit":1}` 의 응답에는 위의 이름이 하나도 없고 `> 모든 검색어가 들어 있는 항목이 없어, 검색어 2개 가운데 1개 이상이 들어 있는 항목을 표시합니다 (검색어: 로그인, 화면).` 과 `> 일치하는 항목이 없어 검색에 쓰지 않은 낱말: 만들기.` 가 나옵니다. `{"scope":"compatibility","query":"JEUS 화면 만들기","limit":1}` 의 응답에는 `"matchMode": "any-term"`, `"usedTerms": ["JEUS"]`, `"requiredMatches": 1`, `"ignoredTerms": ["화면", "만들기"]` 가 실립니다.
 - **고칠 방법**: `query` 설명에 "These fields appear in the compatibility JSON; a components response states the same in Korean note lines under the heading." 을 덧붙입니다. 지금 1,276자인 설명이 1,400자를 넘게 되어 통합 테스트의 길이 상한(1,300자)에 걸리므로, [KW-5](#kw-5-입력-스키마의-query-설명이-실제-동작과-다르게-읽히는-곳-낮음) 의 수정과 함께 상한을 올리거나 다른 문장을 줄입니다. 설명이 아니라 응답을 맞추려면 `formatComponentList`(`src/tools/commonComponents.ts`)의 안내 줄에 `matchMode: any-term` 같은 표기를 함께 적습니다.
+
+### KW-17. 주소나 이메일 주소를 적은 query 가 앞 낱말('https', 'admin')만으로 관계없는 행을 돌려줍니다 (낮음)
+
+- **지금의 동작**: 키워드 검색은 `:`, `/`, `@` 를 구분자로 보므로 `https://www.example.co.kr` 은 `https` 와 `www.example.co.kr` 두 검색어가 됩니다. 2026-11-24 의 호환 소프트웨어 원본부터 설명 끝에 `-URL : https://…` 가 붙은 행이 많아져서, 도메인이 어느 행에도 없는 주소를 적어도 `https` 만으로 그 행들이 모두 나옵니다. 이메일 주소도 `@` 앞의 낱말로 찾습니다. 기대하는 동작은 주소나 이메일 주소 꼴의 query 를 한 검색어로 견주거나, 적어도 `http`, `https` 같은 스킴은 검색어로 쓰지 않는 것입니다.
+- **재현**: `{"scope":"compatibility","query":"https://www.example.co.kr","limit":1}` 은 `"total": 96`, `"matchMode": "any-term"` 이고 `usedTerms` 가 `["https"]`, `ignoredTerms` 가 `["www.example.co.kr"]` 입니다. `"admin@example.com"` 은 `usedTerms` 가 `["admin"]` 인 1건(`enView 3.2.5`)입니다. `"https://www.iacts.co.kr"` 은 확인일자 자리에 그 주소가 든 `SmartManager 2.0` 1건입니다 ([DC-6](#dc-6-업체명이나-확인일자가-틀린-행이-열-건-있습니다-낮음)). 2026-11-14 의 데이터에서는 세 질의 모두 0건이었습니다.
+- **원인**: `src/utils/fts5Query.ts` 의 `extractSearchTerms` 는 문자·숫자와 검색어 안쪽의 `.` `-` `_` 만 남기고 나머지 문장부호를 구분자로 봅니다.
+- **고칠 방법**: `extractSearchTerms` 에서 `스킴://` 로 시작하는 낱말과 `@` 가 든 낱말은 나누지 않고 한 검색어로 남기거나, `http`, `https`, `www` 를 군말처럼 검색어에서 뺍니다. 앞의 방법은 `https://www.iacts.co.kr` 같은 주소로도 그 행을 찾게 합니다. `tests/unit/bundledKeywordSearch.test.ts` 의 "기호로 이은 검색어를 조각으로 나눠 찾지 않는다" 가 지금의 동작을 고정하고 있으므로 함께 고칩니다. 확인하지 않은 방법입니다.
 
 ## 3. 색인 청킹 (공식 가이드, 적용가이드 PDF)
 
@@ -206,7 +214,7 @@
 
 ### CH-4. 512 토큰을 넘는 개발자 지식 (낮음)
 
-- **지금의 동작**: 묻고답하기 2,545행은 임베딩 입력이 512 토큰을 넘어 뒷부분이 벡터에 반영되지 않습니다. 그 가운데 1,047행은 답변 본문이 한 토큰도 반영되지 않습니다. FAQ 는 96행 가운데 9행이 512 토큰을 넘고 그 가운데 1행은 답변이 한 토큰도 반영되지 않습니다. 512 토큰을 넘는 입력은 문장 끝 토큰 없이 모델에 들어갑니다.
+- **지금의 동작**: 묻고답하기 8,306행 가운데 1,400행은 임베딩 입력이 512 토큰을 넘어 뒷부분이 벡터에 반영되지 않습니다. 그 가운데 534행은 답변 본문이 한 토큰도 반영되지 않습니다. FAQ 는 105행 가운데 15행이 512 토큰을 넘고 그 가운데 1행은 답변이 한 토큰도 반영되지 않습니다 (가장 긴 FAQ 의 입력은 5,083 토큰입니다). 512 토큰을 넘는 입력은 문장 끝 토큰 없이 모델에 들어갑니다.
 - **고칠 방법**: 정하지 않았습니다. 긴 글을 가이드처럼 여러 청크로 나누려면 `update` 의 행 증분(행의 id 로 대조)과 함께 설계해야 합니다.
 
 ### CH-5. 링크나 이미지뿐인 가이드 청크가 결과 자리를 차지하고, 본문의 상대 경로 링크가 그대로 나옵니다 (낮음)
@@ -229,6 +237,13 @@
 - **재현**: `{"scope":"knowledge","query":"표준프레임워크 적용 점검 항목","filters":{"tags":["pdf"]},"limit":2}` 의 첫 결과 `[가이드]표준프레임워크_적용가이드_v5.0 (112/254)` 의 `content` 가운데에 `\n\n-- 42 of 113 --\n\n- 41 -\n` 이 들어 있습니다.
 - **원인**: 쪽 구분 표지는 `pdf-parse` 가 쪽마다 덧붙이는 문자열입니다 (`getText` 의 `pageJoiner` 옵션의 기본값). `src/scripts/buildIndex.ts` 의 `readPdfKnowledge` 가 옵션 없이 `getText()` 를 부르고, `normalizePdfText` 는 공백만 정리합니다. 쪽 번호 줄은 PDF 에 인쇄된 글자입니다.
 - **고칠 방법**: `readPdfKnowledge` 에서 `parser.getText({ pageJoiner: '' })` 로 표지를 끄고, `normalizePdfText` 에서 줄바꿈 앞뒤의 공백을 지운 다음(이어진 빈 줄을 줄이기 전에) 줄 전체가 `- 숫자 -` 인 줄을 지웁니다. 동봉 PDF 의 본문에 이 두 가지를 적용해 `chunkPdfText` 에 넣어 확인한 결과, 표지 113줄과 쪽 번호 111줄(1부터 111까지 차례대로 있습니다)이 없어지고 청크는 254개에서 250개가 됩니다. 쪽 번호 줄을 지우는 단위 테스트를 `tests/unit/pdfKnowledgeChunks.test.ts` 에 더하고 인덱스를 다시 구축합니다. 쪽 번호를 남기려면 본문이 아니라 `metadata` 에 싣습니다.
+
+### CH-8. 어림한 토큰 수로 나눈 가이드 청크 가운데 512 토큰을 넘는 것이 있습니다 (낮음)
+
+- **지금의 동작**: 가이드 청킹은 임베딩 입력을 추정 토큰 400 이하로 맞추지만, 코드가 많은 청크는 실제 토큰이 추정보다 훨씬 많아 임베딩 모델의 한도(512 토큰)를 넘습니다. 넘는 뒷부분은 벡터에 반영되지 않아, 그 부분의 내용으로는 의미 검색에서 찾을 수 없습니다. 기대하는 동작은 모든 가이드 청크가 한도 안에 드는 것입니다.
+- **재현**: 동봉 인덱스(가이드 `v5.0.0-end-2026-contribution`)의 7,011행에 `Xenova/multilingual-e5-small` 의 토크나이저를 적용해 `passage: ` 접두를 붙인 임베딩 입력의 토큰을 세면 3행이 512 토큰을 넘습니다. `common-component/elementary-technology/file-system-monitoring.md` 의 '설명 > 관련소스 (2/2)' 는 530 토큰(추정 388), `common-component/user-support/rss-tag.md` 의 '설명 > 관련소스 (2/2)' 는 520 토큰(추정 376), `common-component/user-support/meeting-room-reservation.md` 의 '개요 > 관련소스 (1/3)' 는 516 토큰(추정 387)입니다. 셋 다 본문이 880자 안팎의 코드 경로 목록입니다. 2026-11-14 의 인덱스(가이드 `v5.0.0-ready-2026-contribution`)에서는 가장 긴 입력이 492 토큰이었습니다.
+- **원인**: `src/rag/guideChunking.ts` 의 `estimateTokens` 는 토크나이저 없이 글자 종류별 가중치로 토큰을 어림합니다. 영문 경로와 기호가 이어진 글은 가중치보다 많은 토큰으로 나뉩니다.
+- **고칠 방법**: 두 가지가 있습니다. (1) `GUIDE_CHUNK_TOKEN_BUDGET`(400)을 낮추거나 기호와 영문의 가중치를 올립니다. 청크 수와 경계가 바뀌므로 전체를 다시 색인합니다. (2) 색인할 때 실제 토크나이저로 세어 한도를 넘는 청크를 한 번 더 나눕니다. 어느 쪽이든 원문 전체 테스트(`tests/unit/guideChunkCorpus.test.ts`)에 실제 토큰 수가 512 이하인지 확인하는 검사를 더합니다. 확인하지 않은 방법입니다.
 
 ## 4. 색인 구축과 갱신
 
@@ -311,10 +326,10 @@
 
 ### BI-13. 묻고답하기 원본 Excel 이 없는 체크아웃에서 bundled 모드로 구축하면 개발자 지식이 FAQ 와 적용가이드 PDF 만으로 다시 만들어집니다 (중간)
 
-- **지금의 동작**: 묻고답하기 원본(`templates/developer_knowledge/묻고답하기-LET_TN_QA_INFO.xlsx`)은 2026-11-14 부터 git 이 추적하지 않습니다 ([DC-17](#dc-17-개발자-지식-원본-파일의-정리-낮음)). 저장소를 새로 클론하면 이 파일이 없고, 그 상태에서 `npm run build-index -- --yes`(bundled 모드)를 실행하면 같은 디렉토리의 FAQ Excel 만으로 스냅샷을 합성해 개발자 지식을 다시 만듭니다. 묻고답하기 17,845행이 빠져 개발자 지식이 18,195행에서 350행(FAQ 96행, 적용가이드 PDF 청크 254행)이 되고, 동봉 `knowledge-base/` 의 `manifest.json`, `snapshot.jsonl.gz`, `state.json` 의 행 수도 96 으로 바뀝니다. 콘솔에는 "Excel 로드: 자주묻는질문-LET_TN_FAQ_INFO.xlsx (96행)" 만 나오고 경고가 없습니다. 기대하는 동작은 묻고답하기 원본이 없으면 이미 동봉된 스냅샷을 쓰거나, 원본이 없다고 알리고 그 리소스를 건너뛰는 것입니다.
+- **지금의 동작**: 묻고답하기 원본(`templates/developer_knowledge/묻고답하기-LET_TN_QA_INFO.xlsx`)은 2026-11-14 부터 git 이 추적하지 않습니다 ([DC-17](#dc-17-개발자-지식-원본-파일의-정리-낮음)). 저장소를 새로 클론하면 이 파일이 없습니다. 이 파일을 추적하던 때의 커밋(예: `develop` 을 병합하기 전의 `main`)으로 체크아웃했다가 돌아와도, git 이 ignore 된 파일을 덮어쓴 뒤 추적 해제를 적용하면서 작업 디렉토리의 파일이 지워집니다 (2026-11-24 에 실제로 겪었습니다). 그 상태에서 `npm run build-index -- --yes`(bundled 모드)를 실행하면 같은 디렉토리의 FAQ Excel 만으로 스냅샷을 합성해 개발자 지식을 다시 만듭니다. 묻고답하기 8,306행이 빠져 개발자 지식이 8,665행에서 359행(FAQ 105행, 적용가이드 PDF 청크 254행)이 되고, 동봉 `knowledge-base/` 의 `manifest.json`, `snapshot.jsonl.gz`, `state.json` 의 행 수도 105 로 바뀝니다. 콘솔에는 "Excel 로드: 자주묻는질문-LET_TN_FAQ_INFO.xlsx (105행)" 만 나오고 경고가 없습니다. 기대하는 동작은 묻고답하기 원본이 없으면 이미 동봉된 스냅샷을 쓰거나, 원본이 없다고 알리고 그 리소스를 건너뛰는 것입니다.
 - **재현**: 코드를 읽어 확인했습니다. 원본 Excel 이 없는 클론에서 `npm run build-index -- --yes` 를 실행합니다.
 - **원인**: `src/scripts/buildIndex.ts` 의 `loadKnowledgeFromDir` 는 `templates/developer_knowledge/` 에 스냅샷 쌍(`manifest.json`, `snapshot.jsonl.gz`)이 없으면 그 디렉토리의 `*.xlsx` 를 모두 읽어 합성하고, 어떤 종류(묻고답하기, FAQ)의 파일이 있는지는 따지지 않습니다. `knowledge-base/` 에 동봉된 스냅샷 쌍은 소스로 쓰지 않습니다.
-- **고칠 방법**: bundled 모드에서 `templates/developer_knowledge/` 에 스냅샷 쌍이 없고 묻고답하기 Excel 도 없으면(`inferKnowledgeKind` 로 종류를 가립니다), `knowledge-base/` 의 `manifest.json` 과 `snapshot.jsonl.gz` 를 소스로 써서 지금 동봉된 데이터를 그대로 다시 색인하고 그 사실을 콘솔에 알립니다. 동봉 스냅샷도 없으면 "묻고답하기 원본이 없어 개발자 지식은 건너뜁니다" 를 알리고 기존 인덱스를 그대로 둡니다. Excel 이 없는 디렉토리로 빌드 플랜을 만드는 단위 테스트를 더합니다. 확인하지 않은 방법입니다. 그 전까지는 원본 Excel 을 따로 받아 같은 자리에 두거나, online 모드(릴리스 스냅샷)나 local 모드(`--template-dir` 에 스냅샷 쌍을 둔 반입 디렉토리)로 구축합니다.
+- **고칠 방법**: bundled 모드에서 `templates/developer_knowledge/` 에 스냅샷 쌍이 없고 묻고답하기 Excel 도 없으면(`inferKnowledgeKind` 로 종류를 가립니다), `knowledge-base/` 의 `manifest.json` 과 `snapshot.jsonl.gz` 를 소스로 써서 지금 동봉된 데이터를 그대로 다시 색인하고 그 사실을 콘솔에 알립니다. 동봉 스냅샷도 없으면 "묻고답하기 원본이 없어 개발자 지식은 건너뜁니다" 를 알리고 기존 인덱스를 그대로 둡니다. Excel 이 없는 디렉토리로 빌드 플랜을 만드는 단위 테스트를 더합니다. 확인하지 않은 방법입니다. 그 전까지는 구축하기 전에 `node scripts/filter-qa-xlsx.mjs` 로 `references/` 의 원본에서 이 파일을 다시 만들어 두거나, online 모드(릴리스 스냅샷)나 local 모드(`--template-dir` 에 스냅샷 쌍을 둔 반입 디렉토리)로 구축합니다.
 
 ## 5. 통합 검색과 입력 처리
 
@@ -418,6 +433,7 @@
   - 여러 줄에 걸친 INSERT 문은 첫 줄만 실리고 한 건으로 세어집니다. 한 줄에 적은 INSERT 문 두 개도 한 건으로 세어집니다.
   - `CREATE TABLE IF NOT EXISTS T1`, 백틱이나 큰따옴표로 감싼 이름, 스키마를 붙인 `COM.T1` 은 인식하지 못해 "DDL 을 찾지 못한 객체" 로 나옵니다.
   - `);` 뒤에 주석이 붙은 `CREATE TABLE` 은 다음 `CREATE` 문 앞에서야 닫혀, 그 사이의 다른 문(`ALTER TABLE` 등)이 함께 실립니다.
+  - 테이블·뷰·인덱스가 아닌 문은 싣지 않습니다. 2026-11-24 에 올린 소스 트리의 mysql 통합 스크립트는 맨 앞에 `SET NAMES utf8mb4;` 가 있고, 그 앞의 주석은 뷰(`COMVNUSERMASTER`)의 문자열 리터럴이 실행 클라이언트의 문자셋을 따르므로 latin1 등으로 실행하면 로그인 조회에서 collation 충돌이 난다고 적습니다. 이 뷰를 쓰는 컴포넌트의 mysql DDL 에도 이 문은 들어가지 않습니다 (빌드된 `extractTableDDLs` 에 mysql 통합 스크립트와 `COMVNUSERMASTER` 를 주어 확인했습니다).
 - **재현**: 동봉 스크립트로는 재현되지 않습니다. 빌드된 `build/tools/commonComponents.js` 의 `extractTableDMLs("INSERT INTO T1 (A, B)\nVALUES ('x', 'y');\nINSERT INTO T1 (A, B) VALUES ('1', '2');\n", ["T1"])` 는 `statementCount` 가 2이고 첫 문이 `INSERT INTO T1 (A, B)` 에서 끝납니다. `extractTableDDLs("CREATE TABLE IF NOT EXISTS T1 (\n  A INT\n);\n", ["T1"])` 는 `missing` 이 `["T1"]` 입니다.
 - **원인**: `src/tools/commonComponents.ts` 의 `parseDmlStatements` 는 `INSERT INTO` 로 시작하는 줄 하나를 문 하나로 읽고, `openDdlBlock` 은 `CREATE TABLE` 바로 뒤의 낱말을 이름으로 읽으며, `extractTableDDLs` 는 줄이 `;` 로 끝날 때만 문을 닫습니다. 사용 테이블을 도출하는 `readCreatedObjectNames`(`src/kb/componentTables.ts`)도 같은 방식으로 이름을 읽습니다 (코드를 읽어 확인했습니다).
 - **고칠 방법**: `parseDmlStatements` 와 `extractTableDDLs` 를, 따옴표와 주석을 건너뛰며 세미콜론까지를 한 문으로 읽는 분할기 하나로 바꾸고, 테이블 이름 패턴이 `IF NOT EXISTS`, 따옴표, 스키마 접두를 받아들이게 합니다. 외래 키 제약을 읽는 `extractForeignKeyStatements` 는 이미 여러 줄 문을 종결자까지 읽으므로 참고할 수 있습니다. 여러 줄 INSERT 와 종결자 뒤의 주석을 다루는 단위 테스트를 `tests/unit/componentDml.test.ts` 와 `tests/unit/componentDdl.test.ts` 에 더합니다. 확인하지 않은 방법입니다.
@@ -533,17 +549,17 @@
 
 ### VS-8. 포털에서 삭제된 글과 해결 사례가 아닌 글이 검증된 `solution` 으로 나옵니다 (낮음)
 
-- **지금의 동작**: 개발자 지식 색인에 포털에서 삭제 표시된 글 1건과, 답변은 있지만 해결 사례가 아닌 글(테스트 글, "메일로 답변 드렸습니다." 같은 답변)이 들어 있고, 모두 `type` 이 `solution` 이며 `verified` 가 true 입니다. `verified` 는 18,195행 모두 true 여서 `filters.verifiedOnly` 가 아무것도 거르지 않습니다. 같은 글이 여러 번 색인된 경우도 있습니다. 기대하는 동작은 삭제된 글과 해결 사례가 아닌 글이 검증된 해결 사례로 나오지 않는 것입니다. 답변이 없는 글을 빼는 것과 주민등록번호 형식의 값을 가리는 것은 이미 해결되었습니다.
-- **재현**: 원본 xlsx 에서 `DELETE_YN` 이 `Y` 인 19행 가운데 답변이 있는 1행이 색인에 남아, `{"scope":"knowledge","query":"globals.properties를 분리하고 싶어요.","limit":2}` 의 1위(유사도 0.926, type solution)로 나옵니다. `{"scope":"knowledge","query":"test","limit":1}` 의 1위는 'a'(질문은 'test', 답변은 이곳이 테스트하는 곳이 아니라는 안내)이고 type 이 solution 입니다. 답변이 20자 미만인 행은 37행입니다. 묻고답하기 안에서 제목과 질문이 같은 글이 33묶음 67행이고, 그 가운데 24묶음 49행은 답변까지 같습니다.
+- **지금의 동작**: 개발자 지식의 묻고답하기와 FAQ 는 모두 `type` 이 `solution` 이고 `verified` 가 true 입니다. `verified` 는 8,665행 모두 true 여서 `filters.verifiedOnly` 가 아무것도 거르지 않습니다. 답변은 있지만 해결 사례가 아닌 글(아주 짧은 답변 등)도 검증된 해결 사례로 나옵니다. 포털에서 삭제 표시된 글은 동봉 색인에 없지만, 이는 원본 Excel 을 `scripts/filter-qa-xlsx.mjs` 로 미리 걸렀기 때문이고 색인 코드는 삭제 표시를 보지 않습니다. 기대하는 동작은 삭제된 글과 해결 사례가 아닌 글이 검증된 해결 사례로 나오지 않는 것입니다. 답변이 없는 글을 빼는 것과 주민등록번호 형식의 값을 가리는 것은 이미 해결되었습니다.
+- **재현**: 동봉 스냅샷 8,411행 가운데 답변이 20자 미만인 행은 2행이고, 묻고답하기 안에서 제목과 질문이 같은 글은 1묶음 2행(답변은 서로 다릅니다)입니다. 2026-11-14 의 인덱스(묻고답하기 17,845행, 거르지 않은 원본)에서는 `DELETE_YN` 이 `Y` 인 글 1행이 `{"scope":"knowledge","query":"globals.properties를 분리하고 싶어요.","limit":2}` 의 1위로 나왔고, 답변이 20자 미만인 행이 37행, 제목과 질문이 같은 글이 33묶음 67행이었습니다. 거르지 않은 원본 Excel 로 구축하면 삭제글이 다시 색인됩니다.
 - **원인**: `src/kb/snapshot.ts` 의 `xlsxToSnapshotRows` 가 `DELETE_YN` 과 `QNA_PROCESS_STTUS_CODE` 를 읽지 않고 중복을 합치지 않습니다. `snapshotRowToKnowledgeInput` 은 모든 행에 `verified: true` 를 줍니다.
-- **고칠 방법**: `xlsxToSnapshotRows` 에서 `DELETE_YN` 이 `'Y'` 인 행을 건너뜁니다. 제목과 질문이 같은 행은 하나로 합칩니다 (답변이 다르면 답변을 이어 붙이거나 나중 글을 남깁니다). `verified` 를 원본의 처리 상태로 정하는 방법은 쓸 수 없습니다. 답변이 있는 17,845행 가운데 17,844행이 답변 완료(`QNA_PROCESS_STTUS_CODE` 3)라서 구분이 되지 않기 때문입니다. 고친 뒤 다시 색인하고 `snapshot.jsonl.gz` 도 함께 갱신합니다.
+- **고칠 방법**: `xlsxToSnapshotRows` 에서 `DELETE_YN` 이 `'Y'` 인 행을 건너뜁니다. 그러면 거르지 않은 원본으로 구축해도 삭제글이 들어가지 않습니다. 제목과 질문이 같은 행은 하나로 합칩니다 (답변이 다르면 답변을 이어 붙이거나 나중 글을 남깁니다). `verified` 를 원본의 처리 상태로 정하는 방법은 쓸 수 없습니다. 지금의 원본 8,306행이 모두 답변 완료(`QNA_PROCESS_STTUS_CODE` 3)라서 구분이 되지 않기 때문입니다. 고친 뒤 다시 색인하고 `snapshot.jsonl.gz` 도 함께 갱신합니다.
 - **결정할 것**: 짧은 답변과 테스트 글을 색인에서 뺄지와 그 기준, `verified` 필드와 `filters.verifiedOnly` 를 남길지(남긴다면 뜻을 정해 스키마 설명에 적을지)를 정합니다. 본문의 이메일 주소와 이름을 가릴지는 [DC-17](#dc-17-개발자-지식-원본-파일의-정리-낮음) 에서 함께 정합니다.
 
 ### VS-9. 개발자 지식에 글의 작성일과 원천 글 ID 가 없고, 최근 목록은 색인한 시각의 순서입니다 (낮음)
 
-- **지금의 동작**: 개발자 지식의 검색 결과에는 글의 작성일(또는 답변일)과 포털의 원천 글 ID 가 없습니다. 같은 질문에 대한 여러 시기의 답변이 날짜 없이 함께 나와서, 호출자가 오래된 답변을 가려내거나 출처를 밝힐 수 없습니다. 최근 목록(`filters.sort: "recent"`)은 글의 작성일이 아니라 색인한 시각(`createdAt`)의 순서여서, 동봉 인덱스에서는 가장 늦게 색인된 적용가이드 PDF 청크 95개(160~254번)가 목록의 앞을 차지합니다. 기대하는 동작은 결과마다 작성일과 원천 글 ID 가 실리고, 최근 목록이 최근에 쓰인 글의 순서인 것입니다.
-- **재현**: `{"scope":"knowledge","query":"정식버전은 언제 배포되나요?","limit":5}` 의 결과 항목 키는 `id`, `type`, `title`, `content`, `context`, `tags`, `importance`, `similarity` 입니다. 2위 '4.1 배포는 언제하나요'(답변 "정식버전은 2023년 3월 출시 예정")와 3위 '표준프레임워크 정식버전 언제 배포되나요?'(2.0 버전 시절의 답변)가 날짜 없이 함께 나옵니다. `{"scope":"knowledge","filters":{"sort":"recent"},"limit":2}` 는 '[가이드]표준프레임워크_적용가이드_v5.0 (160/254)' 와 '(161/254)' 이고 `createdAt` 이 둘 다 '2026-11-13T21:29:00.265Z' 입니다. 동봉 테이블의 `createdAt` 값은 182가지(색인 배치마다 하나)뿐입니다.
-- **원인**: `src/kb/snapshot.ts` 의 `snapshotRowSchema` 에 날짜 필드가 없고, `xlsxToSnapshotRows` 가 원본의 `WRITNG_DE`(17,863행에 값이 있습니다)와 `ANSWER_DE`(17,841행)를 읽지 않습니다. `createdAt` 은 `DeveloperKnowledgeManager.addKnowledgeBatch` 가 배치마다 그때의 시각으로 채웁니다. 원천 글 ID 는 `metadata.originalId` 로 17,941행에 저장되어 있지만 `src/tools/knowledge.ts` 의 `searchKnowledge` 가 결과에 `metadata` 를 싣지 않습니다.
+- **지금의 동작**: 개발자 지식의 검색 결과에는 글의 작성일(또는 답변일)과 포털의 원천 글 ID 가 없습니다. 같은 질문에 대한 여러 시기의 답변이 날짜 없이 함께 나와서, 호출자가 오래된 답변을 가려내거나 출처를 밝힐 수 없습니다. 최근 목록(`filters.sort: "recent"`)은 글의 작성일이 아니라 색인한 시각(`createdAt`)의 순서여서, 동봉 인덱스에서는 가장 늦게 색인된 적용가이드 PDF 청크 165개(90~254번)가 목록의 앞을 차지합니다. 기대하는 동작은 결과마다 작성일과 원천 글 ID 가 실리고, 최근 목록이 최근에 쓰인 글의 순서인 것입니다.
+- **재현**: `{"scope":"knowledge","query":"정식버전은 언제 배포되나요?","limit":5}` 의 결과 항목 키는 `id`, `type`, `title`, `content`, `context`, `tags`, `importance`, `similarity` 입니다. 1위 '4.1 배포는 언제하나요'(4.1 베타를 2022년 12월에 공개한다는 답변)와 5위 '3.7 정식 버전 출시 시기'(3.7 시절의 문의)가 날짜 없이 함께 나옵니다. `{"scope":"knowledge","filters":{"sort":"recent"},"limit":2}` 는 '[가이드]표준프레임워크_적용가이드_v5.0 (190/254)' 와 '(191/254)' 이고 `createdAt` 이 둘 다 '2026-11-24T08:32:38.420Z' 입니다. 동봉 테이블의 `createdAt` 값은 87가지(색인 배치마다 하나)뿐입니다.
+- **원인**: `src/kb/snapshot.ts` 의 `snapshotRowSchema` 에 날짜 필드가 없고, `xlsxToSnapshotRows` 가 원본의 `WRITNG_DE`(8,306행 모두 값이 있습니다)와 `ANSWER_DE`(8,303행)를 읽지 않습니다. `createdAt` 은 `DeveloperKnowledgeManager.addKnowledgeBatch` 가 배치마다 그때의 시각으로 채웁니다. 원천 글 ID 는 `metadata.originalId` 로 8,411행에 저장되어 있지만 `src/tools/knowledge.ts` 의 `searchKnowledge` 가 결과에 `metadata` 를 싣지 않습니다.
 - **고칠 방법**: (1) 다시 색인하지 않고 할 수 있는 것부터 합니다. `searchKnowledge` 의 결과 항목에 `metadata.sourceType` 과 `metadata.originalId` 를 싣습니다. (2) `snapshotRowSchema` 에 선택 필드(`postedAt`, `answeredAt`)를 더하고 `xlsxToSnapshotRows` 에서 채운 뒤, `snapshotRowToKnowledgeInput` 의 `metadata` 와 `normalizeMetadata`(`src/rag/knowledgeManager.ts`)의 필드 목록에 넣어 결과에 `postedAt` 으로 돌려주고 다시 색인합니다. (3) 최근 목록은 `postedAt` 의 순서로 바꿉니다. 그 전에는 PDF 청크를 최근 목록에서 빼거나 `createdAt` 을 `indexedAt` 으로 이름을 바꿔 색인 시각이라는 것을 드러냅니다.
 - **결정할 것**: 스냅샷 형식에 필드를 더하는 일은 릴리스 스냅샷을 발행하는 쪽과 맞춰야 합니다.
 
@@ -568,6 +584,13 @@
 - **재현**: [BI-6](#bi-6-예전-색인-코드로-만든-오버레이가-다시-구축한-동봉-인덱스를-가립니다-낮음) 의 방법으로 커밋 `6f2ac32` 의 가이드 인덱스를 오버레이에 두고 `{"scope":"guide","filters":{"chunkId":"5d2cafd8-f6b4-4093-b335-62f2135f81e7","offset":1500}}`(청크 'encrypt_decrypt: 설명', 1,992자)를 호출합니다. 원문의 그 구간은 닫는 펜스, 제목 `##### Controller에서 서비스 주입`, `java` 를 단 여는 펜스, 닫는 펜스의 순서입니다. 응답에서는 제목이 굵은 글씨로 바뀌지 않은 채 남고, 본문 끝에 펜스 줄이 하나 더 붙습니다.
 - **원인**: `src/tools/egovSearchKnowledge.ts` 의 `readGuideChunk` 가 본문의 offset 부터의 구간을 `formatGuideContent` 에 넘기고, `formatGuideContent` 는 구간이 코드 블록 밖에서 시작한다고 가정합니다.
 - **고칠 방법**: `readGuideChunk` 에서 본문의 처음부터 offset 까지를 청킹과 같은 펜스 규칙으로 훑어 offset 이 코드 블록 안인지 확인하고, 안이면 그 블록의 여는 펜스 줄을 구간 앞에 다시 넣은 뒤 `formatGuideContent` 에 넘깁니다 (청킹이 조각을 다시 열 때와 같은 방식입니다). `tests/unit/guideGateway.test.ts` 에 코드 블록 안에서 시작하는 구간의 테스트를 더합니다.
+
+### VS-13. 가이드 저장소 최상위의 기여자용 문서 `docs_lint.md` 가 공식 가이드로 색인됩니다 (낮음)
+
+- **지금의 동작**: 가이드 원문 `v5.0.0-end-2026-contribution` 에서 저장소 최상위에 `docs_lint.md`(가이드 문서를 검사하는 `scripts/docs_lint.py` 의 사용법)가 새로 생겼고, 이 문서가 9개 청크로 색인되어 있습니다. 가이드 사이트에 게시되는 사용자용 문서가 아니라 기여자용 문서인데, 공식 가이드 검색 결과에 섞여 나옵니다. 프론트매터가 없어서 문서 제목이 파일 이름(`docs_lint`)이고 URL 이 비어 있으며, `layer` 가 파일 이름 `docs_lint.md` 라서 `filters.layer` 의 사용할 수 있는 값에도 나옵니다([VS-3](#vs-3-가이드-저장소-최상위-문서의-layer-가-파일-이름이고-프론트매터가-없는-문서의-제목이-파일-이름입니다-낮음) 과 같은 원인). 기대하는 동작은 최상위 `_index.md` 나 `docs/` 아래의 문서처럼 색인하지 않는 것입니다.
+- **재현**: `{"scope":"guide","query":"가이드 문서 정합성 체크 스크립트","limit":2}` 의 1위는 'docs_lint: 방법 > 1. 파일 생성 및 수정 / 2. 정합성 체크'(유사도 0.8826)이고 분류 줄이 `docs_lint.md`, URL 줄이 없습니다. `{"scope":"guide","query":"x","filters":{"layer":"lint"}}` 의 오류 문구는 "사용할 수 있는 값: egovframe-runtime, common-component, egovframe-development, gettingstarted.md, docs_lint.md" 입니다. 동봉 인덱스에서 `layer` 가 `docs_lint.md` 인 행은 9개이고 모두 `url` 이 빈 값입니다.
+- **원인**: `src/kb/guideIndexer.ts` 의 `isContributorDocument` 는 최상위 `_index.md` 와 `docs/` 아래의 문서만 기여자용으로 봅니다.
+- **고칠 방법**: `isContributorDocument` 에 `docs_lint.md` 를 더합니다. 가이드 저장소에 기여자용 문서가 더 생길 때마다 목록을 고치지 않으려면, 최상위의 `.md` 가운데 프론트매터의 `url` 이 없는 문서를 기여자용으로 보는 방법도 있습니다 (`gettingstarted.md` 는 `url: /getting-started/` 가 있어 빠지지 않습니다). 다시 색인하고, 기여자용 문서를 가리는 단위 테스트에 경로를 더합니다. 확인하지 않은 방법입니다.
 
 ## 9. 프로토콜, 로그, 패키징
 
@@ -699,55 +722,56 @@
 - **고칠 방법**: 코드로 할 수 있는 것은 검증입니다. `loadCommonComponentsFromJson`(`src/kb/sqliteLoaders.ts`)이 설명이 같은 컴포넌트 묶음을 결과에 담고, `src/scripts/buildIndex.ts` 의 `loadCommonComponents` 가 그 묶음을 경고로 출력하게 합니다. 확인하지 않은 방법입니다.
 - **결정할 것**: 메타에서 시스템연계관리(`packageName` 이 `egovframework.com.ssi.syi.sim` 인 항목)와 사용자통계, 접속통계, 화면통계, 보고서통계의 `description`, `descriptionEn` 을 원본에서 바로잡고 `npm run build-index` 로 DB 를 다시 만들어야 합니다. 로그관리 계열과 `spe`, `req` 의 설명이 같은 것이 의도한 것인지도 그때 확인합니다.
 
-#### DC-2. 분류 `DBMS` 로 등록된 26행 가운데 23행이 데이터베이스 제품이 아닙니다 (중간)
+#### DC-2. 분류 `DBMS` 로 등록된 39행 가운데 데이터베이스 제품은 8행입니다 (중간)
 
-- **지금의 동작**: 분류가 `DBMS` 인 26행 가운데 데이터베이스 제품은 `Tibero v7`(프레임워크 4.0), `Tibero`(3.6), `Fujitsu Enterprise Postgres 9.5`(3.5) 세 행뿐이고, 나머지는 CMS, 공간정보 편집도구, 보안 키패드, 문서 보안 제품 등입니다. `filters.category` 에 `DBMS` 를 주면 이 행들이 데이터베이스 제품처럼 나옵니다. 기대하는 동작은 분류 `DBMS` 가 데이터베이스 제품만 돌려주는 것입니다.
-- **재현**: `{"scope":"compatibility","filters":{"category":"DBMS"},"limit":50}` 은 26건이고 `GTCMS v1.0`, `공간자료 3차원 편집도구 v1.0`, `e2GOV 1.0`, `FSCMS v1.0`, `CROWNIX Smart Form v7.0` 등이 들어 있습니다. `GTCMS v1.0` 의 설명은 `-영역: CMS(Contents Management System)` 으로 시작합니다. `{"scope":"compatibility","query":"DBMS 제품 목록"}` 도 같은 26건을 돌려줍니다.
-- **원인**: 원본 데이터(`templates/compatibility/compatibility-software.json`)의 분류 값이 틀렸고, 도구는 원본의 값을 그대로 적재합니다. 이 원본은 `notebooks/convert-compatibility-xlsx-to-json.py` 가 포털의 호환성 확인 SW 테이블을 내보낸 엑셀(`templates/compatibility/호환성확인SW-LET_TN_COMPATSW.xlsx`)을 읽어 만든 것이고, 분류는 엑셀의 `CATE_CD` 를 `CATE_CD_MAP` 으로 바꾼 값입니다 (코드 1 이 `DBMS`). 엑셀은 저장소에 없어서, 엑셀에서부터 코드가 틀렸는지는 확인하지 못했습니다.
-- **고칠 방법**: 행마다 `url` 이 가리키는 포털의 상세 페이지에서 분류를 확인해 원본 JSON 을 고치고 `npm run build-index` 로 DB 를 다시 만듭니다. 입력 스키마의 `category` 설명이 예시로 `'DBMS'` 를 드는 것은 데이터를 고치기 전에도 바꿀 수 있으며, 고칠 문구는 [CS-2](#cs-2-입력-스키마의-호환-소프트웨어-필터-설명-네-곳이-실제-동작과-다르거나-알아야-할-조건을-빠뜨렸습니다-낮음) 에 있습니다.
-- **결정할 것**: 23행을 손으로 고칠지, 포털에서 원본을 다시 받아 변환할지 정해야 합니다. 포털에서도 분류가 `DBMS` 로 되어 있으면 포털의 등록 오류이므로, 원본과 다르게 고칠지도 함께 정합니다.
+- **지금의 동작**: 분류가 `DBMS` 인 39행 가운데 데이터베이스 제품은 `CUBRID` 3행(프레임워크 2.0, 2.5, 3.5), `Postgres Plus Advanced Server 9.3`(3.1), `Agens SQL v1.0`(3.5), `Fujitsu Enterprise Postgres 9.5`(3.5), `Tibero`(3.6), `Tibero v7`(4.0)의 8행뿐입니다. 나머지 31행은 CMS, 포털, 공간정보 편집도구, 보안 키패드, 문서 보안 제품 등이고, `Arain v2.0` 과 `큐빅` 처럼 설명만으로는 제품의 종류를 알 수 없는 행도 있습니다. `filters.category` 에 `DBMS` 를 주면 이 행들이 데이터베이스 제품처럼 나옵니다. 기대하는 동작은 분류 `DBMS` 가 데이터베이스 제품만 돌려주는 것입니다.
+- **재현**: `{"scope":"compatibility","filters":{"category":"DBMS"},"limit":50}` 은 39건이고 `GTCMS v1.0`, `공간자료 3차원 편집도구 v1.0`, `e2GOV 1.0`, `FSCMS v1.0`, `CROWNIX Smart Form v7.0` 등이 들어 있습니다. `GTCMS v1.0` 의 설명은 `-영역: CMS(Contents Management System)` 으로 시작합니다. `{"scope":"compatibility","query":"DBMS 제품 목록","limit":20}` 은 대체 검색(`any-term`)으로 13건을 돌려주고, 데이터베이스 제품과 함께 `GTCMS v1.0`, `ezPDF WebViewer 1.0`, `exPotal V2.0` 이 나옵니다.
+- **원인**: 원본 데이터(`templates/compatibility/compatibility-software.json`)의 분류 값이 틀렸고, 도구는 원본의 값을 그대로 적재합니다. 이 원본은 `scripts/convert-compatibility-to-json.mjs` 가 포털 DB 의 `LET_TN_COMPATSW` 테이블을 내보낸 JSON(`references/호환성확인SW-LET_TN_COMPATSW.json`, 저장소에는 없습니다)을 읽어 만든 것이고, 분류는 `CATE_CD` 를 `CATE_CD_MAP` 으로 바꾼 값입니다 (코드 1 이 `DBMS`). 2026-11-24 에 받은 원본 JSON 에서 `GTCMS`, `FSCMS`, `e2GOV` 의 `CATE_CD` 가 `01` 이므로, 포털 DB 의 값부터 틀렸습니다.
+- **고칠 방법**: 행마다 `url` 이 가리키는 포털의 상세 페이지에서 분류를 확인해 포털 DB 의 값을 바로잡고, 원본 JSON 을 다시 내보내 변환한 뒤 `npm run build-index` 로 DB 를 다시 만듭니다. 입력 스키마의 `category` 설명이 예시로 `'DBMS'` 를 드는 것은 데이터를 고치기 전에도 바꿀 수 있으며, 고칠 문구는 [CS-2](#cs-2-입력-스키마의-호환-소프트웨어-필터-설명-네-곳이-실제-동작과-다르거나-알아야-할-조건을-빠뜨렸습니다-낮음) 에 있습니다.
+- **결정할 것**: 포털 DB 를 먼저 바로잡을지, 변환 결과만 고칠지 정해야 합니다. 변환 결과(`compatibility-software.json`)를 손으로 고치면 원본을 다시 변환할 때마다 덮어써지므로, 그렇게 한다면 변환 스크립트에 행별 보정 표를 두는 방법을 함께 검토합니다.
 
 #### DC-3. 메타의 패키지명과 소스 디렉토리가 다른 컴포넌트는 `sourceFiles` 가 설명 없이 0개나 1개만 돌려줍니다 (낮음)
 
 - **지금의 동작**: 인증서로그인(`sec`, 패키지 `egovframework.com.utl.sec`), 배치 프레임워크 간소화 기능(`batch`, `egovframework.com.ext.batch`), LDAP조직도관리(`ldap`, `egovframework.com.ext.ldap`), 동호회 ID 생성(`clb`, `egovframework.com.cop.clb`), 웹에디터(WYSIWYG) 리소스(`fiter`, `egovframework.com.utl.wed.fiter`)는 메타의 패키지에 해당하는 디렉토리가 공통컴포넌트 소스 트리에 없습니다. `sourceFiles` 는 `sec`, `batch`, `clb`, `fiter` 에 파일 0개를, `ldap` 에 Spring 설정 1개만 돌려주고, 응답에는 다른 컴포넌트와 같은 수집 범위 안내만 있어 소스가 없는 컴포넌트로 읽힙니다. 기대하는 동작은 실제 소스 파일이 나오거나, 적어도 패키지에 해당하는 디렉토리가 없다는 사실을 알리는 것입니다.
 - **재현**: `{"scope":"components","action":"sourceFiles","filters":{"componentId":"sec"}}` 와 `batch`, `clb`, `fiter` 는 "총 파일 수: 0개" 이고, `ldap` 은 "총 파일 수: 1개"(`context-ldap.xml`)입니다. 소스 트리의 `src/main/java/egovframework/com/ext` 에는 `ldapumt`(Java 12개)와 `easybatch`(Java 2개)가 있고, 이 14개는 어느 컴포넌트의 목록에도 나오지 않습니다. 155개 컴포넌트 가운데 패키지 디렉토리가 없는 것은 이 다섯뿐입니다.
-- **원인**: `collectComponentSourceFiles`(`src/tools/commonComponents.ts`)는 패키지명을 경로로 바꾼 디렉토리만 읽고, 디렉토리가 없으면 빈 목록을 돌려줍니다. `templates/common-components.json` 의 `packageName` 이 실제 소스 디렉토리와 다릅니다. `clb` 와 `fiter` 는 5.1.0-beta 의 컴포넌트 목록(`components.xls`)에 새로 들어온 항목이고, 동봉 소스 트리는 `v5.0.1` 입니다.
+- **원인**: `collectComponentSourceFiles`(`src/tools/commonComponents.ts`)는 패키지명을 경로로 바꾼 디렉토리만 읽고, 디렉토리가 없으면 빈 목록을 돌려줍니다. `templates/common-components.json` 의 `packageName` 이 실제 소스 디렉토리와 다릅니다. `clb` 와 `fiter` 는 5.1.0-beta 의 컴포넌트 목록(`components.xls`)에 새로 들어온 항목입니다. 2026-11-24 에 동봉 소스 트리를 내부 5.1.0-beta 소스로 바꾼 뒤에도 다섯 컴포넌트의 결과는 같습니다.
 - **고칠 방법**: `collectComponentSourceFiles` 가 `src/main/java/<패키지 경로>` 디렉토리가 있는지를 결과에 담고, `formatComponentSourceFiles` 가 없을 때 "메타데이터의 패키지에 해당하는 소스 디렉토리가 소스 트리에 없습니다" 한 줄을 출력하게 합니다. 확인하지 않은 방법입니다.
-- **결정할 것**: 메타의 `packageName` 을 실제 디렉토리에 맞출지, 컴포넌트별 소스 경로를 메타에 따로 둘지 정해야 합니다. `ldap` 은 `ext/ldapumt`, `batch` 는 `ext/easybatch` 가 영문명(`OrgManageLdap`, `EasyBatch`)과 맞고, `sec` 은 해당하는 디렉토리를 원본에서 확인해야 합니다. `fiter` 는 소스 트리에 있는 `utl/wed/filter`(Java 5개)의 오타로 보이지만, 원본 목록에도 `fiter` 로 적혀 있고 다른 컴포넌트(`ipm`)의 의존 목록도 이 이름을 씁니다. `cop/clb` 는 `v5.0.1` 소스 트리에 없으므로, 5.1.0 소스를 받은 뒤 다시 확인합니다. `packageName` 을 바꾸면 사용 테이블의 도출도 달라질 수 있습니다. `src/kb/componentTables.ts` 의 `findScriptTables` 가 패키지 접미어로 컴포넌트별 스크립트(소스 트리의 `src/script/ddl/mysql/ext.ldap_create_mysql.sql`)를 찾기 때문입니다.
+- **결정할 것**: 메타의 `packageName` 을 실제 디렉토리에 맞출지, 컴포넌트별 소스 경로를 메타에 따로 둘지 정해야 합니다. `ldap` 은 `ext/ldapumt`, `batch` 는 `ext/easybatch` 가 영문명(`OrgManageLdap`, `EasyBatch`)과 맞고, `sec` 은 해당하는 디렉토리를 원본에서 확인해야 합니다. `fiter` 는 소스 트리에 있는 `utl/wed/filter`(Java 5개)의 오타로 보이지만, 원본 목록에도 `fiter` 로 적혀 있고 다른 컴포넌트(`ipm`)의 의존 목록도 이 이름을 씁니다. `cop/clb` 는 내부 5.1.0-beta 소스 트리에도 없으므로, 원본 목록의 패키지명이 맞는지 확인합니다. `packageName` 을 바꾸면 사용 테이블의 도출도 달라질 수 있습니다. `src/kb/componentTables.ts` 의 `findScriptTables` 가 패키지 접미어로 컴포넌트별 스크립트(소스 트리의 `src/script/ddl/mysql/ext.ldap_create_mysql.sql`)를 찾기 때문입니다.
 
-#### DC-4. 메타의 `version` 이 155개 모두 같은 값이고 소스 버전과도 달라서, 버전 표시가 실제와 다릅니다 (낮음)
+#### DC-4. 메타의 `version` 이 155개 모두 같은 값이고, 응답에서 소스의 버전과 구분되지 않습니다 (낮음)
 
-- **지금의 동작**: 상세의 "버전", 검색 결과 표의 "버전" 열, 개요의 "버전별 분포" 가 155개 모두 5.1.0 입니다. 같은 도구가 돌려주는 소스는 5.0.1 인데(소스 트리의 `README.md` 첫 줄은 "표준프레임워크 공통컴포넌트 5.0.1" 이고 `knowledge-base/state.json` 의 `common_components.source_version` 은 `v5.0.1` 입니다) 응답에는 이 값이 메타데이터의 값이라는 표시가 없습니다. 기대하는 동작은 버전이 메타데이터의 값인지 소스의 값인지 구분되어 나오는 것입니다.
-- **재현**: `{"scope":"components","filters":{"componentId":"ucc"}}` 는 "버전: 5.1.0" 인데 `ucc` 의 소스는 `v5.0.1` 소스 트리에서 읽습니다. `{"scope":"components"}` 의 버전별 분포는 `| 5.1.0 | 155개 |` 한 행입니다.
+- **지금의 동작**: 상세의 "버전", 검색 결과 표의 "버전" 열, 개요의 "버전별 분포" 가 155개 모두 5.1.0 입니다. 응답에는 이 값이 메타데이터의 값이라는 표시가 없고, 같은 도구가 돌려주는 소스가 어느 버전인지도 나오지 않습니다. 2026-11-24 에 동봉 소스 트리를 git 정보가 없는 내부 5.1.0-beta 소스로 바꿔서, `knowledge-base/state.json` 에는 `common_components.source_version` 이 없고 소스 트리에는 `README.md` 도 없습니다 (소스의 버전은 `pom.xml` 의 `5.1.0` 으로만 알 수 있습니다). 그 전에는 메타가 5.1.0, 소스가 5.0.1 로 서로 달랐습니다. 기대하는 동작은 버전이 메타데이터의 값인지 소스의 값인지 구분되어 나오는 것입니다.
+- **재현**: `{"scope":"components","filters":{"componentId":"ucc"}}` 는 "버전: 5.1.0" 이고 소스의 버전을 알리는 줄이 없습니다. `{"scope":"components"}` 의 버전별 분포는 `| 5.1.0 | 155개 |` 한 행입니다.
 - **이미 해결된 것**: `filters.version` 에 데이터에 없는 값을 주면 데이터에 있는 `version` 값을 알려 줍니다. `hasWeb` 은 원본 목록(`components.xls`)의 `webexist` 열을 따르게 되어, 5개가 `true`, 150개가 `false` 입니다.
 - **원인**: 원본 목록(`components.xls`)에는 컴포넌트별 버전 열이 없어서, `templates/common-components.json` 의 컴포넌트별 `version` 을 155건 모두 파일 머리의 `version`(`"5.1.0"`)과 같은 값으로 적었습니다. `src/tools/commonComponents.ts` 의 `formatComponentInfo`, `formatComponentList`, `formatComponentSummary` 가 그 값을 "버전" 으로 싣습니다.
-- **고칠 방법**: 세 함수의 "버전" 을 "메타데이터 버전" 으로 바꾸고, 상세와 개요에 소스 트리 버전(`src/utils/dataPaths.ts` 의 `resolveResource` 로 얻는 `common_components` 의 `state.source_version`)을 함께 싣습니다. 확인하지 않은 방법입니다.
+- **고칠 방법**: 세 함수의 "버전" 을 "메타데이터 버전" 으로 바꾸고, 상세와 개요에 소스 트리 버전(`src/utils/dataPaths.ts` 의 `resolveResource` 로 얻는 `common_components` 의 `state.source_version`)을 함께 싣습니다. `source_version` 이 없으면 소스 버전 줄을 싣지 않거나 "기록 없음" 으로 적습니다. 확인하지 않은 방법입니다.
 - **결정할 것**: 컴포넌트별 `version` 을 계속 메타 파일의 버전과 같게 둘지, 컴포넌트마다 처음 들어온 버전처럼 다른 값을 둘지 정해야 합니다.
 
-#### DC-6. 업체명이나 확인일자가 틀린 행이 다섯 건 있습니다 (낮음)
+#### DC-6. 업체명이나 확인일자가 틀린 행이 열 건 있습니다 (낮음)
 
-- **지금의 동작**: 원본 데이터의 다섯 행은 업체명(`vendor`)이나 확인일자(`verified_date`) 자리에 다른 필드의 값이나 자리 채움 값이 들어 있고, 응답에 그대로 나옵니다. 업체명이 틀린 행은 업체 필터로 찾을 수 없습니다. 확인일자 순 정렬(`COMPATIBILITY_NEWEST_FIRST`)이 날짜 꼴이 아닌 값을 맨 뒤로 보내므로 목록의 앞쪽을 차지하지는 않습니다. 기대하는 동작은 다섯 행의 업체명과 확인일자가 제 값으로 나오는 것입니다.
+- **지금의 동작**: 원본 데이터의 열 행은 업체명(`vendor`)이나 확인일자(`verified_date`) 자리에 다른 필드의 값이나 자리 채움 값이 들어 있고, 응답에 그대로 나옵니다. 업체명이 틀린 행은 업체 필터로 찾을 수 없습니다. 확인일자 순 정렬(`COMPATIBILITY_NEWEST_FIRST`)이 `1970-01-01` 을 가장 오래된 날짜로, 날짜 꼴이 아닌 값을 그 뒤로 보내므로 목록의 앞쪽을 차지하지는 않습니다. 기대하는 동작은 열 행의 업체명과 확인일자가 제 값으로 나오는 것입니다.
   - `SPOWISE CMS 1.0`(프레임워크 3.9): 확인일자가 `㈜혁산정보시스템` 입니다.
   - `SM-CMS 2.0`(4.1): 업체명이 `2023.12.04`, 확인일자가 `㈜엠아이티소프트` 입니다.
   - `SmartManager 2.0`(4.3): 확인일자가 `https://www.iacts.co.kr` 입니다.
   - `GIOEZ-WCMS 1.0`(4.2): 업체명이 `2` 입니다.
-  - `만파식적 CMS(콘텐츠관리시스템) 2.0`(4.1): 확인일자가 `1970-01-01` 입니다.
-- **재현**: `{"scope":"compatibility","filters":{"offset":477},"limit":4}` 는 필터 없는 목록의 478~481번째로 확인일자가 틀린 네 행을 돌려줍니다. `{"scope":"compatibility","filters":{"vendor":"엠아이티소프트"}}` 는 3건이고 `productName` `"SM-CMS"` 는 4건입니다. `vendor` `"지오인프라"` 는 `GIOEZ-WCMS v1.0`(3.10) 1건뿐이고, `vendor` `"2"` 가 업체명이 틀린 두 행을 돌려줍니다.
-- **원인**: 원본(`templates/compatibility/compatibility-software.json`)의 값이 틀렸습니다. 원본을 만든 `notebooks/convert-compatibility-xlsx-to-json.py` 는 엑셀의 요약 HTML 에서 `업체명` 과 `호환성확인 일자` 를 옮기면서, 날짜 꼴이 아니면 받은 값을 그대로 두고 확인일자가 없으면 `1970-01-01` 을 넣습니다. 적재 스키마(`src/kb/sqliteLoaders.ts` 의 `compatibilityRowSchema`)는 두 값이 문자열인지만 검사합니다.
-- **고칠 방법**: 행마다 `url` 이 가리키는 포털의 상세 페이지에서 값을 확인해 원본 JSON 을 고치고 `npm run build-index` 로 DB 를 다시 만듭니다. `parseCompatibilityJson` 에서 확인일자가 `YYYY-MM-DD` 꼴이 아니거나 `1970-01-01` 인 행과 업체명에 한글이나 영문자가 없는 행을 경고로 출력합니다. 지금의 원본에서 이 조건에 걸리는 행은 위의 다섯 행뿐입니다. 변환 스크립트도 확인일자가 없으면 `1970-01-01` 을 넣지 않고 경고를 내게 고칩니다.
+  - 확인일자가 `1970-01-01` 인 여섯 행: `만파식적 CMS(콘텐츠관리시스템) 2.0`(4.1), `JBOSS EAP 5.1`(2.0), `JBOSS EAP 6.0`(2.5), `CUBRID 2008 R4.1`(2.0, 2.5), `CUBRID 9.3.6`(3.5). 만파식적 CMS 를 뺀 다섯 행은 2026-11-24 의 원본에서 새로 들어온 행입니다.
+- **재현**: `{"scope":"compatibility","filters":{"offset":617},"limit":9}` 는 필터 없는 목록 626행의 618~626번째로 확인일자가 틀린 아홉 행을 돌려줍니다 (`1970-01-01` 인 여섯 행 뒤에 날짜 꼴이 아닌 세 행). `{"scope":"compatibility","filters":{"vendor":"엠아이티소프트"}}` 는 3건이고 `productName` `"SM-CMS"` 는 4건입니다. `vendor` `"지오인프라"` 는 `GIOEZ-WCMS v1.0`(3.10) 1건뿐이고, `vendor` `"2"` 가 업체명이 틀린 두 행을 돌려줍니다.
+- **원인**: 원본(`templates/compatibility/compatibility-software.json`)의 값이 틀렸습니다. 원본을 만드는 `scripts/convert-compatibility-to-json.mjs` 는 포털 원본의 요약 HTML 에서 `업체명` 과 `호환성확인 일자` 를 옮기면서, 날짜 꼴이 아니면 받은 값을 그대로 두고 확인일자가 없으면 `1970-01-01` 을 넣습니다 (예전 `notebooks/convert-compatibility-xlsx-to-json.py` 와 같은 규칙입니다). 적재 스키마(`src/kb/sqliteLoaders.ts` 의 `compatibilityRowSchema`)는 두 값이 문자열인지만 검사합니다.
+- **고칠 방법**: 행마다 `url` 이 가리키는 포털의 상세 페이지에서 값을 확인해 원본을 고치고 `npm run build-index` 로 DB 를 다시 만듭니다. `parseCompatibilityJson` 에서 확인일자가 `YYYY-MM-DD` 꼴이 아니거나 `1970-01-01` 인 행과 업체명에 한글이나 영문자가 없는 행을 경고로 출력합니다. 지금의 원본에서 이 조건에 걸리는 행은 위의 열 행뿐입니다. 변환 스크립트도 확인일자가 없으면 `1970-01-01` 을 넣지 않고 경고를 내게 고칩니다.
 - **결정할 것**: 포털의 값으로 원본을 고칠지 정해야 합니다. 포털에서 원본을 다시 받는다면 분류와 설명의 오류도 함께 확인합니다.
 
-#### DC-7. 설명이 첫 쉼표에서 잘려 있고, HTML 조각이나 깨진 글자가 든 행과 정형 컬럼과 다른 값을 적은 행이 있습니다 (낮음)
+#### DC-7. 설명이 없거나 깨진 글자가 든 행과, 정형 컬럼과 다른 값을 적은 행이 있습니다 (낮음)
 
-- **지금의 동작**: 원본 데이터의 설명(`description`)이 온전하지 않은 행이 많고, 응답에 그대로 나옵니다. 기대하는 동작은 설명이 온전한 문장으로 나오고 정형 컬럼과 같은 값을 적는 것입니다.
-  - 481행 가운데 쉼표가 든 설명은 하나도 없고, 270행은 "※ 호환 등급은 레벨별 순위가 있는 것은 아니며" 에서 끝납니다. 첫 쉼표에서 잘린 것으로 보입니다.
-  - 11행은 설명이 `<font face=\"돋움` 같은 HTML 조각뿐이고, 다른 14행에는 `\/`, `\t` 같은 이스케이프 표기가 남아 있습니다.
-  - `EMCMS v1.0`(프레임워크 3.9)은 설명이 `null` 이고, `Tibero`(3.6)의 설명에는 깨진 글자(U+FFFD) 두 개가 "호환성레" 뒤에 있습니다.
+- **지금의 동작**: 원본 데이터의 설명(`description`)이 온전하지 않은 행이 있고, 응답에 그대로 나옵니다. 기대하는 동작은 설명이 온전한 문장으로 나오고 정형 컬럼과 같은 값을 적는 것입니다.
+  - `EMCMS v1.0`(프레임워크 3.9)은 설명이 `null` 입니다.
+  - 8행의 설명에 깨진 글자(U+FFFD)가 2~3개씩 있습니다. `CUBRID 2008 R4.1`(2.0, 2.5), `CUBRID 9.3.6`(3.5), `WebSphere Application Server ND 8.5`(2.6), `JworkSuite-Portal V3.0`(2.7), `OpenWorks V3.5`(3.1), `Tibero`(3.6), `Whoya UX-Platform 2.0`(3.6) 입니다 (예: `Tibero` 의 "호환성레�� : 2").
   - 네 행은 설명이 정형 컬럼과 다른 값을 적습니다. `CROWNIX Smart Form v7.0`(3.7)과 `ILUS v5.0`(3.8)은 `compatibility_level` 이 2 인데 설명은 "호환성레벨 : 1" 이고, `BigLook 5.0`(3.5)의 설명은 "프레임워크 버전 : 3.1" 이며, `DevOnFrame V1.8`(3.7)의 설명은 V1.0(2.7)과 V1.5(3.1)의 확인 내역만 적습니다.
-- **재현**: `{"scope":"compatibility","query":"font"}` 는 설명이 HTML 조각인 11행을 돌려줍니다 (`all-terms`). `{"scope":"compatibility","filters":{"productName":"EMCMS"}}` 의 `EMCMS v1.0` 은 `"description": null` 이고, `productName` `"BigLook"` 의 행은 `framework_version` 이 `3.5` 인데 설명이 "-프레임워크 버전 : 3.1" 로 시작합니다.
-- **원인**: 원본을 만든 `notebooks/convert-compatibility-xlsx-to-json.py` 는 엑셀의 `PROD_DESC` 에서 HTML 엔티티를 글자로 바꾸고 닫힌 태그를 지우고 공백을 정리한 뒤 500자까지 싣습니다. 쉼표에서 자르는 처리는 없으므로 엑셀의 값이 이미 잘려 있었던 것으로 보입니다 (엑셀은 저장소에 없어 확인하지 못했습니다). 닫는 `>` 가 잘려 나간 태그 조각과 백슬래시 이스케이프는 이 처리로 지워지지 않습니다. 적재(`src/kb/sqliteLoaders.ts` 의 `parseCompatibilityJson`)와 응답(`src/tools/compatibility.ts` 의 `searchCompatibleSoftware`)은 설명을 그대로 씁니다.
-- **고칠 방법**: 원본을 다시 수집할 때 쉼표가 든 필드가 잘리지 않게 내보내고, 변환 스크립트에서 끝이 잘린 태그(`<[^>]*$`)와 이스케이프 표기도 걷어 냅니다. 그 전에는 `searchCompatibleSoftware` 의 응답에서 설명이 `null` 이거나 `<` 로 시작하는 행의 `description` 을 빼고, `parseCompatibilityJson` 에서 `<` 로 시작하는 설명, U+FFFD 가 든 설명, 설명의 레벨이나 프레임워크 버전이 정형 컬럼과 다른 행을 경고로 출력합니다. 확인하지 않은 방법입니다.
-- **결정할 것**: 포털에서 원본을 다시 받아 설명을 온전하게 채울지, 지금의 잘린 설명을 그대로 둘지 정해야 합니다.
+  - 7행은 설명이 변환 규칙의 상한인 500자에서 잘려 있습니다 (`CUBRID 2008 R4.1` 2행, `CUBRID 9.3.6`, `enView 3.2.5`, `WebSphere Application Server ND 8.5`, `OpenWorks V3.5`, `Postgres Plus Advanced Server 9.3`).
+- **재현**: `{"scope":"compatibility","filters":{"productName":"EMCMS"}}` 의 `EMCMS v1.0` 은 `"description": null` 이고, `productName` `"BigLook"` 의 행은 `framework_version` 이 `3.5` 인데 설명이 "-프레임워크 버전 : 3.1" 로 시작합니다.
+- **이미 해결된 것**: 2026-11-24 에 원본을 포털 DB 에서 내보낸 JSON 으로 바꾸면서, 설명이 첫 쉼표에서 잘리던 문제(지금은 626행 가운데 352행의 설명에 쉼표가 있습니다), 설명이 `<font face=\"돋움` 같은 HTML 조각뿐이던 11행, `\/`, `\t` 같은 이스케이프 표기가 남던 14행이 모두 없어졌습니다. 예전 원본은 CSV 를 거친 엑셀이라 `PROD_DESC` 의 쉼표에서 칸이 나뉘었습니다.
+- **원인**: 깨진 글자는 포털 원본 JSON 에 이미 들어 있습니다 (원본 전체에 U+FFFD 가 35개 있습니다). 정형 컬럼과 다른 설명은 포털에 등록된 글 자체가 그렇습니다. 원본을 만드는 `scripts/convert-compatibility-to-json.mjs` 는 `PROD_DESC` 에서 HTML 엔티티를 글자로 바꾸고 태그와 줄바꿈을 공백으로 바꾼 뒤 앞 500자를 싣습니다. 적재(`src/kb/sqliteLoaders.ts` 의 `parseCompatibilityJson`)와 응답(`src/tools/compatibility.ts` 의 `searchCompatibleSoftware`)은 설명을 그대로 씁니다.
+- **고칠 방법**: `searchCompatibleSoftware` 의 응답에서 설명이 `null` 인 행의 `description` 을 빼고, `parseCompatibilityJson` 에서 U+FFFD 가 든 설명과 설명의 레벨이나 프레임워크 버전이 정형 컬럼과 다른 행을 경고로 출력합니다. 깨진 글자는 포털 DB 의 값을 바로잡아야 없어집니다. 500자 상한은 변환 스크립트의 `truncate(descText, 500)` 에서 늘릴 수 있습니다. 확인하지 않은 방법입니다.
+- **결정할 것**: 포털 DB 의 깨진 글자와 정형 컬럼과 다른 설명을 바로잡을지, 500자 상한을 그대로 둘지 정해야 합니다.
 
 ### 입력 스키마와 저장소 관례
 
@@ -835,7 +859,7 @@
 
 #### DC-17. 개발자 지식 원본 파일의 정리 (낮음)
 
-- **상태**: 묻고답하기 원본(`templates/developer_knowledge/묻고답하기-LET_TN_QA_INFO.xlsx`)에는 색인에 쓰지 않는 컬럼이 들어 있어, 2026-11-14 에 git 추적에서 빼고 `.gitignore` 에 더했습니다. 원본은 작업 환경에만 둡니다. FAQ 원본과 적용가이드 PDF 는 그대로 추적합니다. 색인(`knowledge-base/`), 배포 tgz, 도구의 응답에는 그 컬럼이 들어가지 않습니다. `knowledge-base/` 에 동봉된 스냅샷 쌍(`manifest.json`, `snapshot.jsonl.gz`)이 `update` 의 기준 스냅샷이 됩니다.
-- **남은 것**: 추적을 멈춘 커밋보다 앞의 커밋에는 원본이 그대로 남아 있습니다. 원격 저장소에서도 이 커밋을 올린 뒤의 트리에서만 파일이 사라지고, 이전 커밋과 다른 브랜치(`main` 등)에는 남습니다. 원본이 없는 체크아웃에서 bundled 모드로 구축하면 개발자 지식이 줄어드는 문제는 [BI-13](#bi-13-묻고답하기-원본-excel-이-없는-체크아웃에서-bundled-모드로-구축하면-개발자-지식이-faq-와-적용가이드-pdf-만으로-다시-만들어집니다-중간) 에 있습니다.
+- **상태**: 묻고답하기 원본(`templates/developer_knowledge/묻고답하기-LET_TN_QA_INFO.xlsx`)에는 색인에 쓰지 않는 컬럼이 들어 있어, 2026-11-14 에 git 추적에서 빼고 `.gitignore` 에 더했습니다. 원본은 작업 환경에만 둡니다. 2026-11-24 부터는 포털에서 내려받은 원본을 `references/` 에 두고, `scripts/filter-qa-xlsx.mjs` 로 삭제글과 2016년 이전 글을 뺀 파일을 이 자리에 만듭니다. FAQ 원본과 적용가이드 PDF 는 그대로 추적합니다. 색인(`knowledge-base/`), 배포 tgz, 도구의 응답에는 그 컬럼이 들어가지 않습니다. `knowledge-base/` 에 동봉된 스냅샷 쌍(`manifest.json`, `snapshot.jsonl.gz`)이 `update` 의 기준 스냅샷이 됩니다.
+- **남은 것**: 추적을 멈춘 커밋보다 앞의 커밋에는 원본이 그대로 남아 있습니다. 원격 저장소에서도 이 커밋을 올린 뒤의 트리에서만 파일이 사라지고, 이전 커밋에는 남습니다 (2026-11-24 에 `develop` 을 `main` 에 병합해 두 브랜치의 최신 트리에는 없습니다). 이전 커밋으로 체크아웃했다가 돌아오면 작업 디렉토리의 원본이 지워질 수 있습니다. 원본이 없는 체크아웃에서 bundled 모드로 구축하면 개발자 지식이 줄어드는 문제는 [BI-13](#bi-13-묻고답하기-원본-excel-이-없는-체크아웃에서-bundled-모드로-구축하면-개발자-지식이-faq-와-적용가이드-pdf-만으로-다시-만들어집니다-중간) 에 있습니다.
 - **결정할 것**: 이력에서도 지울지 정합니다. 지우려면 `git filter-repo` 같은 도구로 모든 브랜치의 이력에서 그 파일을 빼고 원격에 강제로 올려야 하며, 이미 클론한 사람들은 저장소를 다시 받아야 합니다. 원본을 다시 추적하게 된다면 색인에 필요한 컬럼만 남긴 파일로 바꿉니다. 그때 [VS-1](#vs-1-색인할-때-꺾쇠로-감싼-구간을-모두-지워-묻고답하기-본문의-xml-jsp-제네릭-코드가-빠집니다-중간), [VS-8](#vs-8-포털에서-삭제된-글과-해결-사례가-아닌-글이-검증된-solution-으로-나옵니다-낮음), [VS-9](#vs-9-개발자-지식에-글의-작성일과-원천-글-id-가-없고-최근-목록은-색인한-시각의-순서입니다-낮음) 의 고칠 방법이 읽는 `DELETE_YN`, `WRITNG_DE`, `ANSWER_DE`, `QNA_PROCESS_STTUS_CODE` 와 HTML 본문을 남깁니다.
-- **함께 정할 것**: 색인된 본문에는 글쓴이가 본문에 직접 적은 이메일 주소 형식의 값(164행)과 이름 표기가 남아 있습니다. 주민등록번호 형식의 값은 색인과 응답에서 가립니다(`src/utils/sensitiveText.ts`). 이메일 주소와 이름도 가릴지는 방침을 정해야 합니다.
+- **함께 정할 것**: 색인된 본문에는 글쓴이가 본문에 직접 적은 이메일 주소 형식의 값(2026-11-24 의 동봉 스냅샷 8,411행 가운데 127행)과 이름 표기가 남아 있습니다. 주민등록번호 형식의 값은 색인과 응답에서 가립니다(`src/utils/sensitiveText.ts`). 이메일 주소와 이름도 가릴지는 방침을 정해야 합니다.
