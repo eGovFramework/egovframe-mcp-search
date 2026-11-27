@@ -1,6 +1,6 @@
 # 테스트 가이드
 
-테스트는 Node.js 22 에서 실행합니다. 저장소를 클론한 뒤의 준비 절차는 [MCP_SETUP_GUIDE.md](./MCP_SETUP_GUIDE.md#저장소를-클론한-경우)에 있습니다.
+테스트는 Node.js 22 에서 실행합니다. 저장소를 클론한 뒤의 준비 절차는 [MCP_SETUP_GUIDE.md](../setup/MCP_SETUP_GUIDE.md#저장소를-클론해서-실행)에 있습니다. 테스트 파일마다 무엇을 검증하는지는 [tests/](./tests/README.md)의 문서에 정리되어 있습니다.
 
 ## 기본 확인
 
@@ -76,7 +76,7 @@ npm run inspector
 
 ## 지식베이스 준비
 
-구축된 지식베이스(`knowledge-base/`)가 저장소에 들어 있으므로, 검색 동작을 확인하려고 인덱스를 새로 만들 필요는 없습니다. 테스트와 서버는 이 파일들을 읽기만 하며 바꾸지 않습니다. `npm run build-index` 는 인덱스의 원본이나 색인 규칙을 바꿨을 때만 실행하며, 방법은 [HYBRID_SYSTEM_GUIDE.md](./HYBRID_SYSTEM_GUIDE.md#인덱스-재구축)에 있습니다. 동봉 인덱스의 내용에 기대는 테스트가 있으므로, 인덱스를 다시 구축한 뒤에는 `npm test` 를 다시 실행해 확인합니다.
+구축된 지식베이스(`knowledge-base/`)가 저장소에 들어 있으므로, 검색 동작을 확인하려고 인덱스를 새로 만들 필요는 없습니다. 테스트와 서버는 이 파일들을 읽기만 하며 바꾸지 않습니다. `npm run build-index` 는 인덱스의 원본이나 색인 규칙을 바꿨을 때만 실행하며, 방법은 [KNOWLEDGE_BASE_GUIDE.md](../operations/KNOWLEDGE_BASE_GUIDE.md#지식베이스-구축-build-index)에 있습니다. 동봉 인덱스의 내용에 기대는 테스트가 있으므로, 인덱스를 다시 구축한 뒤에는 `npm test` 를 다시 실행해 확인합니다.
 
 ## 테스트 정비 원칙
 

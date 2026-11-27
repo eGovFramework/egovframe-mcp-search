@@ -9,13 +9,14 @@
 - 문제를 고치면 해당 항목을 이 문서에서 지웁니다. 다른 항목의 번호는 바꾸지 않으므로, 빠진 번호는 고쳐서 지운 항목입니다.
 - **갱신 기록**: 2026-11-14 에 BI-1(인덱스가 걸린 테이블을 다시 만들 때의 build-index 실패)과 VS-2(가이드 저장소의 기여자용 문서가 가이드로 색인됨)를 고쳐 지웠고, 동봉 지식베이스를 다시 구축했습니다(공식 가이드 4,625행에서 4,610행). DC-13 의 `@types/node` 는 `^22` 로 올렸고, DC-17 의 묻고답하기 원본 Excel 은 git 추적에서 뺐습니다. 이 갱신 뒤에 새로 적은 항목은 BI-13 입니다. 가이드 검색의 재현 가운데 빠진 15개 청크가 결과에 들어 있던 호출은 순위가 한 칸씩 달라질 수 있습니다.
 - **갱신 기록 (2026-11-24)**: 원본 데이터를 바꾸고 가이드 원문을 `v5.0.0-end-2026-contribution` 으로 올려 동봉 지식베이스를 다시 구축했습니다. 개발자 지식은 18,195행에서 8,665행(묻고답하기에서 삭제글과 2016년 이전 글을 뺐습니다), 공식 가이드는 4,610행에서 7,011행, 호환 소프트웨어는 481행에서 626행이 되었습니다. 공통컴포넌트 소스는 git 정보가 없는 내부 5.1.0-beta 소스로 바꿨습니다. 이때 DC-2, DC-6, DC-7, BI-13, CH-4, VS-8, VS-9, DC-17 의 수치를 새 데이터로 다시 재서 고쳤고, 새로 확인한 CH-8, VS-13, KW-17 과 CC-5 의 `SET NAMES` 사례를 적었습니다. 데이터에 기대던 테스트 16건도 새 데이터에 맞게 고쳤습니다. 그 밖의 항목에 적힌 재현 수치는 2026-11-14 의 인덱스에서 잰 값이므로, 개발자 지식, 공식 가이드, 호환 소프트웨어의 검색 결과와 건수는 지금과 다를 수 있습니다.
+- **갱신 기록 (2026-11-27)**: 5.1.0 Beta 배포 전에 문서를 정리했습니다. `docs/` 의 문서를 주제별 폴더로 옮겼으므로, 이 문서에 적힌 문서 경로도 새 위치로 고쳤습니다. `package.json` 의 `version` 을 `5.1.0` 으로 올렸으므로 DC-13 의 해당 항목을 지웠고, `docs/test-scenarios/` 를 지운 것을 PR-5 에 반영했습니다. 새로 확인한 BI-14 를 적었습니다.
 
 ## 목차
 
 1. [먼저 볼 것](#1-먼저-볼-것)
 2. [키워드 검색 (공통컴포넌트와 호환 소프트웨어의 `query`)](#2-키워드-검색-공통컴포넌트와-호환-소프트웨어의-query) (KW-1 ~ KW-17)
 3. [색인 청킹 (공식 가이드, 적용가이드 PDF)](#3-색인-청킹-공식-가이드-적용가이드-pdf) (CH-1 ~ CH-8)
-4. [색인 구축과 갱신](#4-색인-구축과-갱신) (BI-2 ~ BI-13)
+4. [색인 구축과 갱신](#4-색인-구축과-갱신) (BI-2 ~ BI-14)
 5. [통합 검색과 입력 처리](#5-통합-검색과-입력-처리) (GT-1 ~ GT-7)
 6. [공통컴포넌트](#6-공통컴포넌트) (CC-1 ~ CC-7)
 7. [호환 소프트웨어](#7-호환-소프트웨어) (CS-1 ~ CS-5)
@@ -26,13 +27,14 @@
 
 ## 1. 먼저 볼 것
 
-등급이 높음인 항목은 없습니다. 등급이 중간인 항목은 다음 9개입니다.
+등급이 높음인 항목은 없습니다. 등급이 중간인 항목은 다음 10개입니다.
 
 - [KW-1](#kw-1-제품명에-숫자를-함께-적으면-찾는-제품이-뒤로-밀립니다-중간): 제품명이나 분류에 숫자(버전, 연도)를 함께 적었는데 둘이 함께 든 행이 없으면, 찾는 제품의 행이 숫자만 일치한 행들 뒤에 옵니다.
 - [KW-11](#kw-11-흔한-검색어만-일치한-행을-빼는-규칙-때문에-cms-에-군말을-붙이면-군말이-든-행만-남고-cms-행이-빠집니다-중간): 호환 소프트웨어에서 `CMS` 에 몇 행에만 든 군말을 붙이면 그 군말이 든 행만 나오고 나머지 CMS 행이 빠지며, 응답으로는 빠졌다는 것을 알 수 없습니다.
 - [BI-2](#bi-2-가이드-갱신을-같은-버전으로-다시-적용하면-쓰고-있는-오버레이-디렉토리를-먼저-지워-실패하면-빈-인덱스가-남습니다-중간): 지금 쓰는 가이드 버전을 `update --force` 로 다시 적용하면 쓰고 있는 오버레이 디렉토리를 먼저 지워서, 색인이 실패하면 CLI 가 "이전 상태 유지" 라고 알려도 서버는 비어 있거나 일부만 찬 인덱스를 읽습니다.
 - [BI-3](#bi-3-update-가-원격을-확인하지-못한-리소스가-있어도-모든-리소스가-최신입니다-로-끝납니다-중간): `update` 가 원격을 확인하지 못한 리소스가 있어도, 새 버전이 확인된 리소스가 없으면 `모든 리소스가 최신입니다.` 와 종료 코드 0 으로 끝납니다.
 - [BI-13](#bi-13-묻고답하기-원본-excel-이-없는-체크아웃에서-bundled-모드로-구축하면-개발자-지식이-faq-와-적용가이드-pdf-만으로-다시-만들어집니다-중간): 묻고답하기 원본 Excel 을 git 이 추적하지 않게 되어, 그 파일이 없는 클론에서 `npm run build-index -- --yes` 를 실행하면 개발자 지식 8,665행이 FAQ 와 적용가이드 PDF 의 359행으로 바뀌며 경고가 없습니다.
+- [BI-14](#bi-14-update-가-동봉본보다-오래된-가이드-태그와-공통컴포넌트-소스를-갱신-후보로-고릅니다-중간): 5.1.0 에 동봉된 지식베이스에서 옵션 없이 `update` 를 실행하면, 동봉본보다 오래된 가이드 태그(`v5.0.0-ready-2026-contribution`)와 공통컴포넌트 소스 `v5.0.7` 이 갱신 후보가 됩니다.
 - [VS-1](#vs-1-색인할-때-꺾쇠로-감싼-구간을-모두-지워-묻고답하기-본문의-xml-jsp-제네릭-코드가-빠집니다-중간): 개발자 지식의 묻고답하기와 FAQ 를 색인할 때 꺾쇠로 감싼 구간을 모두 지워서, 답변에 적힌 설정 XML, JSP 태그, Java 제네릭이 응답에서 빠집니다.
 - [DC-1](#dc-1-메타의-설명이-다른-컴포넌트의-것이어서-상세-설명과-키워드-검색-결과가-틀립니다-중간): 공통컴포넌트 메타에서 시스템연계관리와 통계 컴포넌트 넷의 설명이 다른 컴포넌트의 것이어서, 상세 설명과 키워드 검색 결과가 틀립니다.
 - [DC-2](#dc-2-분류-dbms-로-등록된-39행-가운데-데이터베이스-제품은-8행입니다-중간): 호환 소프트웨어의 분류 `DBMS` 로 등록된 39행 가운데 데이터베이스 제품은 8행뿐이어서, `filters.category` 에 `DBMS` 를 주면 이 행들이 데이터베이스 제품처럼 나옵니다.
@@ -46,7 +48,7 @@
 
 ## 2. 키워드 검색 (공통컴포넌트와 호환 소프트웨어의 `query`)
 
-키워드 검색의 규칙은 [EGOV_SEARCH_KNOWLEDGE_TOOL.md](EGOV_SEARCH_KNOWLEDGE_TOOL.md) 에 있습니다. 구현은 `src/database/sqliteManager.ts`(검색어 고르기, 일치, 정렬)와 `src/utils/fts5Query.ts`(검색어 읽기, 뺄 낱말의 목록, 유연한 꼴)에 있습니다. 아래 문제는 규칙을 구현한 코드의 결함이 아니라, 정해 둔 규칙을 그대로 적용했을 때 결과가 나빠지는 경우입니다. 아래에서 대상 낱말은 도구 가이드가 "목록의 모든 항목에 해당하는 낱말" 이라고 부르는 `eGovFrame`, `egovframework`, `egov`, `전자정부`, `표준프레임워크` 같은 낱말(공통컴포넌트에서는 `컴포넌트`, `component` 등도)을 가리킵니다.
+키워드 검색의 규칙은 [EGOV_SEARCH_KNOWLEDGE_TOOL.md](../reference/EGOV_SEARCH_KNOWLEDGE_TOOL.md) 에 있습니다. 구현은 `src/database/sqliteManager.ts`(검색어 고르기, 일치, 정렬)와 `src/utils/fts5Query.ts`(검색어 읽기, 뺄 낱말의 목록, 유연한 꼴)에 있습니다. 아래 문제는 규칙을 구현한 코드의 결함이 아니라, 정해 둔 규칙을 그대로 적용했을 때 결과가 나빠지는 경우입니다. 아래에서 대상 낱말은 도구 가이드가 "목록의 모든 항목에 해당하는 낱말" 이라고 부르는 `eGovFrame`, `egovframework`, `egov`, `전자정부`, `표준프레임워크` 같은 낱말(공통컴포넌트에서는 `컴포넌트`, `component` 등도)을 가리킵니다.
 
 ### KW-1. 제품명에 숫자를 함께 적으면 찾는 제품이 뒤로 밀립니다 (중간)
 
@@ -186,7 +188,7 @@
 
 ## 3. 색인 청킹 (공식 가이드, 적용가이드 PDF)
 
-청킹 규칙은 [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md) 에 있습니다. 구현은 `src/rag/guideChunking.ts`(가이드)와 `src/scripts/buildIndex.ts` 의 `chunkPdfText`(PDF)에 있습니다.
+청킹 규칙은 [DATABASE_SCHEMA.md](../architecture/DATABASE_SCHEMA.md) 에 있습니다. 구현은 `src/rag/guideChunking.ts`(가이드)와 `src/scripts/buildIndex.ts` 의 `chunkPdfText`(PDF)에 있습니다.
 
 ### CH-1. 제목 줄만 든 조각이 색인될 수 있습니다 (낮음)
 
@@ -249,7 +251,7 @@
 
 ### BI-2. 가이드 갱신을 같은 버전으로 다시 적용하면 쓰고 있는 오버레이 디렉토리를 먼저 지워, 실패하면 빈 인덱스가 남습니다 (중간)
 
-- **지금의 동작**: `update` 의 가이드 갱신은 대상 버전의 오버레이 디렉토리(`resources/guide/v-<버전>`)를 지운 뒤 그 자리에 다시 색인합니다. 그래서 `--force` 로 지금 쓰는 버전을 다시 적용하면 쓰고 있는 디렉토리를 먼저 지우게 됩니다. `--guide-tag` 없이 `--from-file` 로 반입하면 버전이 언제나 `from-file` 이므로, 두 번째 반입부터는 `--force` 를 줄 때마다 이 경우가 됩니다. 색인이 실패하거나 중단되어도 `state.json` 은 그 디렉토리를 그대로 가리키므로, CLI 가 "이전 상태 유지" 라고 알려도 서버는 비어 있거나 일부만 찬 인덱스를 읽습니다. 이때 `state.json` 의 `previous_dir` 도 같은 디렉토리여서 `update --rollback=guide` 가 같은 곳으로 돌아갑니다. 기대하는 동작은 갱신이 실패하면 쓰던 인덱스가 그대로 남는 것입니다. `--guide-tag` 없는 두 번째 반입이 "이미 최신입니다" 로 건너뛰어지는 것은 README 에 적힌 동작이고, README 는 `--force` 로 다시 적용하라고 안내합니다.
+- **지금의 동작**: `update` 의 가이드 갱신은 대상 버전의 오버레이 디렉토리(`resources/guide/v-<버전>`)를 지운 뒤 그 자리에 다시 색인합니다. 그래서 `--force` 로 지금 쓰는 버전을 다시 적용하면 쓰고 있는 디렉토리를 먼저 지우게 됩니다. `--guide-tag` 없이 `--from-file` 로 반입하면 버전이 언제나 `from-file` 이므로, 두 번째 반입부터는 `--force` 를 줄 때마다 이 경우가 됩니다. 색인이 실패하거나 중단되어도 `state.json` 은 그 디렉토리를 그대로 가리키므로, CLI 가 "이전 상태 유지" 라고 알려도 서버는 비어 있거나 일부만 찬 인덱스를 읽습니다. 이때 `state.json` 의 `previous_dir` 도 같은 디렉토리여서 `update --rollback=guide` 가 같은 곳으로 돌아갑니다. 기대하는 동작은 갱신이 실패하면 쓰던 인덱스가 그대로 남는 것입니다. `--guide-tag` 없는 두 번째 반입이 "이미 최신입니다" 로 건너뛰어지는 것은 `docs/operations/KNOWLEDGE_BASE_GUIDE.md` 에 적힌 동작이고, 그 문서는 `--force` 로 다시 적용하라고 안내합니다.
 - **재현**: 빈 오버레이 디렉토리 D 와 반입 디렉토리 셋을 만듭니다. A1 은 `egovframe_guide/_index.md`(문서 루트를 찾는 표지 파일이며 색인하지 않습니다)와 본문이 50자 이상인 문서 둘, A2 는 A1 에 문서 하나를 더한 것, A3 은 표지 파일과 본문이 50자 미만인 문서 하나입니다. `EGOV_MCP_DATA_DIR=D node build/index.js update --resource=guide --from-file=A1` 은 "가이드: → from-file (2청크 재인덱싱)" 으로 끝납니다. 같은 명령에 A2 를 주면 "이미 최신입니다 (from-file)" 이고, `--force` 를 더하면 적용되면서 `state.json` 의 `dir` 과 `previous_dir` 이 둘 다 `resources/guide/v-from-file` 이 됩니다. 이어서 A3 에 `--force` 를 주면 "가이드 갱신 실패: 가이드 청크가 0개입니다 … 이 리소스는 이전 상태를 유지합니다." 로 끝나지만, D 로 띄운 서버에서 `{"scope":"guide","query":"트랜잭션","limit":3}` 은 "## eGovFrame 가이드 검색 결과 (0건)" 과 "검색 결과가 없습니다. 다른 키워드로 검색해 보세요." 를 돌려줍니다. `update --rollback=guide` 는 "가이드: 직전 버전 디렉토리로 복귀" 를 출력하지만 결과는 같고, 한 번 더 실행해야 오버레이 항목이 지워져 동봉 인덱스로 돌아갑니다.
 - **원인**: `src/cli/lancedb/guide.ts` 의 `updateGuide` 가 `targetVersion = options.guideTag ?? 'from-file'` 로 버전을 정하고, `overlayResourceDir('guide', targetVersion)` 의 디렉토리를 `fs.remove` 로 지운 다음 같은 자리에 색인합니다. 청크 수가 0개인지는 지운 뒤에야 확인하고, `previousDir` 는 지금 쓰는 디렉토리(`effective.state?.dir`)라서 대상 디렉토리와 같을 수 있습니다. 서버는 읽던 디렉토리가 통째로 사라지면 동봉 인덱스로 물러나지만, 같은 자리에 빈 테이블이 다시 생기면 그것을 그대로 읽습니다 ([VS-6](#vs-6-행이-0개인-인덱스-테이블이-결과-0건-으로-응답됩니다-낮음)).
 - **고칠 방법**: 색인은 언제나 새 디렉토리(예: `v-<버전>-<적용 시각>`)에 하고, 청크 수 확인을 통과한 뒤에만 `commitResourceState` 로 `state.json` 을 바꿉니다. `previous_dir` 에는 새 디렉토리와 다를 때만 지금 쓰는 디렉토리를 적고, `pruneOldVersions` 는 그 뒤에 부릅니다. 실패하면 새 디렉토리만 지웁니다. `--from-file` 에 태그가 없으면 반입한 마크다운의 내용 해시로 버전을 정해(예: `from-file-<해시 앞 12자>`) 내용이 다른 반입이 건너뛰어지지 않게 합니다. 가이드 갱신의 통합 테스트는 아직 없으므로 `tests/integration/updateKnowledge.test.ts` 와 같은 방식으로 위 재현 절차를 테스트로 만듭니다. 확인하지 않은 방법입니다.
@@ -270,7 +272,7 @@
 
 ### BI-5. 가이드 반입(`--from-file`)이 최상위 디렉토리가 있는 tarball 과 숨김 파일을 그대로 색인합니다 (낮음)
 
-- **지금의 동작**: `update --from-file` 의 가이드 반입은 `guide-md.tar.gz` 를 풀 때 최상위 디렉토리를 떼지 않고 배치도 확인하지 않습니다. GitHub 소스 tarball 처럼 최상위 디렉토리(예: `egovframe-docs-5.0.0/`) 아래에 문서가 든 파일을 반입하면 모든 청크의 `layer` 가 그 디렉토리 이름이 되고 `category` 가 한 칸씩 밀립니다. 이름이 `.` 으로 시작하는 파일과 디렉토리 안의 `.md`(macOS 에서 만든 tarball 에 들어갈 수 있는 `._*` 파일 포함)도 청크가 됩니다. CLI 는 경고 없이 "갱신 완료" 로 끝납니다. 기대하는 동작은 문서 루트를 찾아 색인하거나, 배치가 다르면 기대하는 배치를 알리고 중단하는 것입니다. README 는 가이드 tarball 은 최상위가 문서 루트이고 공통컴포넌트 tarball(`components-src.tar.gz`)은 최상위 디렉토리 하나 아래에 소스가 든 형태라고 적고 있어, 두 반입 형식이 서로 다릅니다.
+- **지금의 동작**: `update --from-file` 의 가이드 반입은 `guide-md.tar.gz` 를 풀 때 최상위 디렉토리를 떼지 않고 배치도 확인하지 않습니다. GitHub 소스 tarball 처럼 최상위 디렉토리(예: `egovframe-docs-5.0.0/`) 아래에 문서가 든 파일을 반입하면 모든 청크의 `layer` 가 그 디렉토리 이름이 되고 `category` 가 한 칸씩 밀립니다. 이름이 `.` 으로 시작하는 파일과 디렉토리 안의 `.md`(macOS 에서 만든 tarball 에 들어갈 수 있는 `._*` 파일 포함)도 청크가 됩니다. CLI 는 경고 없이 "갱신 완료" 로 끝납니다. 기대하는 동작은 문서 루트를 찾아 색인하거나, 배치가 다르면 기대하는 배치를 알리고 중단하는 것입니다. `docs/operations/KNOWLEDGE_BASE_GUIDE.md` 는 가이드 tarball 은 최상위가 문서 루트이고 공통컴포넌트 tarball(`components-src.tar.gz`)은 최상위 디렉토리 하나 아래에 소스가 든 형태라고 적고 있어, 두 반입 형식이 서로 다릅니다.
 - **재현**: `egovframe-docs-5.0.0/` 아래에 `_index.md`, `egovframe-runtime/foundation-layer/transaction.md`, 같은 자리의 `._transaction.md`(macOS 의 리소스 포크 파일), `.hidden/secret.md` 를 둔 `guide-md.tar.gz` 를 반입 디렉토리에 넣고 `EGOV_MCP_DATA_DIR=D node build/index.js update --resource=guide --from-file=<반입 디렉토리>` 를 실행하면 "4청크 재인덱싱" 으로 끝납니다. D 로 띄운 서버에서 `{"scope":"guide","query":"트랜잭션 서비스","limit":10}` 은 4건이고, 분류 줄은 `egovframe-docs-5.0.0 > egovframe-runtime`, `egovframe-docs-5.0.0`, `egovframe-docs-5.0.0 > .hidden` 입니다. 결과에는 제목이 `._transaction` 이고 본문이 바이너리 머리글('Mac OS X', 'com.apple.quarantine')인 청크가 들어 있습니다. `{"scope":"guide","query":"x","filters":{"layer":"nope"}}` 의 오류는 사용할 수 있는 값으로 `egovframe-docs-5.0.0` 하나만 알립니다.
 - **원인**: `src/cli/lancedb/guide.ts` 의 `updateGuide` 가 `extractTarGz(tarFile, mdRoot, { filter: (rel) => rel.endsWith('.md') })` 로 풀고 그 디렉토리를 그대로 색인합니다 (온라인 경로의 `acquireGuideMarkdown` 은 `stripComponents: 1` 을 줍니다). `src/kb/guideIndexer.ts` 의 `collectMarkdownFiles` 는 `.git`, `.github`, `images` 디렉토리와 `README.md`, `how-to-write-Frontmatter.md` 만 건너뜁니다. 숨김 파일 문제는 같은 수집 함수를 쓰는 `build-index --source=local --template-dir` 에도 해당합니다. 동봉 인덱스는 가이드 원문에 그런 파일이 없어 영향이 없습니다.
 - **고칠 방법**: `collectMarkdownFiles` 에서 이름이 `.` 으로 시작하는 파일과 디렉토리를 건너뜁니다. `updateGuide` 는 tarball 을 푼 뒤 `_index.md` 가 루트나 한 단계 아래 디렉토리에 있는지 찾아 그 디렉토리를 문서 루트로 쓰고, 어디에도 없으면 기대하는 배치를 알리는 오류로 중단합니다 (`egovframe_guide/` 디렉토리 반입은 이미 `_index.md` 가 있는지 확인합니다). `collectMarkdownFiles` 가 숨김 파일을 건너뛰는지 확인하는 단위 테스트와, 최상위 디렉토리가 있는 tarball 을 반입하는 통합 테스트를 더합니다.
@@ -330,6 +332,13 @@
 - **재현**: 코드를 읽어 확인했습니다. 원본 Excel 이 없는 클론에서 `npm run build-index -- --yes` 를 실행합니다.
 - **원인**: `src/scripts/buildIndex.ts` 의 `loadKnowledgeFromDir` 는 `templates/developer_knowledge/` 에 스냅샷 쌍(`manifest.json`, `snapshot.jsonl.gz`)이 없으면 그 디렉토리의 `*.xlsx` 를 모두 읽어 합성하고, 어떤 종류(묻고답하기, FAQ)의 파일이 있는지는 따지지 않습니다. `knowledge-base/` 에 동봉된 스냅샷 쌍은 소스로 쓰지 않습니다.
 - **고칠 방법**: bundled 모드에서 `templates/developer_knowledge/` 에 스냅샷 쌍이 없고 묻고답하기 Excel 도 없으면(`inferKnowledgeKind` 로 종류를 가립니다), `knowledge-base/` 의 `manifest.json` 과 `snapshot.jsonl.gz` 를 소스로 써서 지금 동봉된 데이터를 그대로 다시 색인하고 그 사실을 콘솔에 알립니다. 동봉 스냅샷도 없으면 "묻고답하기 원본이 없어 개발자 지식은 건너뜁니다" 를 알리고 기존 인덱스를 그대로 둡니다. Excel 이 없는 디렉토리로 빌드 플랜을 만드는 단위 테스트를 더합니다. 확인하지 않은 방법입니다. 그 전까지는 구축하기 전에 `node scripts/filter-qa-xlsx.mjs` 로 `references/` 의 원본에서 이 파일을 다시 만들어 두거나, online 모드(릴리스 스냅샷)나 local 모드(`--template-dir` 에 스냅샷 쌍을 둔 반입 디렉토리)로 구축합니다.
+
+### BI-14. `update` 가 동봉본보다 오래된 가이드 태그와 공통컴포넌트 소스를 갱신 후보로 고릅니다 (중간)
+
+- **지금의 동작**: 5.1.0 에 동봉된 지식베이스에서 `update --check` 를 실행하면, 공식 가이드는 동봉본 `v5.0.0-end-2026-contribution` 에 대해 `v5.0.0-ready-2026-contribution` 이, 공통컴포넌트는 `(기록 없음)` 에 대해 `v5.0.7` 이 갱신 후보로 표시됩니다. 가이드 저장소의 `ready` 태그는 2026-05-27 의 커밋이고 `end` 태그는 2026-11-17 의 커밋이므로, 후보로 표시된 쪽이 더 오래된 자료입니다. 공통컴포넌트의 동봉 소스는 git 정보가 없는 내부 5.1.0-beta 소스여서 `state.json` 에 `source_version` 이 없고, 그래서 공개 저장소의 최신 태그가 새 버전으로 판정됩니다. 옵션 없이 `update` 를 실행하면 이 후보들이 적용 대상이 되어, 공식 가이드가 더 오래된 자료로 다시 색인되고 공통컴포넌트 소스가 v5.0.7 로 바뀌게 됩니다(컴포넌트 목록과 설명은 동봉 메타 5.1.0 그대로입니다). 기대하는 동작은 동봉본보다 오래된 자료를 갱신 후보로 보지 않는 것입니다.
+- **재현**: 빈 디렉토리를 `EGOV_MCP_DATA_DIR` 로 주고 `node build/index.js update --check` 를 실행하면(2026-11-27, 네트워크 연결 상태) `가이드            v5.0.0-end-2026-contribution  (동봉)  → v5.0.0-ready-2026-contribution 사용 가능` 과 `공통컴포넌트         (기록 없음)  (동봉)  → v5.0.7 사용 가능` 이 나옵니다. 두 태그의 커밋 날짜는 GitHub API(`/repos/egovframework/egovframe-docs/commits/<태그>`)로 확인했습니다. 후보가 표시되는 것까지 확인했고, 실제로 적용해 보지는 않았습니다.
+- **원인**: `src/kb/sources.ts` 의 `compareVersionTag` 는 숫자 부분이 같은 두 태그를 접미사의 알파벳 순(`localeCompare`)으로 견주므로, `-ready-2026-contribution` 이 `-end-2026-contribution` 보다 큰 버전으로 판정됩니다. 공통컴포넌트는 `src/cli/common-components/commonComponents.ts` 가 현재 버전을 `state.source_version ?? state.version` 으로 구하는데, 동봉 `state.json` 에는 `metadata_version` 만 있어 현재 버전이 없는 것으로 처리됩니다.
+- **고칠 방법**: 정하지 않았습니다. 가이드는 접미사가 붙은 태그끼리의 순서를 알파벳 순으로 정할 수 없으므로, 태그가 가리키는 커밋의 날짜로 견주거나 접미사가 다른 태그는 자동 후보에서 빼는 방법을 검토합니다. 공통컴포넌트는 현재 버전을 알 수 없을 때 동봉 메타의 버전(`metadata_version`)보다 낮은 태그를 후보로 보지 않게 하거나, 동봉 소스의 버전을 `state.json` 에 기록합니다. 그 전까지의 주의 사항(갱신하기 전에 `--check` 로 후보를 확인하고 리소스와 태그를 지정한다)은 `docs/operations/KNOWLEDGE_BASE_GUIDE.md` 에 적어 두었습니다.
 
 ## 5. 통합 검색과 입력 처리
 
@@ -479,7 +488,7 @@
   - `frameworkVersion`: 끝 문장을 "If the version is not in the data, the response lists the available versions and categories." 로 바꿉니다.
   - `category`: 예시의 `'DBMS'` 를 `'Portal Solution'` 으로 바꾸고, compatibility 부분에 "A value that is not a category in the data gets the available versions and categories in the response." 를 덧붙입니다.
   - `includeKnowledge`: "Only the first 5 products on the page are looked up; knowledgeLookup tells how many." 를 덧붙입니다.
-  - `level`: "The two levels are not a ranking." 을 덧붙입니다. 두 레벨의 정의는 포털의 호환성 확인 안내에서 확인한 뒤 사용 설명서(`docs/EGOV_SEARCH_KNOWLEDGE_TOOL.md`)에 적습니다.
+  - `level`: "The two levels are not a ranking." 을 덧붙입니다. 두 레벨의 정의는 포털의 호환성 확인 안내에서 확인한 뒤 사용 설명서(`docs/reference/EGOV_SEARCH_KNOWLEDGE_TOOL.md`)에 적습니다.
 
 ### CS-3. 호환 소프트웨어의 문자열 필터가 전각 영숫자를 반각으로 바꾸지 않아 0건이 됩니다 (참고)
 
@@ -630,7 +639,7 @@
 
 ### PR-5. macOS 에서 만든 배포 tgz 의 한글 파일 이름이 NFD 로 바뀌고 확장 속성 헤더가 실립니다 (낮음)
 
-- **지금의 동작**: `scripts/pack-platforms.sh` 는 `npm pack` 이 만든 tgz 를 macOS 의 `tar` 로 풀었다가 다시 묶는데, 이때 한글 파일 이름이 NFC 에서 NFD(자모가 분리된 꼴)로 바뀝니다. 해당하는 파일은 `docs/test-scenarios/` 의 네 문서(`00_사전준비.md` 등)와 공통컴포넌트 소스의 `EgovFileSysMntrngServiceImpl_테스트.java` 입니다. 파일 이름을 바이트 그대로 다루는 Linux 에 설치하면 NFC 로 적힌 링크(`docs/test-scenarios/README.md` 의 문서 링크)나 경로로 이 파일들을 열지 못할 것으로 보입니다 (Linux 에 설치해 확인하지는 않았습니다). 다시 묶은 tgz 의 항목마다 `com.apple.provenance` 확장 속성의 pax 헤더도 실립니다. 기대하는 동작은 tgz 의 이름이 저장소와 같은 NFC 이고 macOS 전용 메타데이터가 없는 것입니다.
+- **지금의 동작**: `scripts/pack-platforms.sh` 는 `npm pack` 이 만든 tgz 를 macOS 의 `tar` 로 풀었다가 다시 묶는데, 이때 한글 파일 이름이 NFC 에서 NFD(자모가 분리된 꼴)로 바뀝니다. 5.1.0 의 배포 tgz 에서 해당하는 파일은 `docs/test-scenarios/` 의 네 문서(`00_사전준비.md` 등)와 공통컴포넌트 소스의 `EgovFileSysMntrngServiceImpl_테스트.java` 입니다. `docs/test-scenarios/` 는 2026-11-27 에 저장소에서 지웠으므로, 다음에 만드는 tgz 부터는 공통컴포넌트 소스의 파일 하나만 해당합니다. 파일 이름을 바이트 그대로 다루는 Linux 에 설치하면 NFC 로 적힌 경로로 이 파일을 열지 못할 것으로 보입니다 (Linux 에 설치해 확인하지는 않았습니다). 다시 묶은 tgz 의 항목마다 `com.apple.provenance` 확장 속성의 pax 헤더도 실립니다. 기대하는 동작은 tgz 의 이름이 저장소와 같은 NFC 이고 macOS 전용 메타데이터가 없는 것입니다.
 - **재현**: macOS 에서 NFC 이름의 `package/docs/00_사전준비.md` 를 담은 tgz 를 `tar -xzf` 로 풀면 디스크의 이름이 이미 NFD 이고, 이것을 `COPYFILE_DISABLE=1 tar -czf` 로 다시 묶은 tgz 의 이름도 NFD 이며 항목마다 `SCHILY.xattr.com.apple.provenance` pax 헤더가 있습니다 (bsdtar 3.5.3). 2026-11 에 이 스크립트로 만든 darwin-arm64 tgz 의 목록에서도 위 다섯 파일의 이름이 자모로 분리되어 있었습니다.
 - **원인**: 스크립트의 후처리 구간(musl 스포크 제거와 install 스크립트 무력화를 위해 `tar -xzf` 로 풀고 `COPYFILE_DISABLE=1 tar -czf` 로 다시 묶는 부분)입니다. macOS 의 `tar` 가 풀 때 이름을 NFD 로 쓰고, `COPYFILE_DISABLE=1` 은 AppleDouble 항목(`._이름`)만 막고 확장 속성 헤더는 막지 않습니다.
 - **고칠 방법**: 다시 묶기 전에 `$work` 아래의 파일과 디렉토리 이름을 깊은 것부터 NFC 로 바꾸고(node 로 `name.normalize('NFC')` 와 다른 이름만 임시 이름을 거쳐 rename), 다시 묶는 `tar` 에 `--no-xattrs` 를 더합니다. 합성한 디렉토리에 이 두 가지를 적용해 다시 묶은 tgz 의 이름이 NFC 이고 확장 속성 헤더가 없는 것을 확인했으며, 스크립트 자체는 고쳐 실행해 보지 않았습니다. 스크립트 끝에 tgz 목록에서 NFC 가 아닌 이름을 찾으면 실패하는 검사를 두면 같은 문제가 다시 생기는 것을 막을 수 있습니다.
@@ -639,7 +648,7 @@
 
 - **지금의 동작**: `scripts/pack-platforms.sh` 는 타깃마다 `npm ci` 와 `npm pack` 을 실행하고 tgz 를 풀어 다시 묶지만, 결과물에 better-sqlite3 와 sharp 의 네이티브 바이너리가 들어 있는지 확인하지 않습니다. `npm pack` 이 번들 의존성에서 싣는 파일은, npm 이 설치할 때 남기는 `node_modules/.package-lock.json` 이 유효한지에 따라 달라집니다. 유효하면 의존성 디렉토리의 파일을 그대로 싣고, `.package-lock.json` 보다 나중에 바뀐 패키지 디렉토리가 있어 무효가 되면 의존성마다 package.json 의 `files` 목록만 실어서 `better_sqlite3.node` 와 sharp 의 `.node` 파일, `vendor/` 가 오류 없이 빠집니다. 숨은 잠금 파일(`.package-lock.json`)이 유효한지로 갈린다는 것은 npm-packlist 의 코드와 아래 재현의 결과로 추정한 것이고, arborist 의 코드까지 읽어 확인하지는 않았습니다. 스크립트의 정상 흐름(`npm ci` 직후의 `npm pack`)에서는 `.package-lock.json` 이 유효할 것으로 보이며, 이 흐름에서 빠지는 것을 확인하지는 않았습니다. 기대하는 동작은 바이너리가 빠지면 스크립트가 실패하는 것입니다.
 - **재현**: 저장소의 사본(`node_modules` 를 수정 시각을 보존해 복사)에서 `npm pack --dry-run --ignore-scripts --json` 의 파일 목록은 17,625개이고 두 바이너리가 들어 있습니다. `touch node_modules/better-sqlite3` 처럼 패키지 디렉토리 하나의 수정 시각을 바꾸면 16,940개가 되고, better-sqlite3 는 49개 파일에 `.node` 가 없고 sharp 는 54개 파일에 `.node` 와 `vendor/` 가 없습니다. 사본에서 sharp 의 바이너리를 치우고 서버를 띄우면 시작하자마자 종료 코드 1 로 끝나고(`Something went wrong installing the "sharp" module`), better-sqlite3 의 바이너리를 치우면 서버는 뜨지만 공통컴포넌트와 호환 소프트웨어 조회가 `네이티브 모듈(better-sqlite3)을 불러오지 못했습니다. … MCP 클라이언트 설정의 command 가 Node 22 실행 파일을 가리키는지 확인하세요.`([PR-4](#pr-4-네이티브-바이너리가-빠진-설치에서-오류-문구가-맞지-않는-조치를-안내합니다-낮음) 의 문구)로 실패합니다.
-- **원인**: `scripts/pack-platforms.sh` 의 tgz 후처리 구간(`tar -xzf` 로 푼 뒤 다시 묶는 곳)에 결과물 확인이 없습니다. 스크립트의 주석과 README 의 배포 패키지 절은 이렇게 빠질 수 있다는 것을 설명하지만 막지는 않습니다.
+- **원인**: `scripts/pack-platforms.sh` 의 tgz 후처리 구간(`tar -xzf` 로 푼 뒤 다시 묶는 곳)에 결과물 확인이 없습니다. 스크립트의 주석과 `docs/operations/DEPLOYMENT_GUIDE.md` 는 이렇게 빠질 수 있다는 것을 설명하지만 막지는 않습니다.
 - **고칠 방법**: tgz 를 임시 디렉토리에 푼 직후에 필수 파일을 확인하고, 없으면 오류로 끝냅니다. 확인할 파일은 `package/node_modules/better-sqlite3/build/Release/better_sqlite3.node`, `package/node_modules/sharp/build/Release/` 아래의 `.node` 파일과 비어 있지 않은 `package/node_modules/sharp/vendor/`, `package/build/index.js`, `package/knowledge-base/egovframe.db`, `package/models/Xenova/multilingual-e5-small/onnx/model_quantized.onnx` 입니다. 타깃마다 확인 결과를 한 줄로 출력합니다. 스크립트의 주석이 원인을 "lockfile 과의 불일치" 라고만 적은 부분도, 패키지 디렉토리가 `node_modules/.package-lock.json` 보다 나중에 바뀐 경우를 포함하도록 고칩니다.
 
 ### PR-7. 손상된 지식베이스 DB 가 원인 없이 "내부 오류" 로만 보고됩니다 (참고)
@@ -790,7 +799,7 @@
   2. `z.looseObject({ ... })` 로 넘기면 핸들러가 정의되지 않은 키를 그대로 받습니다. `egovSearchKnowledge` 가 그런 키를 모아, `filters` 의 키 이름과 같으면 `UserFacingError` 로 거부하고 그 밖의 키는 `> 정의되지 않아 무시한 최상위 키: scop.` 같은 안내 줄로 알립니다.
 
   어느 쪽이든 위의 재현 호출이 오류나 안내를 돌려주는지 확인하는 통합 테스트를 `tests/integration/searchKnowledge.test.ts` 에 더합니다.
-- **결정할 것**: 두 방법 모두 도구의 `inputSchema` 를 raw zod shape(키마다 zod 타입을 적은 객체)로 넘긴다는 이 저장소의 개발 관례를 벗어납니다. 이 도구에 예외를 둘지, 그리고 여분의 최상위 키를 보내던 기존 호출을 오류로 거부할지(1) 안내만 붙일지(2)를 정해야 합니다. 이 관례는 저장소의 문서에 적혀 있지 않으므로, 정한 내용을 `docs/MCP_REFERENCE.md` 같은 문서에 함께 적어 둡니다.
+- **결정할 것**: 두 방법 모두 도구의 `inputSchema` 를 raw zod shape(키마다 zod 타입을 적은 객체)로 넘긴다는 이 저장소의 개발 관례를 벗어납니다. 이 도구에 예외를 둘지, 그리고 여분의 최상위 키를 보내던 기존 호출을 오류로 거부할지(1) 안내만 붙일지(2)를 정해야 합니다. 이 관례는 저장소의 문서에 적혀 있지 않으므로, 정한 내용을 `docs/reference/MCP_REFERENCE.md` 같은 문서에 함께 적어 둡니다.
 
 #### DC-9. 효과가 없는 `strictScope` 파라미터가 입력 스키마에 남아 있습니다 (참고)
 
@@ -813,10 +822,10 @@
 
 #### DC-11. 등록되지 않은 도구와 형식이 틀린 tools/call 의 오류 형식이 사양과 다릅니다 (낮음)
 
-- **지금의 동작**: 없는 도구 이름으로 tools/call 을 보내면 JSON-RPC 오류가 아니라 `isError: true` 인 도구 결과가 돌아옵니다. MCP 사양(2025-06-18 버전)의 도구 오류 처리 절은 알 수 없는 도구를 프로토콜 오류(-32602)로 알리는 예를 듭니다. 또 `params` 의 `name` 이 없거나, `params` 가 없거나, `arguments` 가 객체가 아닌 요청은 잘못된 파라미터(-32602)가 아니라 내부 오류(-32603)와 zod 오류 JSON 으로 응답합니다. 응답에 스택이나 경로는 없고, 등록되지 않은 도구의 isError 응답은 `docs/MCP_REFERENCE.md` 에 적혀 있습니다.
+- **지금의 동작**: 없는 도구 이름으로 tools/call 을 보내면 JSON-RPC 오류가 아니라 `isError: true` 인 도구 결과가 돌아옵니다. MCP 사양(2025-06-18 버전)의 도구 오류 처리 절은 알 수 없는 도구를 프로토콜 오류(-32602)로 알리는 예를 듭니다. 또 `params` 의 `name` 이 없거나, `params` 가 없거나, `arguments` 가 객체가 아닌 요청은 잘못된 파라미터(-32602)가 아니라 내부 오류(-32603)와 zod 오류 JSON 으로 응답합니다. 응답에 스택이나 경로는 없고, 등록되지 않은 도구의 isError 응답은 `docs/reference/MCP_REFERENCE.md` 에 적혀 있습니다.
 - **재현**: stdio 에 `{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"nope","arguments":{}}}` 를 직접 보내면 `result.isError` 가 true 이고 본문이 `MCP error -32602: Tool nope not found` 입니다. `name` 이 없는 요청은 `error.code` 가 -32603 이고 문구가 `Invalid input: expected string, received undefined`(path `params.name`)입니다. `arguments` 가 문자열, `null`, 배열이면 -32603 에 `Invalid input: expected record, received null` 같은 문구입니다. 없는 메서드는 -32601 `Method not found` 입니다.
 - **원인**: SDK(@modelcontextprotocol/sdk 1.29.0)의 동작입니다. `McpServer` 의 tools/call 처리기가 도구를 찾지 못한 오류까지 `createToolError` 로 감싸고, `Protocol.setRequestHandler` 가 요청을 zod 로 검증하다 난 오류에는 숫자 코드가 없어 -32603 이 붙습니다. 프로젝트 코드에는 고칠 자리가 없습니다.
-- **고칠 방법**: SDK 를 올릴 때 두 동작이 바뀌었는지 확인합니다 (새 버전의 동작은 확인하지 않았습니다). 프로젝트에서 고치려면 low-level `setRequestHandler` 로 tools/call 을 직접 처리해야 하는데, 이는 도구를 `server.registerTool` 로만 등록한다는 이 저장소의 개발 관례에 어긋납니다. 그 전에는 `docs/MCP_REFERENCE.md` 의 오류 응답 절에, 형식이 틀린 tools/call 은 도구 결과가 아니라 JSON-RPC 오류 -32603 으로 응답한다는 것을 적어 둡니다.
+- **고칠 방법**: SDK 를 올릴 때 두 동작이 바뀌었는지 확인합니다 (새 버전의 동작은 확인하지 않았습니다). 프로젝트에서 고치려면 low-level `setRequestHandler` 로 tools/call 을 직접 처리해야 하는데, 이는 도구를 `server.registerTool` 로만 등록한다는 이 저장소의 개발 관례에 어긋납니다. 그 전에는 `docs/reference/MCP_REFERENCE.md` 의 오류 응답 절에, 형식이 틀린 tools/call 은 도구 결과가 아니라 JSON-RPC 오류 -32603 으로 응답한다는 것을 적어 둡니다.
 - **결정할 것**: SDK 를 올릴지([DC-10](#dc-10-운영-의존성에-npm-audit-기준-알려진-취약점-15건이-있습니다-낮음) 과 함께) 정합니다.
 
 #### DC-12. `npm pack` 은 `--dry-run` 이어도 `build/` 를 지우고 다시 컴파일합니다 (참고)
@@ -824,14 +833,13 @@
 - **지금의 동작**: `package.json` 의 `prepare` 는 `npm run build` 이고, `build` 는 `build/` 를 먼저 지운 뒤 `tsc` 를 실행합니다. npm 10.9.9 의 `npm pack` 은 `--dry-run` 과 `--ignore-scripts` 를 함께 주어도 `prepare` 를 실행합니다. 그래서 tgz 에 무엇이 들어갈지 목록만 보려는 명령도 `build/` 를 지우고 다시 만듭니다. 그 체크아웃의 `build/index.js` 를 MCP 클라이언트에 등록해 쓰는 중이면, 다시 컴파일하는 동안(측정해 보면 0.8초 안팎) 새로 시작하는 서버가 진입점을 찾지 못합니다. 저장소 루트에서 `npx egovframe-mcp-search` 형태로 CLI 를 실행할 때도 npm 이 매번 `prepare` 를 실행해 `build/` 를 다시 만들고, `tsc` 가 없는 곳에서 `npm install` 이나 `npm run build` 를 실행하면 `build/` 를 지운 뒤 컴파일에 실패해 `build/` 가 사라집니다.
 - **재현**: `scripts.prepare` 가 파일 하나를 만드는 `node -e` 명령인 작은 패키지에서 `npm pack --dry-run --ignore-scripts --json` 을 실행하면 그 파일이 생깁니다 (`npm_config_ignore_scripts=true` 로 주어도 같습니다). 이 저장소의 사본에서 같은 명령을 실행하면 stderr 에 `> egovframe-mcp-search@1.0.0 prepare` 와 `> npm run build` 가 찍히고, `build/` 의 45개 파일이 다시 만들어집니다 (내용은 같습니다). 서버를 쓰고 있는 체크아웃에서는 실행하지 않습니다.
 - **원인**: `package.json` 의 `scripts.build` 가 컴파일하기 전에 `build/` 를 통째로 지우고, npm 은 `npm pack` 에서 `--ignore-scripts` 가 있어도 `prepare` 를 실행합니다.
-- **고칠 방법**: `build` 가 `build/` 를 먼저 지우지 않게 하고(`tsc` 가 덮어쓰게 한 뒤 소스에 없는 파일만 지웁니다), 디렉토리를 지우는 일은 별도의 `clean` 스크립트로 옮깁니다. 확인하지 않은 방법입니다. 그 전에는 README 의 배포 패키지 절에, 서버를 실행 중인 체크아웃에서는 `npm pack` 을 실행하지 않는다고 적어 둡니다.
+- **고칠 방법**: `build` 가 `build/` 를 먼저 지우지 않게 하고(`tsc` 가 덮어쓰게 한 뒤 소스에 없는 파일만 지웁니다), 디렉토리를 지우는 일은 별도의 `clean` 스크립트로 옮깁니다. 확인하지 않은 방법입니다. 그 전까지 지킬 주의 사항(서버를 실행 중인 체크아웃에서는 `npm pack` 을 실행하지 않는다)은 `docs/operations/DEPLOYMENT_GUIDE.md` 에 적어 두었습니다.
 - **결정할 것**: `package.json` 의 `scripts` 를 바꿀지 정합니다.
 
 #### DC-13. package.json 의 변경안 (참고)
 
 아직 정하지 않은 `package.json` 의 변경안입니다.
 
-- **`version`**: `1.0.0` 그대로입니다. 그동안 도구의 동작과 동봉 인덱스가 크게 바뀌었으므로 다음 배포 전에 올릴지 정합니다.
 - **타입 검사 스크립트**: 테스트 코드의 타입 검사(`npx tsc -p tsconfig.tests.json`)가 npm 스크립트에 연결되어 있지 않습니다. `npm test` 는 `src` 만 빌드하므로 테스트 코드의 타입 오류를 잡지 못합니다. `typecheck` 스크립트를 더하고 `test` 에 연결할지 정합니다.
 
 ### 저장소에 남아 있는 코드와 파일
@@ -854,7 +862,7 @@
   - `SQLiteManager.getCompatibilitySummary`(`src/database/sqliteManager.ts`)는 `byVersion` 을 문자열 순으로 정렬해 `3.5, 3.10, 3.1, 3.0` 순서가 됩니다. 이 메서드를 부르는 것은 `HybridDatabaseManager.getOverallStats`(`src/database/hybridManager.ts`)이고, 그것을 다시 부르는 것은 `src/tools/knowledge.ts` 의 `getOverallStats` 입니다.
   - `SQLiteManager.optimize` 는, 서버가 SQLite 를 읽기 전용으로 열므로 읽기 전용으로 연 매니저에서 부르면 `SQLITE_READONLY` 로 실패합니다.
 - **재현**: 코드를 읽어 확인했습니다. 다음 함수는 `src` 안에서 부르는 곳이 없거나 이 목록의 함수끼리만 부릅니다: `src/tools/knowledge.ts` 의 `listRecentKnowledge`, `getKnowledge`, `smartSearch`, `getOverallStats`, `src/database/hybridManager.ts` 의 `getContextualRecommendations`, `getOverallStats`, `findKnowledgeForSoftware`, `addKnowledgeWithAutoLink`, `src/rag/knowledgeManager.ts` 의 `addKnowledge`, `getKnowledgeById`, `updateKnowledge`, `deleteKnowledge`, `src/database/sqliteManager.ts` 의 `getCompatibilitySummary`, `fullTextSearchCompatibility`, `optimize`. `fullTextSearchCompatibility` 를 부르는 곳은 `addKnowledgeWithAutoLink` 뿐이고, 단위 테스트는 이 메서드를 직접 부릅니다. build-index 와 update CLI 는 이 쓰기 함수가 아니라 `addKnowledgeBatch`, `deleteByIds`, `listSourceRows` 를 씁니다. 빌드된 `SQLiteManager` 로 동봉 DB 의 사본을 읽기 전용으로 열어 `getCompatibilitySummary()` 와 `optimize()` 를 불러 위의 정렬과 실패를 확인했습니다.
-- **고칠 방법**: 지우기로 하면 위 함수와 export, 그것만 부르는 테스트를 함께 정리합니다. `tests/unit/knowledgeById.test.ts` 와 `tests/unit/knowledgeTool.test.ts` 가 이 가운데 일부를 직접 부르고, `tests/unit/keywordSearch.test.ts` 와 `tests/unit/compatibilityQuery.test.ts` 는 `fullTextSearchCompatibility` 로 키워드 검색 규칙을 시험하므로 그 호출을 같은 결과를 내는 `queryCompatibleSoftwareAllTerms(...).rows` 로 바꿉니다. `tests/unit/compatibilityTool.test.ts` 의 가짜 매니저에 있는 `findKnowledgeForSoftware` 도 지웁니다. `getKnowledgeById` 는 [VS-10](#vs-10-개발자-지식은-id-로-한-행을-읽는-조회가-없어-최근-목록의-본문과-pdf-청크의-앞뒤를-볼-수-없습니다-낮음) 의 고칠 방법이 id 조회에 쓰는 함수입니다. 남기기로 하면 `docs/EGOV_SEARCH_KNOWLEDGE_TOOL.md` 의 설계 메모에 함수 목록과 남기는 이유를 적습니다. `getCompatibilitySummary` 를 남긴다면 버전 정렬을 `getFrameworkVersions` 와 같은 `compareVersionsDescending` 으로 바꿉니다.
+- **고칠 방법**: 지우기로 하면 위 함수와 export, 그것만 부르는 테스트를 함께 정리합니다. `tests/unit/knowledgeById.test.ts` 와 `tests/unit/knowledgeTool.test.ts` 가 이 가운데 일부를 직접 부르고, `tests/unit/keywordSearch.test.ts` 와 `tests/unit/compatibilityQuery.test.ts` 는 `fullTextSearchCompatibility` 로 키워드 검색 규칙을 시험하므로 그 호출을 같은 결과를 내는 `queryCompatibleSoftwareAllTerms(...).rows` 로 바꿉니다. `tests/unit/compatibilityTool.test.ts` 의 가짜 매니저에 있는 `findKnowledgeForSoftware` 도 지웁니다. `getKnowledgeById` 는 [VS-10](#vs-10-개발자-지식은-id-로-한-행을-읽는-조회가-없어-최근-목록의-본문과-pdf-청크의-앞뒤를-볼-수-없습니다-낮음) 의 고칠 방법이 id 조회에 쓰는 함수입니다. 남기기로 하면 `docs/reference/EGOV_SEARCH_KNOWLEDGE_TOOL.md` 의 설계 메모에 함수 목록과 남기는 이유를 적습니다. `getCompatibilitySummary` 를 남긴다면 버전 정렬을 `getFrameworkVersions` 와 같은 `compareVersionsDescending` 으로 바꿉니다.
 - **결정할 것**: 지울지 남길지 정합니다.
 
 #### DC-17. 개발자 지식 원본 파일의 정리 (낮음)

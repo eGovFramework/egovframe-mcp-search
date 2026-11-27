@@ -6,8 +6,8 @@
 
 | 항목 | 값 |
 |------|-----|
-| 서버 이름 | `egovframe-mcp-search` |
-| 서버 버전 | `package.json` 의 `version` (현재 `1.0.0`) |
+| 서버 이름 | `package.json` 의 `name` (`egovframe-mcp-search`) |
+| 서버 버전 | `package.json` 의 `version` (현재 `5.1.0`) |
 | 전송 방식 | stdio |
 | capabilities | `tools` |
 | `instructions` | `initialize` 응답에 실리는 영문 사용법 요약. `scope` 로 출처를 고르고, `action` 은 `components` 에서만 쓰며, 필터는 모두 `filters` 객체 안에 넣는다는 내용입니다. |
@@ -111,7 +111,7 @@ eGovFrame 참조 자료를 조회하는 읽기 전용 도구입니다. 무언가
 }
 ```
 
-표준프레임워크 4.3 과 호환되는 소프트웨어를 조회합니다. 응답 JSON 의 `total` 은 조건에 맞는 전체 건수, `count` 는 이번에 돌려준 건수이고(동봉된 데이터에서는 42 와 20), 남은 결과는 `filters.offset` 으로 이어서 조회합니다.
+표준프레임워크 4.3 과 호환되는 소프트웨어를 조회합니다. 응답 JSON 의 `total` 은 조건에 맞는 전체 건수, `count` 는 이번에 돌려준 건수이고(동봉된 데이터에서는 63 과 20), 남은 결과는 `filters.offset` 으로 이어서 조회합니다.
 
 ```json
 {
@@ -142,7 +142,7 @@ eGovFrame 참조 자료를 조회하는 읽기 전용 도구입니다. 무언가
 | 입력 스키마 위반 (enum 에 없는 `scope` 나 `action`, 범위를 벗어난 `limit`, 상한을 넘는 문자열 길이나 배열 길이, `filters` 의 정의되지 않은 키나 틀린 타입) | `MCP error -32602: Input validation error: Invalid arguments for tool egov_search_knowledge: [...]`. 배열의 항목마다 틀린 위치를 가리키는 `path` 와 `message` 가 있습니다. |
 | 필수 값 누락, 지원하지 않는 조합 | 원인 문구. 예: `query is required for guide search`, `filters.componentId is required for component ddl lookup` |
 | 인덱스에 없는 `filters.chunkId` | `filters.chunkId 에 해당하는 가이드 청크를 찾을 수 없습니다: <값>.` 으로 시작하는 문구. 청크 ID 는 지식베이스를 갱신하거나 다시 구축하면 바뀌므로, 다시 검색해서 새 ID 를 얻습니다. |
-| 지식베이스, 임베딩 모델, 공통컴포넌트 소스가 없거나 읽을 수 없음, Node.js 버전이 맞지 않음 | 원인과 조치를 담은 문구. [MCP_SETUP_GUIDE.md](./MCP_SETUP_GUIDE.md#문제-해결)의 표를 참고합니다. |
+| 지식베이스, 임베딩 모델, 공통컴포넌트 소스가 없거나 읽을 수 없음, Node.js 버전이 맞지 않음 | 원인과 조치를 담은 문구. [MCP_SETUP_GUIDE.md](../setup/MCP_SETUP_GUIDE.md#문제-해결)의 표를 참고합니다. |
 | 통합 검색에서 네 출처가 모두 실패 | 출처별 실패 문구를 담은 통합 검색 본문. 일부 출처만 실패하면 `isError` 없이 정상 응답이고, 실패한 출처의 자리에만 `검색 중 오류가 발생했습니다: <원인>` 이 실립니다. |
 | 그 밖의 내부 오류 | `내부 오류가 발생했습니다. 자세한 내용은 MCP 서버 로그(stderr)를 확인하세요.` |
 

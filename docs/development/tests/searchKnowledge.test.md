@@ -266,7 +266,7 @@
 | `읽기 전용 도구임을 annotations 로 알린다` | `annotations` 의 `readOnlyHint` 가 `true`, `destructiveHint` 가 `false` 임 |
 | `서버 버전은 package.json 의 버전과 같다` | `client.getServerVersion()` 의 `version` 이 `package.json` 의 `version` 과 같음 |
 
-`query` 의 설명은 호출하는 모델이 호출마다 읽는 글이라서 길이에 상한을 둡니다. 설명은 규칙을 줄여 적은 것이고, 키워드 검색의 동작은 [EGOV_SEARCH_KNOWLEDGE_TOOL.md](../EGOV_SEARCH_KNOWLEDGE_TOOL.md)가 설명합니다.
+`query` 의 설명은 호출하는 모델이 호출마다 읽는 글이라서 길이에 상한을 둡니다. 설명은 규칙을 줄여 적은 것이고, 키워드 검색의 동작은 [EGOV_SEARCH_KNOWLEDGE_TOOL.md](../../reference/EGOV_SEARCH_KNOWLEDGE_TOOL.md)가 설명합니다.
 
 ### 3-12. 지식베이스 파일 보존
 

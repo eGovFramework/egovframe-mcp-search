@@ -86,7 +86,7 @@ npx vitest run tests/integration/server.test.ts
 
 | 증상 | 원인 | 대응 |
 |---|---|---|
-| `노출 도구가 정확히 egov_search_knowledge 뿐이다` 케이스가 실패 | `src/server.ts` 의 `server.registerTool(...)` 호출을 추가하거나 지운 뒤 `EXPECTED_TOOLS` 를 고치지 않았습니다 | 의도한 변경이면 `EXPECTED_TOOLS` 와 [EXPOSED_TOOLS.md](../EXPOSED_TOOLS.md), [MCP_REFERENCE.md](../MCP_REFERENCE.md)를 함께 고칩니다 |
+| `노출 도구가 정확히 egov_search_knowledge 뿐이다` 케이스가 실패 | `src/server.ts` 의 `server.registerTool(...)` 호출을 추가하거나 지운 뒤 `EXPECTED_TOOLS` 를 고치지 않았습니다 | 의도한 변경이면 `EXPECTED_TOOLS` 와 [EXPOSED_TOOLS.md](../../reference/EXPOSED_TOOLS.md), [MCP_REFERENCE.md](../../reference/MCP_REFERENCE.md)를 함께 고칩니다 |
 | `각 도구가 description 과 inputSchema 를 갖는다` 케이스가 실패 | 도구를 등록할 때 `description` 을 빠뜨렸습니다 | `src/server.ts` 의 도구 등록 객체에 `description` 을 넣습니다 |
 | `egov_search_knowledge 가 핵심 파라미터를 노출한다` 케이스가 실패 | `inputSchema` 에서 최상위 파라미터를 지우거나 이름을 바꿨습니다 | 의도한 변경이면 테스트의 키 목록과 도구 문서를 함께 고칩니다 |
 | 견고성 케이스가 `to contain 'STILL_ALIVE'` 단언에서 실패하고, 받은 값에 `Cannot find module '.../build/server.js'` 가 보임 | `build/server.js` 가 없습니다 | `npm run build` 를 실행하거나 `npm test` 로 실행합니다 |

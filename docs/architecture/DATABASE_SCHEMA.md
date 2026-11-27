@@ -1,8 +1,8 @@
-# 📊 데이터베이스 스키마 가이드
+# 데이터베이스 스키마 가이드
 
 eGovFrame MCP Search(`egovframe-mcp-search`)의 지식베이스 저장 구조를 설명합니다. 정형 데이터(호환 소프트웨어, 공통컴포넌트)는 SQLite 에, 의미 검색에 쓰는 벡터 데이터(공식 가이드, 개발자 지식)는 LanceDB 에 저장합니다. 이 문서에 적힌 행 수와 값은 저장소에 동봉된 지식베이스를 기준으로 합니다.
 
-## 📁 데이터베이스 위치
+## 데이터베이스 위치
 
 ```
 knowledge-base/
@@ -73,7 +73,7 @@ knowledge-base/
 
 ---
 
-## 🗂️ 테이블 개요
+## 테이블 개요
 
 ### SQLite (정형 데이터)
 
@@ -95,7 +95,7 @@ knowledge-base/
 
 ---
 
-## 📋 테이블 스키마 상세
+## 테이블 스키마 상세
 
 ### 1. compatibility_software (호환 소프트웨어)
 
@@ -234,7 +234,7 @@ CREATE INDEX idx_comp_dep_package ON component_dependencies(depends_on_package);
 
 ---
 
-## 🔍 키워드 검색과 FTS5 테이블
+## 키워드 검색과 FTS5 테이블
 
 `components` 와 `compatibility` 조회에 `query` 를 주면 실행되는 키워드 검색은 FTS5 를 쓰지 않습니다. 검색어를 원본 테이블의 컬럼에 `LIKE` 로 견주는 부분 문자열 비교입니다. FTS5 의 낱말 단위 일치로는 한국어 복합어의 가운데나 뒤쪽에 든 낱말(`공통코드` 의 `코드`)을 찾지 못하고, 두 테이블 모두 수백 행이라 전체를 훑어도 느리지 않기 때문입니다. FTS5 가상 테이블과 동기화 트리거는 스키마에 남아 있고 `build-index` 가 계속 채우지만, 서버의 어떤 조회도 이 테이블을 읽지 않습니다.
 
@@ -249,7 +249,7 @@ CREATE INDEX idx_comp_dep_package ON component_dependencies(depends_on_package);
 
 - ASCII 영문자의 대소문자는 가리지 않습니다. 이름 컬럼은 결과를 정렬하는 기준에 쓰입니다.
 - FTS5 테이블에는 `product_version` 과 `component_id` 컬럼이 없습니다. 이 두 컬럼은 키워드 검색이 원본 테이블에서 직접 견줍니다.
-- 검색어를 고르는 규칙, 정렬 기준, 응답에 실리는 정보는 [EGOV_SEARCH_KNOWLEDGE_TOOL.md](./EGOV_SEARCH_KNOWLEDGE_TOOL.md) 에 있습니다.
+- 검색어를 고르는 규칙, 정렬 기준, 응답에 실리는 정보는 [EGOV_SEARCH_KNOWLEDGE_TOOL.md](../reference/EGOV_SEARCH_KNOWLEDGE_TOOL.md) 에 있습니다.
 
 ### compatibility_fts
 
@@ -301,7 +301,7 @@ END;
 
 ---
 
-## 📊 ER 다이어그램
+## ER 다이어그램
 
 SQLite 의 테이블 네 개와 그 관계입니다. PK 는 기본 키, UK 는 UNIQUE 제약, FK 는 외래키입니다.
 
@@ -355,13 +355,13 @@ SQLite 의 테이블 네 개와 그 관계입니다. PK 는 기본 키, UK 는 U
 
 ---
 
-## 🧠 LanceDB 벡터 테이블
+## LanceDB 벡터 테이블
 
 두 테이블에 공통인 사항은 다음과 같습니다. 컬럼 타입은 Apache Arrow 타입 이름으로 적었습니다.
 
 - 임베딩 모델은 `Xenova/multilingual-e5-small`(384차원)이고 `models/` 의 로컬 파일만 사용합니다. 색인할 때는 `passage: `, 검색할 때는 `query: ` 접두어를 붙여 임베딩합니다.
 - 벡터 인덱스는 만들지 않습니다. `build-index` 와 갱신 CLI 는 행을 넣은 뒤 테이블을 최적화할 뿐이고, 검색은 조건에 맞는 모든 행과의 코사인 거리를 계산하는 전수 검색입니다. 스칼라 컬럼에도 인덱스가 없습니다. 이전 버전으로 구축해 IVF_PQ 인덱스가 남아 있는 테이블을 읽을 때에도 검색은 인덱스를 건너뜁니다.
-- 임베딩 모델은 입력의 앞 512 토큰만 읽습니다. 공식 가이드와 적용가이드 PDF 는 임베딩 입력이 이 한도 안에 들도록 나누어 저장합니다. 적용가이드의 가장 긴 입력은 419 토큰입니다. 공식 가이드는 토크나이저 없이 어림한 토큰 수로 나누기 때문에, 동봉 인덱스에 한도를 넘는 청크가 3개 있습니다(가장 긴 입력이 530 토큰, [KNOWN_ISSUES.md](KNOWN_ISSUES.md) 의 CH-8). 묻고답하기와 FAQ 는 게시글 하나가 한 행이라 나누지 않습니다. 동봉 인덱스에서는 묻고답하기 8,306행 가운데 1,400행과 FAQ 105행 가운데 15행의 임베딩 입력이 512 토큰을 넘고, 넘는 뒷부분은 벡터에 반영되지 않습니다.
+- 임베딩 모델은 입력의 앞 512 토큰만 읽습니다. 공식 가이드와 적용가이드 PDF 는 임베딩 입력이 이 한도 안에 들도록 나누어 저장합니다. 적용가이드의 가장 긴 입력은 419 토큰입니다. 공식 가이드는 토크나이저 없이 어림한 토큰 수로 나누기 때문에, 동봉 인덱스에 한도를 넘는 청크가 3개 있습니다(가장 긴 입력이 530 토큰, [KNOWN_ISSUES.md](../development/KNOWN_ISSUES.md) 의 CH-8). 묻고답하기와 FAQ 는 게시글 하나가 한 행이라 나누지 않습니다. 동봉 인덱스에서는 묻고답하기 8,306행 가운데 1,400행과 FAQ 105행 가운데 15행의 임베딩 입력이 512 토큰을 넘고, 넘는 뒷부분은 벡터에 반영되지 않습니다.
 - MCP 서버는 두 테이블을 조회만 합니다. 내용은 `build-index` 와 갱신 CLI 로만 바뀝니다.
 
 ### 5. developer_knowledge (개발자 지식)
@@ -400,7 +400,7 @@ SQLite 의 테이블 네 개와 그 관계입니다. PK 는 기본 키, UK 는 U
 | `extra` | `Utf8` | 위 필드에 속하지 않는 값을 담는 JSON 문자열. 동봉 데이터에서는 모두 `{}` |
 
 **데이터 소스:**
-- 묻고답하기·FAQ: `templates/developer_knowledge/` 에 스냅샷(`manifest.json`, `snapshot.jsonl.gz`)이 있으면 그것을 읽고, 없으면 같은 디렉토리의 Excel(`*.xlsx`)을 같은 형식의 스냅샷으로 바꿔서 적재합니다. 저장소는 FAQ Excel 만 추적합니다. 묻고답하기 원본 Excel(`묻고답하기-LET_TN_QA_INFO.xlsx`)은 색인에 쓰지 않는 개인정보 컬럼이 들어 있어 git 이 추적하지 않으므로(`.gitignore`), 다시 구축하려면 같은 자리에 따로 두어야 합니다. 이 파일 없이 bundled 모드로 구축하면 개발자 지식이 FAQ 와 적용가이드 PDF 만으로 만들어집니다([KNOWN_ISSUES.md](KNOWN_ISSUES.md) 의 BI-13). `build-index` 를 `online` 방식으로 실행하면 릴리스 스냅샷을 먼저 내려받고, 받지 못했을 때 이 디렉토리를 씁니다.
+- 묻고답하기·FAQ: `templates/developer_knowledge/` 에 스냅샷(`manifest.json`, `snapshot.jsonl.gz`)이 있으면 그것을 읽고, 없으면 같은 디렉토리의 Excel(`*.xlsx`)을 같은 형식의 스냅샷으로 바꿔서 적재합니다. 저장소는 FAQ Excel 만 추적합니다. 묻고답하기 원본 Excel(`묻고답하기-LET_TN_QA_INFO.xlsx`)은 색인에 쓰지 않는 개인정보 컬럼이 들어 있어 git 이 추적하지 않으므로(`.gitignore`), 다시 구축하려면 같은 자리에 따로 두어야 합니다. 이 파일 없이 bundled 모드로 구축하면 개발자 지식이 FAQ 와 적용가이드 PDF 만으로 만들어집니다([KNOWN_ISSUES.md](../development/KNOWN_ISSUES.md) 의 BI-13). `build-index` 를 `online` 방식으로 실행하면 릴리스 스냅샷을 먼저 내려받고, 받지 못했을 때 이 디렉토리를 씁니다.
 - Excel 을 스냅샷으로 바꿀 때 답변이 없는 글은 넣지 않습니다. 동봉 원본(묻고답하기 8,306건)에는 여기에 해당하는 글이 없습니다. 묻고답하기·FAQ 를 색인할 때 제목과 본문에 든 주민등록번호 형식의 값은 `******-*******` 로 가리며, 동봉 데이터에는 해당하는 값이 없습니다.
 - 적용가이드: `templates/developer_knowledge/` 의 PDF 를 600자 이하의 청크로 나눠 적재합니다(`src/scripts/buildIndex.ts` 의 `chunkPdfText`). 문단, 줄, 문장, 낱말의 순서로 경계를 찾아 나누고, 둘째 청크부터는 앞 청크의 끝부분을 100자까지 앞에 다시 싣습니다. 겹친 부분도 600자에 포함됩니다. 동봉 PDF 는 청크 254건이 되었고, 청크의 길이는 485자에서 599자, 이웃한 청크가 겹치는 길이는 36자에서 99자입니다.
 - `build-index` 는 테이블을 지우고 새로 만들어 모든 행을 다시 임베딩합니다. 묻고답하기·FAQ 원본을 찾지 못하면 이 테이블을 건너뛰고 기존 내용을 유지합니다.
@@ -429,7 +429,7 @@ SQLite 의 테이블 네 개와 그 관계입니다. PK 는 기본 키, UK 는 U
 
 **데이터 소스와 색인 규칙** (`src/kb/guideIndexer.ts`, `src/rag/guideChunking.ts`):
 - `templates/egovframe_guide/` 아래의 `.md` 파일을 모읍니다. `.git`, `.github`, `images` 디렉토리와 `README.md`, `how-to-write-Frontmatter.md` 는 제외합니다. 가이드 저장소의 기여자용 문서인 최상위 `_index.md`(컨트리뷰션 안내 페이지)와 `docs/` 아래의 문서는 모으더라도 색인하지 않습니다 (하위 디렉토리의 `_index.md` 는 색인합니다).
-- 프론트매터에 `draft: true` 가 있는 문서와 본문이 50자 미만인 문서는 색인하지 않습니다. 동봉 인덱스를 만든 원문(`v5.0.0-end-2026-contribution`)에서는 673개 가운데 기여자용 문서 2개와 초안 4개가 빠져 667개가 색인되었고, 본문이 짧아 빠진 문서는 없습니다. 최상위의 `docs_lint.md`(가이드 문서를 검사하는 스크립트의 사용법)는 기여자용 문서이지만 위의 규칙에 들지 않아 색인되었습니다([KNOWN_ISSUES.md](KNOWN_ISSUES.md) 의 VS-13).
+- 프론트매터에 `draft: true` 가 있는 문서와 본문이 50자 미만인 문서는 색인하지 않습니다. 동봉 인덱스를 만든 원문(`v5.0.0-end-2026-contribution`)에서는 673개 가운데 기여자용 문서 2개와 초안 4개가 빠져 667개가 색인되었고, 본문이 짧아 빠진 문서는 없습니다. 최상위의 `docs_lint.md`(가이드 문서를 검사하는 스크립트의 사용법)는 기여자용 문서이지만 위의 규칙에 들지 않아 색인되었습니다([KNOWN_ISSUES.md](../development/KNOWN_ISSUES.md) 의 VS-13).
 - 문서를 `##` 제목에서 절로 나눕니다. 첫 `##` 제목 앞의 내용은 도입부이고, 맨 앞의 `#` 제목 줄은 뺍니다. 본문이 50자 미만인 절과 도입부는 색인하지 않습니다.
 - 청크 하나의 임베딩 입력(`제목`, `내용`, `분류`, `카테고리` 줄을 이은 문자열)이 추정 토큰 400 이하가 되게 합니다. 토큰 수는 토크나이저 없이 글자 종류별 가중치로 어림합니다. 한도 안에 드는 절은 청크 하나이고, 절 안의 더 깊은 제목은 본문에 그대로 둡니다.
 - 한도를 넘는 절은 그 안에 있는 가장 얕은 제목(`###` 이 있으면 `###`, 없으면 더 깊은 제목)에서 도입부와 소절로 나누고, 소절의 제목을 제목 경로에 올립니다(`절 > 소절`). 나눈 결과가 100자 미만이면 이웃과 한 청크에 합칠 수 있을 때 합칩니다. 합친 청크의 제목 경로에는 합쳐진 소절의 이름을 셋까지 이어 적고, 넘는 수는 ` 외 N개` 로 적습니다. 더 깊은 제목으로 내려가면 ` > ` 로, 그렇지 않으면 ` / ` 로 잇습니다(`설명 > Input / Output`).
@@ -445,7 +445,7 @@ SQLite 의 테이블 네 개와 그 관계입니다. PK 는 기본 키, UK 는 U
 
 ---
 
-## 📈 데이터 통계
+## 데이터 통계
 
 ### 현재 데이터 현황
 
@@ -485,7 +485,7 @@ npm run build-index -- --yes
 
 ---
 
-## 🔧 데이터베이스 관리
+## 데이터베이스 관리
 
 ### 스키마 초기화
 
@@ -517,7 +517,7 @@ sqlite3 -readonly knowledge-base/egovframe.db "PRAGMA journal_mode;"
 
 ---
 
-## 📝 타입 정의
+## 타입 정의
 
 | 대상 | 파일 | 타입 |
 |------|------|------|
@@ -529,9 +529,10 @@ sqlite3 -readonly knowledge-base/egovframe.db "PRAGMA journal_mode;"
 
 ---
 
-## 📚 관련 문서
+## 관련 문서
 
 - [HYBRID_SYSTEM_GUIDE.md](./HYBRID_SYSTEM_GUIDE.md): 하이브리드 시스템 개요
-- [EGOV_SEARCH_KNOWLEDGE_TOOL.md](./EGOV_SEARCH_KNOWLEDGE_TOOL.md): `egov_search_knowledge` 의 파라미터와 응답
-- [TESTING_GUIDE.md](./TESTING_GUIDE.md): 테스트 가이드
-- [README.md](../README.md): 설치, `build-index` 옵션, 갱신 CLI
+- [EGOV_SEARCH_KNOWLEDGE_TOOL.md](../reference/EGOV_SEARCH_KNOWLEDGE_TOOL.md): `egov_search_knowledge` 의 파라미터와 응답
+- [TESTING_GUIDE.md](../development/TESTING_GUIDE.md): 테스트 가이드
+- [KNOWLEDGE_BASE_GUIDE.md](../operations/KNOWLEDGE_BASE_GUIDE.md): `build-index` 옵션, 갱신 CLI
+- [README.md](../../README.md): 서버 개요와 설치

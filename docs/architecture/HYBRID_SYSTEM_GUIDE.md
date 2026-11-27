@@ -17,7 +17,7 @@
 
 ## 검색 방식
 
-- **키워드 검색** (공통컴포넌트와 호환 소프트웨어의 `query`): `query` 에서 추출한 검색어가 검색 컬럼에 부분 문자열로 들어 있는지를 SQL 의 `LIKE` 로 비교합니다. 구분 기호의 표기가 다른 값을 찾을 때와 영문 검색어가 낱말의 처음에서 일치했는지로 정렬할 때는 `GLOB` 패턴을 함께 씁니다. DB 에는 FTS5 테이블(`components_fts`, `compatibility_fts`)과 트리거가 남아 있지만 검색에는 쓰지 않습니다. 낱말 단위로 일치시키는 FTS5 로는 한국어 복합어의 가운데나 뒤쪽에 든 낱말을 찾지 못하고, 두 표가 수백 행이어서 전체를 비교해도 느리지 않기 때문입니다. 검색어를 고르고 결과를 정렬하는 규칙은 [EGOV_SEARCH_KNOWLEDGE_TOOL.md](./EGOV_SEARCH_KNOWLEDGE_TOOL.md)에 있습니다.
+- **키워드 검색** (공통컴포넌트와 호환 소프트웨어의 `query`): `query` 에서 추출한 검색어가 검색 컬럼에 부분 문자열로 들어 있는지를 SQL 의 `LIKE` 로 비교합니다. 구분 기호의 표기가 다른 값을 찾을 때와 영문 검색어가 낱말의 처음에서 일치했는지로 정렬할 때는 `GLOB` 패턴을 함께 씁니다. DB 에는 FTS5 테이블(`components_fts`, `compatibility_fts`)과 트리거가 남아 있지만 검색에는 쓰지 않습니다. 낱말 단위로 일치시키는 FTS5 로는 한국어 복합어의 가운데나 뒤쪽에 든 낱말을 찾지 못하고, 두 표가 수백 행이어서 전체를 비교해도 느리지 않기 때문입니다. 검색어를 고르고 결과를 정렬하는 규칙은 [EGOV_SEARCH_KNOWLEDGE_TOOL.md](../reference/EGOV_SEARCH_KNOWLEDGE_TOOL.md)에 있습니다.
 - **의미 검색** (공식 가이드와 개발자 지식): 질의를 로컬 임베딩 모델로 벡터로 바꾼 뒤, 테이블의 모든 행과 코사인 거리를 계산해 가까운 순으로 돌려주는 전수 검색입니다. 벡터 인덱스는 쓰지 않으며, 인덱스를 구축할 때도 만들지 않습니다. `layer`, `type` 같은 필터는 거리를 계산하기 전에 적용하므로, 조건에 맞는 행 안에서 `limit` 건을 채웁니다. 가이드 응답의 유사도는 1 에서 코사인 거리를 뺀 값입니다.
 
 ## 주요 코드
@@ -48,7 +48,7 @@
 | `compatibility` | SQLite 의 호환 소프트웨어. `filters.includeKnowledge: true` 이면 개발자 지식 테이블도 함께 읽습니다. |
 | `all` | 위의 네 가지 모두 |
 
-SQLite DB 와 LanceDB 테이블은 조회가 처음 필요로 할 때 엽니다. 그래서 한쪽을 열 수 없어도 그것을 쓰지 않는 조회는 동작합니다. 예를 들어 SQLite DB 가 없거나 네이티브 모듈(`better-sqlite3`)을 불러오지 못해도 `guide` 와 `knowledge` 검색은 동작하고, 통합 검색은 실패한 출처의 자리에만 오류 문구를 싣습니다. `guide` 와 `knowledge` 의 의미 검색, `includeKnowledge` 는 임베딩 모델이 있어야 하고, 나머지 조회는 모델 없이 동작합니다. 노출 도구의 목록은 [EXPOSED_TOOLS.md](./EXPOSED_TOOLS.md)를 참고합니다.
+SQLite DB 와 LanceDB 테이블은 조회가 처음 필요로 할 때 엽니다. 그래서 한쪽을 열 수 없어도 그것을 쓰지 않는 조회는 동작합니다. 예를 들어 SQLite DB 가 없거나 네이티브 모듈(`better-sqlite3`)을 불러오지 못해도 `guide` 와 `knowledge` 검색은 동작하고, 통합 검색은 실패한 출처의 자리에만 오류 문구를 싣습니다. `guide` 와 `knowledge` 의 의미 검색, `includeKnowledge` 는 임베딩 모델이 있어야 하고, 나머지 조회는 모델 없이 동작합니다. 노출 도구의 목록은 [EXPOSED_TOOLS.md](../reference/EXPOSED_TOOLS.md)를 참고합니다.
 
 ## 인덱스 재구축
 
@@ -59,7 +59,7 @@ npm run build-index             # 대화형: 소스 모드(online, local, bundle
 npm run build-index -- --yes    # 비대화형: 현재 체크아웃의 원본만 사용합니다 (네트워크 접근 없음)
 ```
 
-터미널이 아닌 환경에서 `--yes` 없이 실행하면 빌드 계획만 출력하고 중단합니다. `build-index` 는 다음 원본에서 인덱스를 만듭니다. 그 밖의 옵션은 [README](../README.md)를 참고합니다.
+터미널이 아닌 환경에서 `--yes` 없이 실행하면 빌드 계획만 출력하고 중단합니다. `build-index` 는 다음 원본에서 인덱스를 만듭니다. 소스 모드와 그 밖의 옵션은 [KNOWLEDGE_BASE_GUIDE.md](../operations/KNOWLEDGE_BASE_GUIDE.md#지식베이스-구축-build-index)를 참고합니다.
 
 | 인덱스 | 원본 |
 |--------|------|
@@ -80,7 +80,7 @@ npm run build-index -- --yes    # 비대화형: 현재 체크아웃의 원본만
 | SQLite DB | 오버레이에 유효한 사본이 있으면 오버레이, 없으면 번들. 호환 소프트웨어 갱신이 비활성화되어 있어 새 사본이 만들어지지 않으므로 보통 번들을 읽습니다. |
 | 임베딩 모델 | 항상 번들 |
 
-오버레이의 갱신분은 상태 파일의 구조 버전이 현재 패키지와 맞고 데이터가 실제로 있을 때만 유효하며, 벡터 테이블은 임베딩 모델도 같아야 합니다. 유효하지 않으면 오류 없이 번들을 읽습니다. 유효하다고 판정된 가이드나 개발자 지식의 갱신분을 읽다가 실패하면, 서버는 그 실행 동안 번들의 인덱스를 대신 읽고 로그(stderr)에 `갱신분을 읽지 못해 동봉 인덱스를 사용합니다` 를 남깁니다. 오버레이의 위치와 `update` 명령은 [MCP_SETUP_GUIDE.md](./MCP_SETUP_GUIDE.md#환경변수)와 [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md#지식베이스-갱신-update-명령)에서 다룹니다.
+오버레이의 갱신분은 상태 파일의 구조 버전이 현재 패키지와 맞고 데이터가 실제로 있을 때만 유효하며, 벡터 테이블은 임베딩 모델도 같아야 합니다. 유효하지 않으면 오류 없이 번들을 읽습니다. 유효하다고 판정된 가이드나 개발자 지식의 갱신분을 읽다가 실패하면, 서버는 그 실행 동안 번들의 인덱스를 대신 읽고 로그(stderr)에 `갱신분을 읽지 못해 동봉 인덱스를 사용합니다` 를 남깁니다. 오버레이의 위치는 [MCP_SETUP_GUIDE.md](../setup/MCP_SETUP_GUIDE.md#환경-변수)에서, `update` 명령은 [KNOWLEDGE_BASE_GUIDE.md](../operations/KNOWLEDGE_BASE_GUIDE.md#지식베이스-갱신-update-명령)에서 다룹니다.
 
 ## 로컬 실행 특성
 
@@ -94,5 +94,6 @@ npm run build-index -- --yes    # 비대화형: 현재 체크아웃의 원본만
 ## 관련 문서
 
 - [DATABASE_SCHEMA.md](./DATABASE_SCHEMA.md)
-- [EGOV_SEARCH_KNOWLEDGE_TOOL.md](./EGOV_SEARCH_KNOWLEDGE_TOOL.md)
-- [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md)
+- [EGOV_SEARCH_KNOWLEDGE_TOOL.md](../reference/EGOV_SEARCH_KNOWLEDGE_TOOL.md)
+- [KNOWLEDGE_BASE_GUIDE.md](../operations/KNOWLEDGE_BASE_GUIDE.md)
+- [DEPLOYMENT_GUIDE.md](../operations/DEPLOYMENT_GUIDE.md)
